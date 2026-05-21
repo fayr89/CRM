@@ -129,7 +129,38 @@ router.post(
         'В CRM нет ни одного активного менеджера для приёма заказа. Создайте пользователя с ролью manager.',
       );
     }
-    const totalAmount = data.items.reduce(
+    // Линкуем позиции с каталогом по SKU и подтягиваем цену из прайса площадки.
+    const resolvedItems = [];
+    for (const item of data.items) {
+      let product = null;
+      if (item.sku) {
+        product = await db.get(
+          'SELECT id, image_url FROM products WHERE sku = ? AND active = TRUE',
+          item.sku,
+        );
+      }
+      let catalogPrice = null;
+      if (product && data.marketplace) {
+        const p = await db.get(
+          'SELECT price FROM product_prices WHERE product_id = ? AND marketplace = ?',
+          product.id,
+          data.marketplace,
+        );
+        catalogPrice = p?.price ?? null;
+      }
+      // Если клиент не прислал цену — используем цену из прайса.
+      const unitPrice = item.unit_price > 0
+        ? item.unit_price
+        : (catalogPrice ?? 0);
+      resolvedItems.push({
+        ...item,
+        unit_price: unitPrice,
+        product_id: product?.id ?? null,
+        image_url: product?.image_url ?? null,
+        catalog_price: catalogPrice,
+      });
+    }
+    const totalAmount = resolvedItems.reduce(
       (s, i) => s + i.quantity * i.unit_price,
       0,
     );
@@ -149,16 +180,21 @@ router.post(
         data.notes ?? null,
       );
       const id = r.lastInsertRowid;
-      for (const item of data.items) {
+      for (const item of resolvedItems) {
         await tx.run(
-          `INSERT INTO order_items (order_id, sku, name, quantity, unit_price, line_total)
-           VALUES (?, ?, ?, ?, ?, ?)`,
+          `INSERT INTO order_items
+            (order_id, sku, name, quantity, unit_price, line_total,
+             product_id, image_url, catalog_price)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           id,
           item.sku ?? null,
           item.name,
           item.quantity,
           item.unit_price,
           item.quantity * item.unit_price,
+          item.product_id,
+          item.image_url,
+          item.catalog_price,
         );
       }
       return id;

@@ -277,6 +277,44 @@ CREATE TABLE IF NOT EXISTS notifications (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS idx_notifications_user ON notifications(user_id, read_at);
+
+-- Каталог товаров (с возможной синхронизацией с МойСклад)
+CREATE TABLE IF NOT EXISTS products (
+  id SERIAL PRIMARY KEY,
+  sku TEXT UNIQUE,
+  name TEXT NOT NULL,
+  image_url TEXT,
+  cost_price REAL NOT NULL DEFAULT 0,
+  unit TEXT DEFAULT 'шт',
+  description TEXT,
+  external_source TEXT,
+  external_id TEXT,
+  active BOOLEAN NOT NULL DEFAULT TRUE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE(external_source, external_id)
+);
+CREATE INDEX IF NOT EXISTS idx_products_sku ON products(sku);
+CREATE INDEX IF NOT EXISTS idx_products_active ON products(active);
+
+-- Прайсы по площадкам: товар + площадка → цена
+CREATE TABLE IF NOT EXISTS product_prices (
+  id SERIAL PRIMARY KEY,
+  product_id INTEGER NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+  marketplace TEXT NOT NULL,
+  price REAL NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE(product_id, marketplace)
+);
+CREATE INDEX IF NOT EXISTS idx_product_prices_product ON product_prices(product_id);
+CREATE INDEX IF NOT EXISTS idx_product_prices_marketplace ON product_prices(marketplace);
+
+-- Расширение позиций заказа: ссылка на товар, картинка, цена из прайса (для отслеживания отклонений)
+ALTER TABLE order_items ADD COLUMN IF NOT EXISTS product_id INTEGER REFERENCES products(id) ON DELETE SET NULL;
+ALTER TABLE order_items ADD COLUMN IF NOT EXISTS image_url TEXT;
+ALTER TABLE order_items ADD COLUMN IF NOT EXISTS catalog_price REAL;
+CREATE INDEX IF NOT EXISTS idx_order_items_product ON order_items(product_id);
 `;
 
 // Reuse the pool across warm serverless invocations.

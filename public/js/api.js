@@ -107,4 +107,13 @@ export const api = {
   updateWebhook: (id, body) => request('PATCH', `/api/webhooks/${id}`, { body }),
   deleteWebhook: (id) => request('DELETE', `/api/webhooks/${id}`),
   webhookDeliveries: (id) => request('GET', `/api/webhooks/${id}/deliveries`),
+
+  // Каталог товаров
+  productsForMarketplace: (marketplace, search) =>
+    request('GET', '/api/products/for-marketplace', { query: { marketplace, search } }),
+  setProductPrice: (id, body) => request('PUT', `/api/products/${id}/prices`, { body }),
+  deleteProductPrice: (id, marketplace) =>
+    request('DELETE', `/api/products/${id}/prices/${encodeURIComponent(marketplace)}`),
+  importMoysklad: (token) =>
+    request('POST', '/api/products/import/moysklad', { body: token ? { token } : {} }),
 };

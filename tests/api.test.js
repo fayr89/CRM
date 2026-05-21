@@ -24,6 +24,8 @@ if (!dbUrl) {
   await db.run('DELETE FROM payments');
   await db.run('DELETE FROM order_items');
   await db.run('DELETE FROM orders');
+  await db.run('DELETE FROM product_prices');
+  await db.run('DELETE FROM products');
   await db.run('DELETE FROM notes');
   await db.run('DELETE FROM activities');
   await db.run('DELETE FROM deals');
@@ -36,6 +38,7 @@ if (!dbUrl) {
     'notes', 'activities', 'deals', 'leads', 'contacts', 'companies',
     'invitations', 'orders', 'order_items', 'payments',
     'api_tokens', 'webhooks', 'webhook_deliveries', 'notifications',
+    'products', 'product_prices',
   ]) {
     await db.run(`ALTER SEQUENCE ${t}_id_seq RESTART WITH 1`);
   }
@@ -633,6 +636,118 @@ if (!dbUrl) {
     assert.equal(readAll.status, 200);
     const after = await req('GET', '/api/notifications?unread=true', { token: adminToken });
     assert.equal(after.data.unread, 0);
+  });
+
+  // --- Каталог товаров, прайсы, подстановка цен ---
+
+  let productId;
+
+  test('admin creates a product with cost price', async () => {
+    const r = await req('POST', '/api/products', {
+      token: adminToken,
+      body: {
+        sku: 'TST-1',
+        name: 'Тестовый товар',
+        image_url: 'https://example.com/img.jpg',
+        cost_price: 500,
+      },
+    });
+    assert.equal(r.status, 201);
+    assert.equal(r.data.cost_price, 500);
+    productId = r.data.id;
+  });
+
+  test('admin sets marketplace-specific prices', async () => {
+    const wb = await req('PUT', `/api/products/${productId}/prices`, {
+      token: adminToken,
+      body: { marketplace: 'Wildberries', price: 1200 },
+    });
+    assert.equal(wb.status, 200);
+    assert.equal(wb.data.price, 1200);
+
+    const avito = await req('PUT', `/api/products/${productId}/prices`, {
+      token: adminToken,
+      body: { marketplace: 'Avito', price: 1500 },
+    });
+    assert.equal(avito.status, 200);
+
+    const full = await req('GET', `/api/products/${productId}`, { token: adminToken });
+    assert.equal(full.data.prices.length, 2);
+  });
+
+  test('updating a price upserts (no duplicates)', async () => {
+    await req('PUT', `/api/products/${productId}/prices`, {
+      token: adminToken,
+      body: { marketplace: 'Wildberries', price: 1300 },
+    });
+    const full = await req('GET', `/api/products/${productId}`, { token: adminToken });
+    const wb = full.data.prices.find((p) => p.marketplace === 'Wildberries');
+    assert.equal(wb.price, 1300);
+    assert.equal(full.data.prices.length, 2);
+  });
+
+  test('products for marketplace shows correct price', async () => {
+    const wb = await req('GET', '/api/products/for-marketplace?marketplace=Wildberries', {
+      token: adminToken,
+    });
+    const p = wb.data.data.find((x) => x.id === productId);
+    assert.equal(p.marketplace_price, 1300);
+
+    const avito = await req('GET', '/api/products/for-marketplace?marketplace=Avito', {
+      token: adminToken,
+    });
+    const p2 = avito.data.data.find((x) => x.id === productId);
+    assert.equal(p2.marketplace_price, 1500);
+
+    const ozon = await req('GET', '/api/products/for-marketplace?marketplace=Ozon', {
+      token: adminToken,
+    });
+    const p3 = ozon.data.data.find((x) => x.id === productId);
+    assert.equal(p3.marketplace_price, null);
+  });
+
+  test('external order with known SKU auto-links product and uses marketplace price', async () => {
+    // Восстанавливаем токен (старый отозван в предыдущем блоке)
+    const tr = await req('POST', '/api/api-tokens', {
+      token: adminToken,
+      body: { name: 'Тест продукт', scopes: 'orders:create' },
+    });
+    const t = tr.data.token;
+    const r = await fetch(`${base}/api/external/orders`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-api-token': t },
+      body: JSON.stringify({
+        marketplace: 'Wildberries',
+        client_name: 'Тестовый клиент',
+        items: [{ sku: 'TST-1', name: 'Тестовый товар', quantity: 2, unit_price: 0 }],
+      }),
+    });
+    assert.equal(r.status, 201);
+    const data = await r.json();
+    // unit_price из прайса Wildberries (1300), всего 2 шт = 2600
+    assert.equal(data.order.total_amount, 2600);
+    assert.equal(data.order.items[0].product_id, productId);
+    assert.equal(data.order.items[0].catalog_price, 1300);
+    assert.equal(data.order.items[0].image_url, 'https://example.com/img.jpg');
+  });
+
+  test('product prices can be deleted', async () => {
+    const del = await req('DELETE', `/api/products/${productId}/prices/Avito`, {
+      token: adminToken,
+    });
+    assert.equal(del.status, 204);
+    const full = await req('GET', `/api/products/${productId}`, { token: adminToken });
+    assert.equal(full.data.prices.length, 1);
+    assert.equal(full.data.prices[0].marketplace, 'Wildberries');
+  });
+
+  test('moysklad import requires token', async () => {
+    delete process.env.MOYSKLAD_TOKEN;
+    const r = await req('POST', '/api/products/import/moysklad', {
+      token: adminToken,
+      body: {},
+    });
+    assert.equal(r.status, 400);
   });
 
   test.after(async () => {

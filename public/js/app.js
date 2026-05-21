@@ -9,6 +9,7 @@ import {
   renderInvitations,
   renderOrders,
   renderPipeline,
+  renderProducts,
   renderResource,
 } from './views.js';
 
@@ -24,6 +25,7 @@ const NAV = [
   { hash: '#/companies', label: 'Компании', roles: CRM_ROLES },
   { hash: '#/activities', label: 'Задачи', roles: CRM_ROLES },
   { hash: '#/orders', label: 'Прямые продажи' },
+  { hash: '#/products', label: 'Каталог', roles: CRM_ROLES },
   { hash: '#/cashbox', label: 'Касса', roles: CRM_ROLES },
   { hash: '#/users', label: 'Пользователи', roles: ['admin', 'manager'] },
   { hash: '#/invitations', label: 'Приглашения', roles: ['admin', 'manager'] },
@@ -287,6 +289,7 @@ const ROUTES = {
   '#/users': (m) => renderResource(m, 'users'),
   '#/invitations': renderInvitations,
   '#/orders': renderOrders,
+  '#/products': renderProducts,
   '#/cashbox': renderCashbox,
   '#/integrations': renderIntegrations,
 };

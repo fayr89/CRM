@@ -18,6 +18,9 @@ const itemSchema = z.object({
   name: z.string().min(1),
   quantity: z.number().int().positive(),
   unit_price: z.number().nonnegative().default(0),
+  product_id: z.number().int().positive().optional().nullable(),
+  image_url: z.string().optional().nullable(),
+  catalog_price: z.number().nonnegative().optional().nullable(),
 });
 
 const createSchema = z.object({
@@ -98,7 +101,10 @@ router.get(
 
     const rows = await db.all(
       `SELECT o.*, u.name AS manager_name, w.name AS warehouse_user_name,
-              (SELECT COUNT(*)::int FROM order_items WHERE order_id = o.id) AS items_count
+              (SELECT COUNT(*)::int FROM order_items WHERE order_id = o.id) AS items_count,
+              (SELECT image_url FROM order_items
+                 WHERE order_id = o.id AND image_url IS NOT NULL
+                 ORDER BY id LIMIT 1) AS preview_image
        FROM orders o
        LEFT JOIN users u ON u.id = o.manager_id
        LEFT JOIN users w ON w.id = o.warehouse_user_id
@@ -166,14 +172,19 @@ router.post(
       const orderId = r.lastInsertRowid;
       for (const item of data.items) {
         await tx.run(
-          `INSERT INTO order_items (order_id, sku, name, quantity, unit_price, line_total)
-           VALUES (?, ?, ?, ?, ?, ?)`,
+          `INSERT INTO order_items
+            (order_id, sku, name, quantity, unit_price, line_total,
+             product_id, image_url, catalog_price)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           orderId,
           item.sku ?? null,
           item.name,
           item.quantity,
           item.unit_price,
           item.quantity * item.unit_price,
+          item.product_id ?? null,
+          item.image_url ?? null,
+          item.catalog_price ?? null,
         );
       }
       return orderId;
@@ -230,14 +241,19 @@ router.patch(
           const lineTotal = item.quantity * item.unit_price;
           total += lineTotal;
           await tx.run(
-            `INSERT INTO order_items (order_id, sku, name, quantity, unit_price, line_total)
-             VALUES (?, ?, ?, ?, ?, ?)`,
+            `INSERT INTO order_items
+              (order_id, sku, name, quantity, unit_price, line_total,
+               product_id, image_url, catalog_price)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             order.id,
             item.sku ?? null,
             item.name,
             item.quantity,
             item.unit_price,
             lineTotal,
+            item.product_id ?? null,
+            item.image_url ?? null,
+            item.catalog_price ?? null,
           );
         }
         updates.push('total_amount = ?');

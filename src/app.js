@@ -21,6 +21,7 @@ import apiTokensRoutes from './routes/apiTokens.js';
 import webhooksRoutes from './routes/webhooks.js';
 import notificationsRoutes from './routes/notifications.js';
 import searchRoutes from './routes/search.js';
+import productsRoutes from './routes/products.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = path.resolve(__dirname, '..', 'public');
@@ -54,6 +55,7 @@ export function createApp({ serveStatic = true } = {}) {
         orders: '/api/orders — заказы (модуль Avito / прямые продажи)',
         payments: '/api/payments — платежи',
         cashbox: '/api/cashbox — касса менеджера',
+        products: '/api/products — каталог товаров (с прайсами и импортом из МойСклад)',
         external: '/api/external/{leads,orders} — приём заявок с сайтов и мессенджеров по токену',
         api_tokens: '/api/api-tokens — управление токенами для внешних интеграций (admin)',
         webhooks: '/api/webhooks — исходящие вебхуки на изменения данных (admin)',
@@ -81,6 +83,7 @@ export function createApp({ serveStatic = true } = {}) {
   app.use('/api/webhooks', webhooksRoutes);
   app.use('/api/notifications', notificationsRoutes);
   app.use('/api/search', searchRoutes);
+  app.use('/api/products', productsRoutes);
 
   app.use((req, res) => {
     res.status(404).json({ error: `Route not found: ${req.method} ${req.path}` });

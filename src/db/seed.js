@@ -143,6 +143,44 @@ async function seed() {
     'meeting', 'Демо для ГлобалКорп', dueIn3Days, 'deal', 2, alice,
   );
 
+  // Каталог товаров и прайсы по площадкам
+  const productDefs = [
+    {
+      sku: 'A-1', name: 'Футболка XL', cost: 600,
+      image: 'https://images.unsplash.com/photo-1521572163474-6864f9cf17ab?w=300',
+      prices: { Wildberries: 1200, Ozon: 1300, Avito: 1100 },
+    },
+    {
+      sku: 'A-2', name: 'Кепка', cost: 400,
+      image: 'https://images.unsplash.com/photo-1588850561407-ed78c282e89b?w=300',
+      prices: { Wildberries: 800, Ozon: 850 },
+    },
+    {
+      sku: 'B-1', name: 'Кружка керамическая', cost: 180,
+      image: 'https://images.unsplash.com/photo-1514228742587-6b1558fcca3d?w=300',
+      prices: { Wildberries: 450, Ozon: 480, Avito: 400 },
+    },
+    {
+      sku: 'C-7', name: 'Коробка передач (запчасть)', cost: 18000,
+      image: null,
+      prices: { Avito: 28000, 'Другое': 27000 },
+    },
+  ];
+  for (const def of productDefs) {
+    const r = await db.run(
+      `INSERT INTO products (sku, name, image_url, cost_price, unit, active)
+       VALUES (?, ?, ?, ?, 'шт', TRUE) RETURNING id`,
+      def.sku, def.name, def.image, def.cost,
+    );
+    for (const [mp, price] of Object.entries(def.prices)) {
+      await db.run(
+        `INSERT INTO product_prices (product_id, marketplace, price)
+         VALUES (?, ?, ?)`,
+        r.lastInsertRowid, mp, price,
+      );
+    }
+  }
+
   // Avito: заказы и платежи
   const orderDefs = [
     {
@@ -222,6 +260,7 @@ async function seed() {
     '  Иерархия: admin → Мария (manager) → Алиса, Борис (sales)\n' +
     '  Склад:    Кирилл (warehouse@example.com / warehouse123)\n' +
     '  Avito:    3 заказа в разных статусах, 2 платежа в кассе Марии\n' +
+    '  Каталог:  4 товара с прайсами по площадкам\n' +
     `  API-токен для тестов внешних интеграций: ${demoToken}`,
   );
 }

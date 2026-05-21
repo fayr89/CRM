@@ -694,10 +694,10 @@ const MARKETPLACES = [
   { value: 'Другое', label: 'Другое' },
 ];
 
-function itemsEditor(initialItems = []) {
+function itemsEditor(initialItems = [], { getMarketplace } = {}) {
   const wrap = el('div', { class: 'items-editor' });
   const tbody = el('tbody');
-  const totalCell = el('td', { colspan: '5', style: { textAlign: 'right' } }, 'Итого: 0 ₽');
+  const totalCell = el('td', { colspan: '6', style: { textAlign: 'right' } }, 'Итого: 0 ₽');
 
   function recalc() {
     let total = 0;
@@ -705,7 +705,59 @@ function itemsEditor(initialItems = []) {
     totalCell.textContent = `Итого: ${total.toLocaleString('ru-RU')} ₽`;
   }
 
+  function updatePriceHint(row) {
+    const i = row._inputs;
+    const current = Number(i.unit_price.value) || 0;
+    const catalog = row._meta.catalog_price;
+    if (catalog == null || !row._meta.product_id) {
+      i.priceHint.textContent = '';
+      i.priceHint.className = 'price-hint';
+      return;
+    }
+    if (Math.abs(current - catalog) < 0.001) {
+      i.priceHint.textContent = `прайс: ${catalog.toLocaleString('ru-RU')} ₽`;
+      i.priceHint.className = 'price-hint match';
+    } else {
+      i.priceHint.textContent = `📝 изменено · прайс: ${catalog.toLocaleString('ru-RU')} ₽`;
+      i.priceHint.className = 'price-hint diff';
+    }
+  }
+
+  function setRowFromProduct(row, product, marketplacePrice) {
+    const i = row._inputs;
+    i.sku.value = product.sku || '';
+    i.name.value = product.name;
+    const price = marketplacePrice ?? product.cost_price ?? 0;
+    i.unit_price.value = price;
+    row._meta.product_id = product.id;
+    row._meta.image_url = product.image_url || null;
+    row._meta.catalog_price = marketplacePrice ?? null;
+    if (product.image_url) {
+      i.imageCell.innerHTML = '';
+      i.imageCell.append(
+        el('img', { src: product.image_url, class: 'item-thumb', alt: '' }),
+      );
+    } else {
+      i.imageCell.innerHTML = '';
+      i.imageCell.append(el('div', { class: 'item-thumb item-thumb-empty' }, '—'));
+    }
+    updatePriceHint(row);
+    recalc();
+  }
+
   function addRow(item = {}) {
+    const meta = {
+      product_id: item.product_id || null,
+      image_url: item.image_url || null,
+      catalog_price: item.catalog_price ?? null,
+    };
+    const imageCell = el('td', { class: 'item-image-cell' });
+    if (meta.image_url) {
+      imageCell.append(el('img', { src: meta.image_url, class: 'item-thumb', alt: '' }));
+    } else {
+      imageCell.append(el('div', { class: 'item-thumb item-thumb-empty' }, '—'));
+    }
+
     const skuI = el('input', { type: 'text', value: item.sku || '', placeholder: 'Артикул' });
     const nameI = el('input', { type: 'text', value: item.name || '', placeholder: 'Название' });
     const qtyI = el('input', {
@@ -722,7 +774,29 @@ function itemsEditor(initialItems = []) {
       value: item.unit_price ?? 0,
       style: { width: '100px' },
     });
-    [qtyI, priceI].forEach((i) => i.addEventListener('input', recalc));
+    const priceHint = el('div', { class: 'price-hint' });
+
+    [qtyI, priceI].forEach((i) => i.addEventListener('input', () => {
+      updatePriceHint(row);
+      recalc();
+    }));
+
+    const pickBtn = el(
+      'button',
+      {
+        type: 'button',
+        class: 'btn btn-sm pick-product',
+        onClick: async () => {
+          const product = await openProductPicker(getMarketplace?.() || '');
+          if (product) {
+            setRowFromProduct(row, product, product.marketplace_price);
+          }
+        },
+        title: 'Выбрать товар из каталога',
+      },
+      '📦',
+    );
+
     const removeBtn = el(
       'button',
       {
@@ -735,17 +809,24 @@ function itemsEditor(initialItems = []) {
       },
       '×',
     );
+
     const row = el(
       'tr',
       {},
-      el('td', {}, skuI),
+      imageCell,
+      el('td', {}, pickBtn, skuI),
       el('td', {}, nameI),
       el('td', {}, qtyI),
-      el('td', {}, priceI),
+      el('td', {}, priceI, priceHint),
       el('td', {}, removeBtn),
     );
-    row._inputs = { sku: skuI, name: nameI, quantity: qtyI, unit_price: priceI };
+    row._inputs = {
+      sku: skuI, name: nameI, quantity: qtyI, unit_price: priceI,
+      priceHint, imageCell,
+    };
+    row._meta = meta;
     tbody.append(row);
+    updatePriceHint(row);
   }
 
   function getItems() {
@@ -761,9 +842,29 @@ function itemsEditor(initialItems = []) {
         name,
         quantity,
         unit_price,
+        product_id: row._meta.product_id ?? null,
+        image_url: row._meta.image_url ?? null,
+        catalog_price: row._meta.catalog_price ?? null,
       });
     }
     return out;
+  }
+
+  // При смене площадки — переподтягиваем catalog_price для уже выбранных товаров,
+  // но unit_price НЕ трогаем (если расходится — увидите подсветку).
+  async function refreshCatalogPrices() {
+    const marketplace = getMarketplace?.() || '';
+    for (const row of tbody.children) {
+      if (!row._meta.product_id) continue;
+      try {
+        const r = await api.productsForMarketplace(marketplace, '');
+        const p = (r.data || []).find((x) => x.id === row._meta.product_id);
+        row._meta.catalog_price = p?.marketplace_price ?? null;
+      } catch {
+        /* ignore */
+      }
+      updatePriceHint(row);
+    }
   }
 
   const head = el(
@@ -772,6 +873,7 @@ function itemsEditor(initialItems = []) {
     el(
       'tr',
       {},
+      el('th', { style: { width: '50px' } }, ''),
       el('th', {}, 'Артикул'),
       el('th', {}, 'Название'),
       el('th', {}, 'Кол-во'),
@@ -798,7 +900,131 @@ function itemsEditor(initialItems = []) {
   else initialItems.forEach(addRow);
   recalc();
 
-  return { node: wrap, getItems };
+  return { node: wrap, getItems, refreshCatalogPrices };
+}
+
+// Пикер товара: открывает модалку со списком, фильтрация по поиску.
+// Если задана площадка — показывает цену из её прайса.
+async function openProductPicker(marketplace) {
+  return new Promise((resolve) => {
+    const searchI = el('input', {
+      type: 'search',
+      placeholder: 'Поиск по названию или артикулу…',
+      class: 'product-picker-search',
+      autofocus: true,
+    });
+    const list = el('div', { class: 'product-picker-list' });
+
+    async function load() {
+      try {
+        const r = await api.productsForMarketplace(marketplace, searchI.value);
+        renderList(r.data || []);
+      } catch (e) {
+        clear(list);
+        list.append(el('div', { class: 'empty' }, e.message));
+      }
+    }
+
+    function renderList(items) {
+      clear(list);
+      if (items.length === 0) {
+        list.append(
+          el(
+            'div',
+            { class: 'empty', style: { padding: '24px' } },
+            searchI.value ? 'Ничего не найдено' : 'В каталоге пусто. Добавьте товары на странице «Каталог».',
+          ),
+        );
+        return;
+      }
+      for (const p of items) {
+        const price = p.marketplace_price;
+        list.append(
+          el(
+            'div',
+            {
+              class: 'product-picker-item',
+              onClick: () => {
+                close(p);
+              },
+            },
+            el(
+              'div',
+              { class: 'product-picker-thumb' },
+              p.image_url
+                ? el('img', { src: p.image_url, alt: '' })
+                : el('div', { class: 'product-picker-thumb-empty' }, '📦'),
+            ),
+            el(
+              'div',
+              { class: 'product-picker-info' },
+              el('div', { class: 'product-picker-name' }, p.name),
+              el(
+                'div',
+                { class: 'product-picker-meta' },
+                p.sku ? `Арт: ${p.sku}` : 'Без артикула',
+                ' · себестоимость ',
+                p.cost_price.toLocaleString('ru-RU'),
+                ' ₽',
+              ),
+            ),
+            el(
+              'div',
+              { class: 'product-picker-price' },
+              price != null
+                ? `${price.toLocaleString('ru-RU')} ₽`
+                : el(
+                    'span',
+                    { class: 'no-price' },
+                    'нет в прайсе',
+                  ),
+            ),
+          ),
+        );
+      }
+    }
+
+    let debounce;
+    searchI.addEventListener('input', () => {
+      clearTimeout(debounce);
+      debounce = setTimeout(load, 200);
+    });
+
+    const close = (result) => {
+      backdrop.remove();
+      resolve(result);
+    };
+
+    const modal = el(
+      'div',
+      { class: 'modal product-picker-modal' },
+      el(
+        'div',
+        { class: 'modal-header' },
+        el(
+          'h2',
+          { class: 'modal-title' },
+          'Выбор товара',
+          marketplace ? el('span', { class: 'picker-marketplace-tag' }, marketplace) : null,
+        ),
+        el('button', { class: 'modal-close', onClick: () => close(null) }, '×'),
+      ),
+      el('div', { class: 'modal-body', style: { padding: 0 } }, searchI, list),
+    );
+    const backdrop = el(
+      'div',
+      {
+        class: 'modal-backdrop',
+        onClick: (e) => {
+          if (e.target === backdrop) close(null);
+        },
+      },
+      modal,
+    );
+    document.getElementById('modal-root').append(backdrop);
+    setTimeout(() => searchI.focus(), 0);
+    load();
+  });
 }
 
 async function openOrderForm(order, onSaved) {
@@ -816,7 +1042,10 @@ async function openOrderForm(order, onSaved) {
   const clientI = el('input', { type: 'text', value: cur.client_name || '' });
   const currencyI = el('input', { type: 'text', value: cur.currency || 'RUB', maxlength: '3', style: { width: '80px' } });
   const notesI = el('textarea', {}, cur.notes || '');
-  const items = itemsEditor(cur.items || []);
+  const items = itemsEditor(cur.items || [], {
+    getMarketplace: () => marketI.value,
+  });
+  marketI.addEventListener('change', () => items.refreshCatalogPrices());
 
   const body = el(
     'div',
@@ -974,7 +1203,18 @@ export async function renderOrders(main) {
                   await showOrderDetails(full, reload);
                 },
               },
-              el('div', { class: 'title' }, `#${r.id} · ${r.client_name || 'Клиент'}`),
+              el(
+                'div',
+                { class: 'order-card-head' },
+                r.preview_image
+                  ? el('img', {
+                      src: r.preview_image,
+                      class: 'order-card-thumb',
+                      alt: '',
+                    })
+                  : el('div', { class: 'order-card-thumb empty' }, '📦'),
+                el('div', { class: 'title' }, `#${r.id} · ${r.client_name || 'Клиент'}`),
+              ),
               el(
                 'div',
                 { class: 'meta' },
@@ -1271,13 +1511,14 @@ async function showOrderDetails(order, reload) {
 
   const itemsTable = el(
     'table',
-    { class: 'data' },
+    { class: 'data order-items-table' },
     el(
       'thead',
       {},
       el(
         'tr',
         {},
+        el('th', { style: { width: '60px' } }, ''),
         el('th', {}, 'Артикул'),
         el('th', {}, 'Название'),
         el('th', {}, 'Кол-во'),
@@ -1288,17 +1529,38 @@ async function showOrderDetails(order, reload) {
     el(
       'tbody',
       {},
-      ...(order.items || []).map((it) =>
-        el(
+      ...(order.items || []).map((it) => {
+        const priceCell = el('td', {});
+        priceCell.append(fmtMoney(it.unit_price, order.currency));
+        if (
+          it.catalog_price != null &&
+          Math.abs(it.unit_price - it.catalog_price) > 0.001
+        ) {
+          priceCell.append(
+            el(
+              'div',
+              { class: 'price-hint diff', style: { marginTop: '2px' } },
+              `📝 прайс: ${it.catalog_price.toLocaleString('ru-RU')} ₽`,
+            ),
+          );
+        }
+        return el(
           'tr',
           {},
+          el(
+            'td',
+            { class: 'item-image-cell' },
+            it.image_url
+              ? el('img', { src: it.image_url, class: 'item-thumb', alt: '' })
+              : el('div', { class: 'item-thumb item-thumb-empty' }, '—'),
+          ),
           el('td', {}, it.sku || '—'),
           el('td', {}, it.name),
           el('td', {}, it.quantity),
-          el('td', {}, fmtMoney(it.unit_price, order.currency)),
+          priceCell,
           el('td', {}, fmtMoney(it.line_total, order.currency)),
-        ),
-      ),
+        );
+      }),
     ),
   );
 
@@ -2732,4 +2994,409 @@ export function openGlobalSearch() {
   setTimeout(() => input.focus(), 0);
   clear(results);
   results.append(el('div', { class: 'search-hint' }, 'Введите минимум 2 символа…'));
+}
+
+// ============================================================
+// Каталог товаров: себестоимость, картинки, прайсы по площадкам
+// ============================================================
+
+export async function renderProducts(main) {
+  const me = JSON.parse(localStorage.getItem('crm_user') || '{}');
+  const canEdit = ['admin', 'manager'].includes(me.role);
+  const isAdmin = me.role === 'admin';
+
+  let state = { page: 1, search: '' };
+  const tableArea = el('div');
+
+  async function reload() {
+    clear(tableArea);
+    tableArea.append(el('div', { class: 'loading' }, 'Загрузка…'));
+    try {
+      const r = await api.list('products', { ...state, limit: 50 });
+      renderTable(r);
+    } catch (e) {
+      clear(tableArea);
+      tableArea.append(el('div', { class: 'empty' }, `Ошибка: ${e.message}`));
+    }
+  }
+
+  function renderTable(result) {
+    clear(tableArea);
+    const rows = result.data || [];
+    if (rows.length === 0) {
+      tableArea.append(
+        emptyState({
+          icon: '📦',
+          title: state.search ? 'Ничего не найдено' : 'Каталог пуст',
+          description: state.search
+            ? `По запросу «${state.search}» ничего нет.`
+            : 'Добавьте первый товар вручную или нажмите «Импорт из МойСклад», чтобы синхронизировать каталог из учётной системы. Себестоимость и картинки подтянутся автоматически.',
+        }),
+      );
+      return;
+    }
+    const grid = el('div', { class: 'product-grid' });
+    for (const p of rows) {
+      grid.append(
+        el(
+          'div',
+          {
+            class: 'product-card',
+            onClick: () => canEdit && openProductForm(p, reload),
+          },
+          el(
+            'div',
+            { class: 'product-card-image' },
+            p.image_url
+              ? el('img', { src: p.image_url, alt: '' })
+              : el('div', { class: 'product-card-image-empty' }, '📦'),
+          ),
+          el('div', { class: 'product-card-name' }, p.name),
+          el(
+            'div',
+            { class: 'product-card-sku' },
+            p.sku ? `Арт: ${p.sku}` : 'Без артикула',
+            p.external_source ? el('span', { class: 'badge ms-badge' }, p.external_source) : null,
+          ),
+          el(
+            'div',
+            { class: 'product-card-prices' },
+            el(
+              'div',
+              { class: 'product-card-cost' },
+              el('span', {}, 'Себестоимость '),
+              el('strong', {}, fmtMoney(p.cost_price, 'RUB')),
+            ),
+            el(
+              'div',
+              { class: 'product-card-pricelists' },
+              p.price_count > 0
+                ? `${p.price_count} прайс${p.price_count === 1 ? '' : 'а/ов'}`
+                : el('span', { class: 'no-prices' }, 'нет прайсов'),
+            ),
+          ),
+          !p.active ? el('div', { class: 'product-inactive-badge' }, 'Архив') : null,
+        ),
+      );
+    }
+    tableArea.append(grid);
+    tableArea.append(
+      paginator(result.pagination, (p) => {
+        state.page = p;
+        reload();
+      }),
+    );
+  }
+
+  const searchInput = el('input', {
+    type: 'search',
+    placeholder: 'Поиск по названию или артикулу…',
+    onInput: (e) => {
+      clearTimeout(searchInput._t);
+      searchInput._t = setTimeout(() => {
+        state.search = e.target.value;
+        state.page = 1;
+        reload();
+      }, 250);
+    },
+  });
+
+  const toolbar = el(
+    'div',
+    { class: 'toolbar' },
+    searchInput,
+    el('div', { class: 'spacer' }),
+    isAdmin
+      ? el(
+          'button',
+          {
+            class: 'btn',
+            onClick: () => openMoyskladImport(reload),
+          },
+          '⬇ Импорт из МойСклад',
+        )
+      : null,
+    canEdit
+      ? el(
+          'button',
+          {
+            class: 'btn btn-primary',
+            onClick: () => openProductForm(null, reload),
+          },
+          'Новый товар',
+        )
+      : null,
+  );
+
+  main.append(
+    el(
+      'div',
+      { class: 'page-header' },
+      el(
+        'div',
+        {},
+        el('h1', { class: 'page-title' }, 'Каталог товаров'),
+        el(
+          'div',
+          { class: 'page-subtitle' },
+          'Себестоимость, картинки и прайсы по площадкам. Используется в форме заказа.',
+        ),
+      ),
+    ),
+    helpBanner(
+      '💡 Прайс по площадке = цена этого товара для конкретного маркетплейса/лендинга. Когда менеджер создаёт заказ и выбирает товар из каталога — цена подставится автоматически. Менеджер может её поменять — будет видно отклонение.',
+    ),
+    toolbar,
+    tableArea,
+  );
+  reload();
+}
+
+async function openProductForm(product, onSaved) {
+  const isEdit = !!product;
+  const cur = product || {};
+  if (isEdit && !cur.prices) {
+    // Подгрузим прайсы
+    try {
+      const full = await api.get('products', cur.id);
+      Object.assign(cur, full);
+    } catch (e) {
+      toast(e.message, 'error');
+      return;
+    }
+  }
+
+  const nameI = el('input', { type: 'text', value: cur.name || '' });
+  const skuI = el('input', { type: 'text', value: cur.sku || '' });
+  const imageI = el('input', { type: 'url', value: cur.image_url || '', placeholder: 'https://...' });
+  const costI = el('input', { type: 'number', min: '0', step: 'any', value: cur.cost_price ?? 0 });
+  const unitI = el('input', { type: 'text', value: cur.unit || 'шт', style: { width: '80px' } });
+  const descI = el('textarea', {}, cur.description || '');
+  const activeI = el('input', { type: 'checkbox', checked: cur.active !== false });
+
+  const imagePreview = el('div', { class: 'image-preview' });
+  function updatePreview() {
+    clear(imagePreview);
+    if (imageI.value.trim()) {
+      imagePreview.append(
+        el('img', {
+          src: imageI.value.trim(),
+          alt: '',
+          onError: () => {
+            imagePreview.innerHTML = '<div class="image-preview-empty">⚠️ не загрузилась</div>';
+          },
+        }),
+      );
+    } else {
+      imagePreview.append(el('div', { class: 'image-preview-empty' }, '📦'));
+    }
+  }
+  imageI.addEventListener('input', updatePreview);
+  updatePreview();
+
+  // Прайсы по площадкам (только для существующих товаров)
+  const pricesArea = el('div', { class: 'prices-editor' });
+  function renderPricesEditor() {
+    clear(pricesArea);
+    const prices = cur.prices || [];
+    if (prices.length === 0) {
+      pricesArea.append(
+        el('div', { class: 'hint' }, 'Прайсов пока нет. Добавьте цену для конкретной площадки ниже.'),
+      );
+    } else {
+      const list = el('div', { class: 'prices-list' });
+      for (const pp of prices) {
+        list.append(
+          el(
+            'div',
+            { class: 'price-row' },
+            el('span', { class: 'price-marketplace' }, pp.marketplace),
+            el('span', { class: 'price-value' }, `${pp.price.toLocaleString('ru-RU')} ₽`),
+            el(
+              'button',
+              {
+                type: 'button',
+                class: 'btn btn-sm',
+                onClick: async () => {
+                  if (!(await confirm(`Удалить цену для «${pp.marketplace}»?`))) return;
+                  await api.deleteProductPrice(cur.id, pp.marketplace);
+                  cur.prices = cur.prices.filter((x) => x.marketplace !== pp.marketplace);
+                  renderPricesEditor();
+                },
+              },
+              'Удалить',
+            ),
+          ),
+        );
+      }
+      pricesArea.append(list);
+    }
+
+    // Форма добавления
+    const newMarketI = el(
+      'select',
+      {},
+      el('option', { value: '' }, 'Площадка…'),
+      ...MARKETPLACES.filter((m) => m.value).map((m) =>
+        el('option', { value: m.value }, m.label),
+      ),
+    );
+    const newPriceI = el('input', { type: 'number', min: '0', step: 'any', placeholder: 'Цена' });
+    pricesArea.append(
+      el(
+        'div',
+        { class: 'price-add-row' },
+        newMarketI,
+        newPriceI,
+        el(
+          'button',
+          {
+            type: 'button',
+            class: 'btn btn-sm btn-primary',
+            onClick: async () => {
+              if (!newMarketI.value || !newPriceI.value) {
+                toast('Выберите площадку и укажите цену', 'error');
+                return;
+              }
+              await api.setProductPrice(cur.id, {
+                marketplace: newMarketI.value,
+                price: Number(newPriceI.value),
+              });
+              const updated = await api.get('products', cur.id);
+              cur.prices = updated.prices;
+              renderPricesEditor();
+              toast('Цена сохранена', 'success');
+            },
+          },
+          '+ Добавить',
+        ),
+      ),
+    );
+  }
+
+  const body = el(
+    'div',
+    {},
+    el(
+      'div',
+      { class: 'form-grid' },
+      el(
+        'div',
+        { class: 'form-row', style: { gridColumn: '1 / -1' } },
+        el('label', {}, 'Название *'),
+        nameI,
+      ),
+      el('div', { class: 'form-row' }, el('label', {}, 'Артикул (SKU)'), skuI),
+      el('div', { class: 'form-row' }, el('label', {}, 'Единица'), unitI),
+      el(
+        'div',
+        { class: 'form-row' },
+        el('label', {}, 'Себестоимость'),
+        costI,
+        el('div', { class: 'hint' }, 'Внутренняя цена, не для клиентов'),
+      ),
+      el(
+        'div',
+        { class: 'form-row' },
+        el('label', {}, 'Активен'),
+        el('div', {}, activeI, ' ', el('span', { class: 'hint' }, 'Показывать в пикере заказов')),
+      ),
+      el(
+        'div',
+        { class: 'form-row', style: { gridColumn: '1 / -1' } },
+        el('label', {}, 'URL картинки'),
+        imageI,
+        imagePreview,
+      ),
+      el(
+        'div',
+        { class: 'form-row', style: { gridColumn: '1 / -1' } },
+        el('label', {}, 'Описание'),
+        descI,
+      ),
+    ),
+    isEdit
+      ? el(
+          'div',
+          { class: 'form-row', style: { marginTop: '20px' } },
+          el('label', {}, 'Прайсы по площадкам'),
+          pricesArea,
+        )
+      : el(
+          'div',
+          { class: 'hint', style: { marginTop: '12px' } },
+          'Прайсы по площадкам можно будет добавить после сохранения товара.',
+        ),
+  );
+
+  if (isEdit) renderPricesEditor();
+
+  await openModal(isEdit ? `Товар: ${cur.name}` : 'Новый товар', body, {
+    primaryLabel: isEdit ? 'Сохранить' : 'Создать',
+    size: 'lg',
+    onSubmit: async () => {
+      if (!nameI.value.trim()) {
+        toast('Укажите название', 'error');
+        return false;
+      }
+      const payload = {
+        name: nameI.value.trim(),
+        sku: skuI.value.trim() || null,
+        image_url: imageI.value.trim() || null,
+        cost_price: Number(costI.value) || 0,
+        unit: unitI.value.trim() || 'шт',
+        description: descI.value.trim() || null,
+        active: activeI.checked,
+      };
+      if (isEdit) await api.update('products', cur.id, payload);
+      else await api.create('products', payload);
+      toast(isEdit ? 'Сохранено' : 'Товар создан', 'success');
+      onSaved?.();
+    },
+  });
+}
+
+async function openMoyskladImport(onDone) {
+  const tokenI = el('input', { type: 'password', placeholder: 'Bearer-токен или оставьте пустым, если задан MOYSKLAD_TOKEN' });
+  const statusEl = el('div', { class: 'import-status' });
+
+  const body = el(
+    'div',
+    {},
+    el(
+      'p',
+      {},
+      'Импорт подтянет каталог из МойСклад: название, артикул, себестоимость, картинку. Существующие товары обновятся (linked by external_id). Сделать это безопасно несколько раз.',
+    ),
+    el(
+      'p',
+      {},
+      'Где взять токен: ',
+      el(
+        'a',
+        { href: 'https://dev.moysklad.ru/doc/api/remap/1.2/#mojsklad-json-api-obschie-svedeniq-autentifikaciq', target: '_blank' },
+        'документация МойСклад',
+      ),
+      ' (Настройки → Доступ → API).',
+    ),
+    el('div', { class: 'form-row' }, el('label', {}, 'Токен'), tokenI),
+    statusEl,
+  );
+
+  await openModal('Импорт из МойСклад', body, {
+    primaryLabel: 'Начать импорт',
+    onSubmit: async () => {
+      statusEl.textContent = '⏳ Импортируем, это может занять до минуты…';
+      try {
+        const r = await api.importMoysklad(tokenI.value.trim() || undefined);
+        statusEl.innerHTML = `✅ Готово: создано ${r.created}, обновлено ${r.updated}, всего ${r.total}`;
+        toast('Импорт завершён', 'success');
+        onDone?.();
+        return new Promise((resolve) => setTimeout(() => resolve(true), 1500));
+      } catch (e) {
+        statusEl.innerHTML = `❌ ${e.message}`;
+        return false;
+      }
+    },
+  });
 }
