@@ -1,0 +1,75 @@
+const TOKEN_KEY = 'crm_token';
+const USER_KEY = 'crm_user';
+
+export function getToken() {
+  return localStorage.getItem(TOKEN_KEY);
+}
+export function getStoredUser() {
+  const raw = localStorage.getItem(USER_KEY);
+  return raw ? JSON.parse(raw) : null;
+}
+export function setSession(token, user) {
+  localStorage.setItem(TOKEN_KEY, token);
+  localStorage.setItem(USER_KEY, JSON.stringify(user));
+}
+export function clearSession() {
+  localStorage.removeItem(TOKEN_KEY);
+  localStorage.removeItem(USER_KEY);
+}
+
+async function request(method, path, { body, query } = {}) {
+  const token = getToken();
+  let url = path;
+  if (query) {
+    const qs = new URLSearchParams(
+      Object.entries(query).filter(([, v]) => v !== undefined && v !== null && v !== ''),
+    ).toString();
+    if (qs) url += `?${qs}`;
+  }
+  const res = await fetch(url, {
+    method,
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  const text = await res.text();
+  const data = text ? JSON.parse(text) : null;
+  if (!res.ok) {
+    const err = new Error(data?.error || `HTTP ${res.status}`);
+    err.status = res.status;
+    err.details = data?.details;
+    if (res.status === 401) {
+      clearSession();
+      location.hash = '#/login';
+    }
+    throw err;
+  }
+  return data;
+}
+
+export const api = {
+  login: (email, password) =>
+    request('POST', '/api/auth/login', { body: { email, password } }),
+  me: () => request('GET', '/api/auth/me'),
+
+  list: (resource, query) => request('GET', `/api/${resource}`, { query }),
+  get: (resource, id) => request('GET', `/api/${resource}/${id}`),
+  create: (resource, body) => request('POST', `/api/${resource}`, { body }),
+  update: (resource, id, body) => request('PATCH', `/api/${resource}/${id}`, { body }),
+  remove: (resource, id) => request('DELETE', `/api/${resource}/${id}`),
+
+  // Specialty actions
+  pipeline: (query) => request('GET', '/api/deals/pipeline', { query }),
+  winDeal: (id) => request('POST', `/api/deals/${id}/win`),
+  loseDeal: (id, reason) =>
+    request('POST', `/api/deals/${id}/lose`, { body: { reason } }),
+  convertLead: (id, body) =>
+    request('POST', `/api/leads/${id}/convert`, { body: body || {} }),
+  completeActivity: (id) =>
+    request('POST', `/api/activities/${id}/complete`),
+
+  dashboard: (query) => request('GET', '/api/dashboard/stats', { query }),
+  recent: (query) => request('GET', '/api/dashboard/recent', { query }),
+};
