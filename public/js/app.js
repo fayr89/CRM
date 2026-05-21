@@ -3,6 +3,7 @@ import { clear, el, fmtDateTime, toast, tr } from './ui.js';
 import {
   openGlobalSearch,
   renderAcceptInvite,
+  renderAnalytics,
   renderCashbox,
   renderDashboard,
   renderIntegrations,
@@ -11,6 +12,7 @@ import {
   renderPipeline,
   renderProducts,
   renderResource,
+  renderShipping,
 } from './views.js';
 
 const root = document.getElementById('app');
@@ -25,8 +27,10 @@ const NAV = [
   { hash: '#/companies', label: 'Компании', roles: CRM_ROLES },
   { hash: '#/activities', label: 'Задачи', roles: CRM_ROLES },
   { hash: '#/orders', label: 'Прямые продажи' },
+  { hash: '#/shipping', label: 'Отгрузки' },
   { hash: '#/products', label: 'Каталог', roles: CRM_ROLES },
   { hash: '#/cashbox', label: 'Касса', roles: CRM_ROLES },
+  { hash: '#/analytics', label: 'Аналитика', roles: ['admin', 'manager'] },
   { hash: '#/users', label: 'Пользователи', roles: ['admin', 'manager'] },
   { hash: '#/invitations', label: 'Приглашения', roles: ['admin', 'manager'] },
   { hash: '#/integrations', label: 'Интеграции', roles: ['admin'] },
@@ -289,8 +293,10 @@ const ROUTES = {
   '#/users': (m) => renderResource(m, 'users'),
   '#/invitations': renderInvitations,
   '#/orders': renderOrders,
+  '#/shipping': renderShipping,
   '#/products': renderProducts,
   '#/cashbox': renderCashbox,
+  '#/analytics': renderAnalytics,
   '#/integrations': renderIntegrations,
 };
 

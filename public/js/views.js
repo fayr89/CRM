@@ -1709,6 +1709,25 @@ export async function renderOrders(main) {
     marketFilter,
     el('div', { class: 'spacer' }),
     viewToggle,
+    el(
+      'button',
+      {
+        class: 'btn',
+        title: 'Скачать список заказов как Excel-файл (с учётом текущих фильтров)',
+        onClick: async () => {
+          try {
+            await api.downloadOrdersCsv({
+              status: state.status,
+              marketplace: state.marketplace,
+            });
+            toast('Excel-файл сохранён', 'success');
+          } catch (e) {
+            toast(e.message, 'error');
+          }
+        },
+      },
+      '⬇ Excel',
+    ),
     canCreate
       ? el(
           'button',
@@ -3631,4 +3650,575 @@ async function openMoyskladImport(onDone) {
       }
     },
   });
+}
+
+// ============================================================
+// Аналитика для руководства
+// ============================================================
+
+export async function renderAnalytics(main) {
+  const me = JSON.parse(localStorage.getItem('crm_user') || '{}');
+  if (!['admin', 'manager'].includes(me.role)) {
+    main.append(
+      el('div', { class: 'empty' }, 'Раздел доступен только администраторам и менеджерам.'),
+    );
+    return;
+  }
+
+  let days = 30;
+
+  main.append(
+    el(
+      'div',
+      { class: 'page-header' },
+      el(
+        'div',
+        {},
+        el('h1', { class: 'page-title' }, 'Аналитика'),
+        el(
+          'div',
+          { class: 'page-subtitle' },
+          'Сводка для руководства: выручка, лидеры, площадки, товары, воронка.',
+        ),
+      ),
+    ),
+  );
+
+  const periodSelect = el(
+    'select',
+    {
+      onChange: (e) => {
+        days = Number(e.target.value);
+        reload();
+      },
+    },
+    el('option', { value: '7' }, 'За 7 дней'),
+    el('option', { value: '30', selected: true }, 'За 30 дней'),
+    el('option', { value: '90' }, 'За 90 дней'),
+    el('option', { value: '365' }, 'За год'),
+  );
+  main.append(
+    el(
+      'div',
+      { class: 'toolbar', style: { marginBottom: '16px' } },
+      el('label', { style: { fontSize: '12px', fontWeight: '600' } }, 'Период:'),
+      periodSelect,
+    ),
+  );
+
+  const summaryArea = el('div');
+  const revenueArea = el('div', { class: 'dashboard-section' });
+  const managersArea = el('div', { class: 'dashboard-section' });
+  const marketplacesArea = el('div', { class: 'dashboard-section' });
+  const productsArea = el('div', { class: 'dashboard-section' });
+  const funnelArea = el('div', { class: 'dashboard-section' });
+  main.append(summaryArea, revenueArea, managersArea, marketplacesArea, productsArea, funnelArea);
+
+  async function reload() {
+    summaryArea.replaceChildren(el('div', { class: 'loading' }, 'Загрузка…'));
+    revenueArea.replaceChildren();
+    managersArea.replaceChildren();
+    marketplacesArea.replaceChildren();
+    productsArea.replaceChildren();
+    funnelArea.replaceChildren();
+
+    try {
+      const [summary, revenue, managers, marketplaces, products, funnel] = await Promise.all([
+        api.analyticsSummary(days),
+        api.analyticsRevenue(days),
+        api.analyticsManagers(days),
+        api.analyticsMarketplaces(days),
+        api.analyticsProducts(days),
+        api.analyticsFunnel(days),
+      ]);
+
+      renderSummary(summaryArea, summary);
+      renderRevenueChart(revenueArea, revenue);
+      renderManagersTable(managersArea, managers);
+      renderMarketplacesTable(marketplacesArea, marketplaces);
+      renderProductsTable(productsArea, products);
+      renderFunnel(funnelArea, funnel);
+    } catch (e) {
+      summaryArea.replaceChildren(el('div', { class: 'empty' }, `Ошибка: ${e.message}`));
+    }
+  }
+
+  reload();
+}
+
+function renderSummary(area, s) {
+  area.replaceChildren(
+    el(
+      'div',
+      { class: 'dashboard-grid' },
+      statCard('Выручка', fmtMoney(s.revenue.total, 'RUB'), `${s.revenue.completed_orders} заказов`),
+      statCard('Средний чек', fmtMoney(s.revenue.avg_order_value, 'RUB')),
+      statCard(
+        'Сделки выиграны',
+        s.deals.won,
+        `Конверсия: ${(s.deals.win_rate * 100).toFixed(0)}%`,
+      ),
+      statCard(
+        'Открытые сделки',
+        s.deals.open,
+        `Сумма: ${fmtMoney(s.deals.won_amount, 'RUB')}`,
+      ),
+    ),
+    el(
+      'div',
+      { class: 'dashboard-grid', style: { marginTop: '12px' } },
+      statCard('Новые лиды', s.customers.new_leads),
+      statCard('Новые контакты', s.customers.new_contacts),
+      statCard('Новые компании', s.customers.new_companies),
+      statCard(
+        'Заказы',
+        `${s.orders.new_orders + s.orders.reserved_orders + s.orders.shipped_orders}`,
+        `${s.orders.reserved_orders} зарез. · ${s.orders.shipped_orders} отгр.`,
+      ),
+    ),
+  );
+}
+
+function renderRevenueChart(area, r) {
+  const points = r.points || [];
+  if (points.length === 0) {
+    area.append(
+      el('h3', {}, 'Выручка по дням'),
+      el('div', { class: 'card empty' }, 'Нет завершённых заказов за период.'),
+    );
+    return;
+  }
+  const max = Math.max(...points.map((p) => p.revenue), 1);
+  area.append(
+    el('h3', {}, 'Выручка по дням'),
+    el(
+      'div',
+      { class: 'card chart-card' },
+      el(
+        'div',
+        { class: 'revenue-chart' },
+        ...points.map((p) => {
+          const h = Math.max(2, Math.round((p.revenue / max) * 100));
+          return el(
+            'div',
+            { class: 'revenue-bar', title: `${p.date}: ${fmtMoney(p.revenue, 'RUB')}` },
+            el(
+              'div',
+              {
+                class: 'revenue-bar-fill',
+                style: { height: h + '%' },
+              },
+            ),
+            el(
+              'div',
+              { class: 'revenue-bar-label' },
+              new Date(p.date).toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit' }),
+            ),
+          );
+        }),
+      ),
+    ),
+  );
+}
+
+function renderManagersTable(area, m) {
+  const rows = m.data || [];
+  area.append(el('h3', {}, 'Топ менеджеров'));
+  if (rows.length === 0) {
+    area.append(el('div', { class: 'card empty' }, 'Нет данных по менеджерам.'));
+    return;
+  }
+  const maxRevenue = Math.max(...rows.map((r) => r.revenue), 1);
+  area.append(
+    el(
+      'div',
+      { class: 'card' },
+      ...rows.map((u) =>
+        el(
+          'div',
+          { class: 'manager-row' },
+          el('div', { class: 'manager-name' }, u.name, ' ', el('span', { class: 'hint' }, tr('role', u.role))),
+          el(
+            'div',
+            { class: 'manager-bar' },
+            el(
+              'div',
+              {
+                class: 'manager-bar-fill',
+                style: { width: `${(u.revenue / maxRevenue) * 100}%` },
+              },
+            ),
+          ),
+          el(
+            'div',
+            { class: 'manager-stats' },
+            el('strong', {}, fmtMoney(u.revenue, 'RUB')),
+            el('div', { class: 'hint' }, `${u.orders_count} заказов · ${u.deals_won} сделок`),
+          ),
+        ),
+      ),
+    ),
+  );
+}
+
+function renderMarketplacesTable(area, m) {
+  const rows = m.data || [];
+  area.append(el('h3', {}, 'Выручка по площадкам'));
+  if (rows.length === 0) {
+    area.append(el('div', { class: 'card empty' }, 'Нет данных.'));
+    return;
+  }
+  area.append(
+    el(
+      'div',
+      { class: 'table-wrap' },
+      el(
+        'table',
+        { class: 'data' },
+        el(
+          'thead',
+          {},
+          el(
+            'tr',
+            {},
+            el('th', {}, 'Площадка'),
+            el('th', {}, 'Заказов'),
+            el('th', {}, 'Выручка'),
+            el('th', {}, 'Средний чек'),
+          ),
+        ),
+        el(
+          'tbody',
+          {},
+          ...rows.map((r) =>
+            el(
+              'tr',
+              {},
+              el('td', {}, el('strong', {}, r.marketplace)),
+              el('td', {}, r.orders_count),
+              el('td', {}, fmtMoney(r.revenue, 'RUB')),
+              el('td', {}, fmtMoney(r.avg_order_value, 'RUB')),
+            ),
+          ),
+        ),
+      ),
+    ),
+  );
+}
+
+function renderProductsTable(area, p) {
+  const rows = p.data || [];
+  area.append(el('h3', {}, 'Топ товаров'));
+  if (rows.length === 0) {
+    area.append(el('div', { class: 'card empty' }, 'Нет данных.'));
+    return;
+  }
+  area.append(
+    el(
+      'div',
+      { class: 'table-wrap' },
+      el(
+        'table',
+        { class: 'data' },
+        el(
+          'thead',
+          {},
+          el(
+            'tr',
+            {},
+            el('th', { style: { width: '50px' } }, ''),
+            el('th', {}, 'Товар'),
+            el('th', {}, 'Артикул'),
+            el('th', {}, 'Продано'),
+            el('th', {}, 'Выручка'),
+            el('th', {}, 'Прибыль'),
+          ),
+        ),
+        el(
+          'tbody',
+          {},
+          ...rows.map((r) =>
+            el(
+              'tr',
+              {},
+              el(
+                'td',
+                {},
+                r.image_url
+                  ? el('img', { src: r.image_url, class: 'item-thumb', alt: '' })
+                  : el('div', { class: 'item-thumb item-thumb-empty' }, '—'),
+              ),
+              el('td', {}, el('strong', {}, r.name)),
+              el('td', {}, r.sku ? el('code', {}, r.sku) : '—'),
+              el('td', {}, r.units_sold + ' шт'),
+              el('td', {}, fmtMoney(r.revenue, 'RUB')),
+              el(
+                'td',
+                {},
+                el(
+                  'strong',
+                  { style: { color: r.profit >= 0 ? 'var(--success)' : 'var(--danger)' } },
+                  fmtMoney(r.profit, 'RUB'),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    ),
+  );
+}
+
+function renderFunnel(area, f) {
+  const leads = f.leads || [];
+  const deals = f.deals || [];
+  area.append(el('h3', {}, 'Воронка'));
+  const card = el('div', { class: 'card' });
+  card.append(
+    el('div', { style: { fontWeight: '600', marginBottom: '6px' } }, 'Лиды'),
+    ...renderBars(
+      leads.map((r) => ({ label: tr('status', r.status), count: r.count })),
+      'label',
+      'count',
+    ),
+    el('div', { style: { fontWeight: '600', marginTop: '14px', marginBottom: '6px' } }, 'Сделки'),
+    ...renderBars(
+      deals.map((r) => ({ label: tr('stage', r.stage), count: r.count })),
+      'label',
+      'count',
+    ),
+  );
+  area.append(card);
+}
+
+// ============================================================
+// Расписание отгрузок (для склада + менеджеров)
+// ============================================================
+
+export async function renderShipping(main) {
+  const me = JSON.parse(localStorage.getItem('crm_user') || '{}');
+  const canEdit = ['warehouse', 'admin'].includes(me.role);
+
+  main.append(
+    el(
+      'div',
+      { class: 'page-header' },
+      el(
+        'div',
+        {},
+        el('h1', { class: 'page-title' }, 'График отгрузок'),
+        el(
+          'div',
+          { class: 'page-subtitle' },
+          canEdit
+            ? 'Настройте дни и время отсечки. Заказы будут отгружаться в эти дни. Менеджеры видят ближайшую дату.'
+            : 'Расписание устанавливает склад. Здесь показана ближайшая дата отгрузки.',
+        ),
+      ),
+    ),
+  );
+
+  const container = el('div');
+  main.append(container);
+
+  async function load() {
+    container.replaceChildren(el('div', { class: 'loading' }, 'Загрузка…'));
+    try {
+      const [schedule, readyList] = await Promise.all([api.warehouseSchedule(), api.readyToShip()]);
+      renderContent(container, schedule, readyList, canEdit, load);
+    } catch (e) {
+      container.replaceChildren(el('div', { class: 'empty' }, `Ошибка: ${e.message}`));
+    }
+  }
+
+  load();
+}
+
+function renderContent(container, schedule, readyList, canEdit, reload) {
+  container.replaceChildren();
+
+  const WEEKDAYS = [
+    { code: 'mon', label: 'Пн' },
+    { code: 'tue', label: 'Вт' },
+    { code: 'wed', label: 'Ср' },
+    { code: 'thu', label: 'Чт' },
+    { code: 'fri', label: 'Пт' },
+    { code: 'sat', label: 'Сб' },
+    { code: 'sun', label: 'Вс' },
+  ];
+  const selected = new Set(schedule.days_list || []);
+  const next = schedule.next_shipping_date
+    ? new Date(schedule.next_shipping_date)
+    : null;
+  const cutoffI = el('input', {
+    type: 'time',
+    value: schedule.cutoff_time || '14:00',
+    disabled: canEdit ? null : true,
+  });
+  const notesI = el('textarea', { rows: '2', disabled: canEdit ? null : true }, schedule.notes || '');
+
+  // Карточка с следующей датой отгрузки
+  container.append(
+    el(
+      'div',
+      { class: 'card', style: { marginBottom: '16px' } },
+      el('div', { class: 'hint' }, 'Ближайшая дата отгрузки'),
+      el(
+        'div',
+        { style: { fontSize: '24px', fontWeight: '700', marginTop: '4px' } },
+        next
+          ? next.toLocaleDateString('ru-RU', {
+              weekday: 'long',
+              day: 'numeric',
+              month: 'long',
+              hour: '2-digit',
+              minute: '2-digit',
+            })
+          : '—',
+      ),
+      el(
+        'div',
+        { class: 'hint', style: { marginTop: '6px' } },
+        `${(readyList.data || []).length} заказов готовы к отгрузке`,
+      ),
+    ),
+  );
+
+  // Чекбоксы дней
+  const dayCheckboxes = WEEKDAYS.map((d) => {
+    const input = el('input', {
+      type: 'checkbox',
+      checked: selected.has(d.code) ? true : false,
+      disabled: canEdit ? null : true,
+    });
+    return { code: d.code, input, label: d.label };
+  });
+
+  container.append(
+    el(
+      'div',
+      { class: 'card' },
+      el('h3', {}, 'Дни отгрузки'),
+      el(
+        'div',
+        { class: 'shipping-days' },
+        ...dayCheckboxes.map((d) =>
+          el('label', { class: 'shipping-day' }, d.input, el('span', {}, d.label)),
+        ),
+      ),
+      el('div', { class: 'form-row', style: { marginTop: '14px' } },
+        el('label', {}, 'Время отсечки (HH:MM)'),
+        cutoffI,
+        el(
+          'div',
+          { class: 'hint' },
+          'После этого времени заказ переносится на следующий день отгрузки.',
+        ),
+      ),
+      el(
+        'div',
+        { class: 'form-row' },
+        el('label', {}, 'Заметки'),
+        notesI,
+      ),
+      canEdit
+        ? el(
+            'button',
+            {
+              class: 'btn btn-primary',
+              onClick: async () => {
+                const days = dayCheckboxes.filter((d) => d.input.checked).map((d) => d.code);
+                if (days.length === 0) {
+                  toast('Выберите хотя бы один день', 'error');
+                  return;
+                }
+                try {
+                  await api.updateWarehouseSchedule({
+                    days,
+                    cutoff_time: cutoffI.value || '14:00',
+                    notes: notesI.value || null,
+                  });
+                  toast('Сохранено', 'success');
+                  reload();
+                } catch (e) {
+                  toast(e.message, 'error');
+                }
+              },
+            },
+            'Сохранить расписание',
+          )
+        : null,
+    ),
+  );
+
+  // Список заказов готовых к отгрузке
+  const orders = readyList.data || [];
+  if (orders.length > 0) {
+    container.append(
+      el('h3', { style: { marginTop: '20px' } }, 'Заказы к отгрузке'),
+      el(
+        'div',
+        { class: 'card' },
+        el(
+          'div',
+          { style: { marginBottom: '12px' } },
+          el(
+            'button',
+            {
+              class: 'btn btn-primary',
+              onClick: async () => {
+                try {
+                  await api.downloadOrdersCsv({ status: 'reserved' });
+                  toast('Excel-файл сохранён', 'success');
+                } catch (e) {
+                  toast(e.message, 'error');
+                }
+              },
+            },
+            '⬇ Выгрузить в Excel',
+          ),
+        ),
+        el(
+          'div',
+          { class: 'table-wrap' },
+          el(
+            'table',
+            { class: 'data' },
+            el(
+              'thead',
+              {},
+              el(
+                'tr',
+                {},
+                el('th', {}, '№'),
+                el('th', {}, 'Площадка'),
+                el('th', {}, 'Клиент'),
+                el('th', {}, 'Менеджер'),
+                el('th', {}, 'Зарезервирован'),
+                el('th', {}, 'Сумма'),
+                el('th', {}, 'Позиций'),
+              ),
+            ),
+            el(
+              'tbody',
+              {},
+              ...orders.map((o) =>
+                el(
+                  'tr',
+                  {},
+                  el('td', {}, '#' + o.id),
+                  el('td', {}, o.marketplace || '—'),
+                  el('td', {}, o.client_name || '—'),
+                  el('td', {}, o.manager_name || '—'),
+                  el('td', {}, fmtDateTime(o.reserved_at)),
+                  el('td', {}, fmtMoney(o.total_amount, o.currency)),
+                  el('td', {}, o.items_count),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
 }

@@ -696,3 +696,69 @@ table.data tbody tr:last-child td { border-bottom: none; }
   font-size: 9px; font-weight: 700;
   padding: 2px 6px; border-radius: 999px;
 }
+
+/* ===== Аналитика ===== */
+.chart-card { padding: 20px; }
+.revenue-chart {
+  display: flex; align-items: flex-end;
+  gap: 4px; height: 180px;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 4px;
+}
+.revenue-bar {
+  flex: 1; display: flex; flex-direction: column; align-items: center;
+  min-width: 0; gap: 4px;
+}
+.revenue-bar-fill {
+  width: 100%; max-width: 32px;
+  background: linear-gradient(180deg, var(--primary), #1d4ed8);
+  border-radius: 4px 4px 0 0; min-height: 2px;
+}
+.revenue-bar-label {
+  font-size: 10px; color: var(--text-muted);
+  writing-mode: vertical-rl; transform: rotate(180deg);
+  white-space: nowrap;
+}
+@media (max-width: 700px) {
+  .revenue-bar-label { display: none; }
+}
+
+.manager-row {
+  display: grid; grid-template-columns: 1fr 2fr 130px;
+  align-items: center; gap: 12px; padding: 8px 0;
+  border-bottom: 1px solid var(--border); font-size: 13px;
+}
+.manager-row:last-child { border-bottom: none; }
+.manager-name { font-weight: 600; }
+.manager-bar {
+  height: 8px; background: #f3f4f6;
+  border-radius: 4px; overflow: hidden;
+}
+.manager-bar-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--primary), #1d4ed8);
+}
+.manager-stats { text-align: right; }
+@media (max-width: 700px) {
+  .manager-row { grid-template-columns: 1fr; gap: 4px; padding: 12px 0; }
+  .manager-stats { text-align: left; }
+}
+
+/* ===== Расписание отгрузок ===== */
+.shipping-days {
+  display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px;
+}
+.shipping-day {
+  display: flex; align-items: center; gap: 6px;
+  padding: 8px 12px; border: 1px solid var(--border);
+  border-radius: var(--radius); cursor: pointer;
+  font-size: 13px; font-weight: 600;
+  background: var(--surface);
+  transition: border-color 0.15s, background 0.15s;
+}
+.shipping-day:has(input:checked) {
+  background: #eff6ff;
+  border-color: var(--primary);
+  color: var(--primary);
+}
+.shipping-day input { margin: 0; cursor: pointer; }

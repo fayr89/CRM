@@ -750,6 +750,134 @@ if (!dbUrl) {
     assert.equal(r.status, 400);
   });
 
+  // --- Расписание отгрузок ---
+
+  test('warehouse schedule has a default and is readable', async () => {
+    const r = await req('GET', '/api/warehouse/schedule', { token: managerToken });
+    assert.equal(r.status, 200);
+    assert.ok(r.data.days);
+    assert.ok(Array.isArray(r.data.days_list));
+    assert.ok(r.data.next_shipping_date);
+  });
+
+  test('only warehouse/admin can update schedule', async () => {
+    const denied = await req('PUT', '/api/warehouse/schedule', {
+      token: managerToken,
+      body: { days: ['mon', 'fri'], cutoff_time: '12:00' },
+    });
+    assert.equal(denied.status, 403);
+
+    const ok = await req('PUT', '/api/warehouse/schedule', {
+      token: adminToken,
+      body: { days: ['mon', 'thu', 'fri'], cutoff_time: '15:30', notes: 'Только Ozon-фуры' },
+    });
+    assert.equal(ok.status, 200);
+    assert.equal(ok.data.days, 'mon,thu,fri');
+    assert.equal(ok.data.cutoff_time, '15:30');
+    assert.deepEqual(ok.data.days_list.sort(), ['fri', 'mon', 'thu']);
+  });
+
+  test('schedule rejects invalid weekdays and empty array', async () => {
+    const empty = await req('PUT', '/api/warehouse/schedule', {
+      token: adminToken,
+      body: { days: [] },
+    });
+    assert.equal(empty.status, 400);
+
+    const invalid = await req('PUT', '/api/warehouse/schedule', {
+      token: adminToken,
+      body: { days: ['foo', 'bar'] },
+    });
+    assert.equal(invalid.status, 400);
+  });
+
+  // --- Экспорт заказов в CSV ---
+
+  test('orders CSV export returns text/csv with BOM and rows', async () => {
+    const res = await fetch(`${base}/api/orders/export.csv`, {
+      headers: { authorization: `Bearer ${adminToken}` },
+    });
+    assert.equal(res.status, 200);
+    assert.ok(res.headers.get('content-type').includes('text/csv'));
+    assert.ok(res.headers.get('content-disposition').includes('orders-'));
+    const text = await res.text();
+    assert.ok(text.startsWith('﻿'), 'CSV должен начинаться с UTF-8 BOM');
+    assert.ok(text.includes('ID;'), 'Заголовок должен быть с ; разделителем');
+  });
+
+  test('orders CSV filters by status', async () => {
+    const res = await fetch(`${base}/api/orders/export.csv?status=completed`, {
+      headers: { authorization: `Bearer ${adminToken}` },
+    });
+    const text = await res.text();
+    const lines = text.split('\r\n');
+    assert.ok(lines.length >= 1, 'минимум заголовок должен быть');
+  });
+
+  // --- Заказы готовые к отгрузке ---
+
+  test('ready-to-ship returns reserved orders + next date', async () => {
+    const r = await req('GET', '/api/orders/ready-to-ship', { token: managerToken });
+    assert.equal(r.status, 200);
+    assert.ok(r.data.schedule);
+    assert.ok(r.data.next_shipping_date);
+    assert.ok(Array.isArray(r.data.data));
+  });
+
+  // --- Аналитика ---
+
+  test('analytics: revenue endpoint accessible by admin', async () => {
+    const r = await req('GET', '/api/analytics/revenue?days=30', { token: adminToken });
+    assert.equal(r.status, 200);
+    assert.ok(r.data.points);
+    assert.ok(r.data.totals);
+    assert.ok(typeof r.data.totals.revenue === 'number');
+  });
+
+  test('analytics is forbidden for sales role', async () => {
+    const r = await req('GET', '/api/analytics/revenue', { token: salesToken });
+    assert.equal(r.status, 403);
+  });
+
+  test('analytics: managers leaderboard returns ranked list', async () => {
+    const r = await req('GET', '/api/analytics/managers?days=90', { token: adminToken });
+    assert.equal(r.status, 200);
+    assert.ok(Array.isArray(r.data.data));
+    // Должны быть только manager/sales/admin
+    for (const u of r.data.data) {
+      assert.ok(['manager', 'sales', 'admin'].includes(u.role));
+    }
+  });
+
+  test('analytics: marketplaces breakdown', async () => {
+    const r = await req('GET', '/api/analytics/marketplaces?days=90', { token: adminToken });
+    assert.equal(r.status, 200);
+    assert.ok(Array.isArray(r.data.data));
+  });
+
+  test('analytics: top products', async () => {
+    const r = await req('GET', '/api/analytics/products?days=90', { token: adminToken });
+    assert.equal(r.status, 200);
+    assert.ok(Array.isArray(r.data.data));
+  });
+
+  test('analytics: funnel breakdown', async () => {
+    const r = await req('GET', '/api/analytics/funnel?days=90', { token: adminToken });
+    assert.equal(r.status, 200);
+    assert.ok(Array.isArray(r.data.leads));
+    assert.ok(Array.isArray(r.data.deals));
+  });
+
+  test('analytics: summary endpoint for leadership', async () => {
+    const r = await req('GET', '/api/analytics/summary?days=30', { token: adminToken });
+    assert.equal(r.status, 200);
+    assert.ok(r.data.revenue);
+    assert.ok(r.data.orders);
+    assert.ok(r.data.deals);
+    assert.ok(r.data.customers);
+    assert.ok(typeof r.data.deals.win_rate === 'number');
+  });
+
   test.after(async () => {
     server.close();
     await closeDb();

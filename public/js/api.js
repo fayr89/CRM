@@ -118,4 +118,51 @@ export const api = {
     request('DELETE', `/api/products/${id}/prices/${encodeURIComponent(marketplace)}`),
   importMoysklad: (token) =>
     request('POST', '/api/products/import/moysklad', { body: token ? { token } : {} }),
+
+  // Расписание отгрузок
+  warehouseSchedule: () => request('GET', '/api/warehouse/schedule'),
+  updateWarehouseSchedule: (body) => request('PUT', '/api/warehouse/schedule', { body }),
+  readyToShip: () => request('GET', '/api/orders/ready-to-ship'),
+
+  // Аналитика для руководства
+  analyticsRevenue: (days) => request('GET', '/api/analytics/revenue', { query: { days } }),
+  analyticsManagers: (days) => request('GET', '/api/analytics/managers', { query: { days } }),
+  analyticsMarketplaces: (days) =>
+    request('GET', '/api/analytics/marketplaces', { query: { days } }),
+  analyticsProducts: (days) => request('GET', '/api/analytics/products', { query: { days } }),
+  analyticsFunnel: (days) => request('GET', '/api/analytics/funnel', { query: { days } }),
+  analyticsSummary: (days) => request('GET', '/api/analytics/summary', { query: { days } }),
+
+  // Экспорт заказов в CSV — возвращает URL для скачивания (с авторизацией через query)
+  ordersExportUrl: (params = {}) => {
+    const qs = new URLSearchParams(
+      Object.entries(params).filter(([, v]) => v !== undefined && v !== null && v !== ''),
+    ).toString();
+    return `/api/orders/export.csv${qs ? '?' + qs : ''}`;
+  },
+
+  // Прямое скачивание CSV через fetch с авторизацией
+  downloadOrdersCsv: async (params = {}) => {
+    const token = getToken();
+    const qs = new URLSearchParams(
+      Object.entries(params).filter(([, v]) => v !== undefined && v !== null && v !== ''),
+    ).toString();
+    const url = `/api/orders/export.csv${qs ? '?' + qs : ''}`;
+    const res = await fetch(url, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const blob = await res.blob();
+    const cd = res.headers.get('content-disposition') || '';
+    const m = /filename="?([^"]+)"?/.exec(cd);
+    const filename = m ? m[1] : `orders-${new Date().toISOString().slice(0, 10)}.csv`;
+    const downloadUrl = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = downloadUrl;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(downloadUrl);
+  },
 };

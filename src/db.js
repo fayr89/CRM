@@ -315,6 +315,19 @@ ALTER TABLE order_items ADD COLUMN IF NOT EXISTS product_id INTEGER REFERENCES p
 ALTER TABLE order_items ADD COLUMN IF NOT EXISTS image_url TEXT;
 ALTER TABLE order_items ADD COLUMN IF NOT EXISTS catalog_price REAL;
 CREATE INDEX IF NOT EXISTS idx_order_items_product ON order_items(product_id);
+
+-- Расписание отгрузок: глобальная единственная запись (id всегда 1).
+-- days = comma-separated weekdays: mon,tue,wed,thu,fri,sat,sun
+-- cutoff_time = HH:MM, после которого заказ уезжает на следующий отгрузочный день.
+CREATE TABLE IF NOT EXISTS shipping_schedule (
+  id INTEGER PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+  days TEXT NOT NULL DEFAULT 'mon,wed,fri',
+  cutoff_time TEXT NOT NULL DEFAULT '14:00',
+  notes TEXT,
+  updated_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+INSERT INTO shipping_schedule (id) VALUES (1) ON CONFLICT (id) DO NOTHING;
 `;
 
 // Reuse the pool across warm serverless invocations.

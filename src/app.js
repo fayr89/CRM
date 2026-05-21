@@ -22,6 +22,8 @@ import webhooksRoutes from './routes/webhooks.js';
 import notificationsRoutes from './routes/notifications.js';
 import searchRoutes from './routes/search.js';
 import productsRoutes from './routes/products.js';
+import warehouseRoutes from './routes/warehouseSettings.js';
+import analyticsRoutes from './routes/analytics.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = path.resolve(__dirname, '..', 'public');
@@ -61,6 +63,10 @@ export function createApp({ serveStatic = true } = {}) {
         webhooks: '/api/webhooks — исходящие вебхуки на изменения данных (admin)',
         notifications: '/api/notifications — уведомления пользователя',
         search: '/api/search?q=… — глобальный поиск по объектам',
+        warehouse: '/api/warehouse/schedule — график отгрузок (для склада и менеджеров)',
+        analytics: '/api/analytics/{revenue,managers,marketplaces,products,funnel,summary} — аналитика (admin/manager)',
+        orders_export: '/api/orders/export.csv?status=reserved — выгрузка заказов в CSV/Excel',
+        ready_to_ship: '/api/orders/ready-to-ship — список заказов готовых к отгрузке + ближайшая дата',
       },
     });
   });
@@ -84,6 +90,8 @@ export function createApp({ serveStatic = true } = {}) {
   app.use('/api/notifications', notificationsRoutes);
   app.use('/api/search', searchRoutes);
   app.use('/api/products', productsRoutes);
+  app.use('/api/warehouse', warehouseRoutes);
+  app.use('/api/analytics', analyticsRoutes);
 
   app.use((req, res) => {
     res.status(404).json({ error: `Route not found: ${req.method} ${req.path}` });

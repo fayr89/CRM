@@ -7,6 +7,8 @@ import { BadRequest, Forbidden, NotFound, asyncHandler } from '../errors.js';
 import { parsePagination, parseSort, paginated } from '../query.js';
 import { notify, notifyWarehouse } from '../services/notifications.js';
 import { emitEvent } from '../services/webhooks.js';
+import { toCsv, csvDate } from '../services/csv.js';
+import { nextShippingDate, getSchedule } from '../services/shippingSchedule.js';
 
 const router = Router();
 
@@ -118,6 +120,121 @@ router.get(
       ...params,
     );
     res.json(paginated(rows, total, page, limit));
+  }),
+);
+
+// Экспорт заказов в CSV (открывается в Excel напрямую).
+// Фильтры (status, marketplace, manager_id) применяются как в обычном GET /.
+router.get(
+  '/export.csv',
+  asyncHandler(async (req, res) => {
+    const where = [];
+    const params = [];
+    if (req.query.status) {
+      where.push('o.status = ?');
+      params.push(req.query.status);
+    }
+    if (req.query.marketplace) {
+      where.push('o.marketplace = ?');
+      params.push(req.query.marketplace);
+    }
+    if (req.query.manager_id) {
+      where.push('o.manager_id = ?');
+      params.push(Number(req.query.manager_id));
+    }
+    // Видимость: то же что в orderScope.
+    if (req.user.role === 'sales') {
+      where.push('o.manager_id = ?');
+      params.push(req.user.id);
+    } else if (req.user.role === 'manager') {
+      const ids = await getAccessibleUserIds(req.user);
+      where.push('o.manager_id = ANY(?)');
+      params.push(ids);
+    }
+    const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
+
+    const orders = await db.all(
+      `SELECT o.*, u.name AS manager_name, w.name AS warehouse_user_name
+       FROM orders o
+       LEFT JOIN users u ON u.id = o.manager_id
+       LEFT JOIN users w ON w.id = o.warehouse_user_id
+       ${whereSql} ORDER BY o.created_at DESC LIMIT 5000`,
+      ...params,
+    );
+
+    // Подтянем позиции одним запросом
+    const ids = orders.map((o) => o.id);
+    const items = ids.length
+      ? await db.all(
+          `SELECT order_id, sku, name, quantity, unit_price
+           FROM order_items WHERE order_id = ANY(?)
+           ORDER BY order_id, id`,
+          ids,
+        )
+      : [];
+    const itemsByOrder = new Map();
+    for (const it of items) {
+      if (!itemsByOrder.has(it.order_id)) itemsByOrder.set(it.order_id, []);
+      itemsByOrder.get(it.order_id).push(it);
+    }
+
+    const columns = [
+      { key: 'id', label: 'ID', format: (v) => `#${v}` },
+      { key: 'created_at', label: 'Создан', format: csvDate },
+      { key: 'marketplace', label: 'Площадка' },
+      { key: 'reference_number', label: 'Внешний №' },
+      { key: 'client_classification', label: 'Класс клиента' },
+      { key: 'client_name', label: 'Клиент' },
+      { key: 'status', label: 'Статус' },
+      { key: 'manager_name', label: 'Менеджер' },
+      { key: 'warehouse_user_name', label: 'Склад' },
+      { key: 'reserved_at', label: 'Зарезервирован', format: csvDate },
+      { key: 'shipped_at', label: 'Отгружен', format: csvDate },
+      { key: 'completed_at', label: 'Завершён', format: csvDate },
+      { key: 'total_amount', label: 'Сумма' },
+      { key: 'currency', label: 'Валюта' },
+      {
+        key: 'items',
+        label: 'Позиции',
+        get: (row) => {
+          const list = itemsByOrder.get(row.id) || [];
+          return list.map((i) => `${i.sku || ''} ${i.name} × ${i.quantity}`).join(' | ');
+        },
+      },
+      { key: 'notes', label: 'Заметки' },
+    ];
+
+    const csv = toCsv(orders, columns);
+    const filename = `orders-${new Date().toISOString().slice(0, 10)}.csv`;
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.send(csv);
+  }),
+);
+
+// Список заказов «к отгрузке сегодня» — на основе графика отгрузок и статуса 'reserved'.
+router.get(
+  '/ready-to-ship',
+  asyncHandler(async (req, res) => {
+    const schedule = await getSchedule();
+    const next = schedule ? nextShippingDate(schedule.days, schedule.cutoff_time) : null;
+    const orders = await db.all(
+      `SELECT o.id, o.reference_number, o.marketplace, o.client_name,
+              o.total_amount, o.currency, o.manager_id, o.reserved_at,
+              u.name AS manager_name,
+              (SELECT COUNT(*)::int FROM order_items WHERE order_id = o.id) AS items_count
+       FROM orders o
+       LEFT JOIN users u ON u.id = o.manager_id
+       WHERE o.status = 'reserved'
+       ORDER BY o.reserved_at ASC`,
+    );
+    res.json({
+      next_shipping_date: next ? next.toISOString() : null,
+      schedule: schedule
+        ? { days: schedule.days, cutoff_time: schedule.cutoff_time }
+        : null,
+      data: orders,
+    });
   }),
 );
 
