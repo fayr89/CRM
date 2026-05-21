@@ -1,5 +1,6 @@
 node_modules/
 .env
+.env.local
 *.log
 *.sqlite
 *.sqlite-journal
@@ -7,3 +8,6 @@ node_modules/
 data/
 coverage/
 .DS_Store
+.next/
+tsconfig.tsbuildinfo
+next-env.d.ts
