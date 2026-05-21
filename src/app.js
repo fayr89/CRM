@@ -46,7 +46,7 @@ export function createApp({ serveStatic = true } = {}) {
         notes: '/api/notes — заметки',
         dashboard: '/api/dashboard/stats — дашборд',
         invitations: '/api/invitations — приглашения',
-        orders: '/api/orders — заказы (модуль Avida / прямые продажи)',
+        orders: '/api/orders — заказы (модуль Avito / прямые продажи)',
         payments: '/api/payments — платежи',
         cashbox: '/api/cashbox — касса менеджера',
       },

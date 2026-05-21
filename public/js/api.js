@@ -76,7 +76,7 @@ export const api = {
   dashboard: (query) => request('GET', '/api/dashboard/stats', { query }),
   recent: (query) => request('GET', '/api/dashboard/recent', { query }),
 
-  // Avida / прямые продажи
+  // Avito / прямые продажи
   reserveOrder: (id) => request('POST', `/api/orders/${id}/reserve`),
   shipOrder: (id) => request('POST', `/api/orders/${id}/ship`),
   completeOrder: (id) => request('POST', `/api/orders/${id}/complete`),

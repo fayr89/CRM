@@ -679,7 +679,7 @@ export async function renderInvitations(main) {
 }
 
 // ============================================================
-// Модуль Avida (прямые продажи): заказы и касса
+// Модуль Avito (прямые продажи): заказы и касса
 // ============================================================
 
 const MARKETPLACES = [
@@ -1093,7 +1093,7 @@ export async function renderOrders(main) {
     el(
       'div',
       { class: 'page-header' },
-      el('h1', { class: 'page-title' }, 'Прямые продажи (Avida)'),
+      el('h1', { class: 'page-title' }, 'Прямые продажи (Avito)'),
     ),
     toolbar,
     tableArea,

@@ -142,7 +142,7 @@ async function seed() {
     'meeting', 'Демо для ГлобалКорп', dueIn3Days, 'deal', 2, alice,
   );
 
-  // Avida: заказы и платежи
+  // Avito: заказы и платежи
   const orderDefs = [
     {
       ref: 'WB-100001', market: 'Wildberries', clientClass: 'B2C', client: 'И. Иванов',
@@ -209,7 +209,7 @@ async function seed() {
     '[seed] Демо-данные созданы.\n' +
     '  Иерархия: admin → Мария (manager) → Алиса, Борис (sales)\n' +
     '  Склад:    Кирилл (warehouse@example.com / warehouse123)\n' +
-    '  Avida:    3 заказа в разных статусах, 2 платежа в кассе Марии',
+    '  Avito:    3 заказа в разных статусах, 2 платежа в кассе Марии',
   );
 }
 

@@ -170,7 +170,7 @@ BEGIN
 EXCEPTION WHEN duplicate_object THEN NULL;
 END $$;
 
--- Модуль «Прямые продажи» (Avida): заказы, позиции заказа, платежи (касса)
+-- Модуль «Прямые продажи» (Avito): заказы, позиции заказа, платежи (касса)
 CREATE TABLE IF NOT EXISTS orders (
   id SERIAL PRIMARY KEY,
   reference_number TEXT,

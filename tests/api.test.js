@@ -363,7 +363,7 @@ if (!dbUrl) {
     assert.equal(r.data.totals.companies, 0);
   });
 
-  // --- Модуль Avida: заказы, склад, платежи, касса ---
+  // --- Модуль Avito: заказы, склад, платежи, касса ---
 
   let warehouseToken, warehouseId, orderId;
 
