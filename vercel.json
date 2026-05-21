@@ -1,8 +1,8 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "version": 2,
-  "rewrites": [
-    { "source": "/health", "destination": "/api" },
-    { "source": "/api/(.*)", "destination": "/api" }
-  ]
+  "framework": "nextjs",
+  "buildCommand": "next build",
+  "devCommand": "next dev --turbopack",
+  "installCommand": "npm install"
 }

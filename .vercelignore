@@ -1,10 +1,24 @@
+# Исключаем серверный код Express (он деплоится отдельным Vercel-проектом из ветки claude/build-crm-system-JzCP9)
+api/
+src/
+tests/
+examples/
+docs/
+public/css/
+public/js/
+public/embed/
+public/index.html
+
+# Стандартные
 node_modules
 .env
 .env.local
-data
+.env*.local
+*.log
 *.sqlite
 *.sqlite-*
-*.log
-tests
-.git
-.github
+data/
+coverage/
+.next/
+.git/
+.github/
