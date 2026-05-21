@@ -2,23 +2,28 @@ import { api, clearSession, getStoredUser, getToken, setSession } from './api.js
 import { clear, el, toast, tr } from './ui.js';
 import {
   renderAcceptInvite,
+  renderCashbox,
   renderDashboard,
   renderInvitations,
+  renderOrders,
   renderPipeline,
   renderResource,
 } from './views.js';
 
 const root = document.getElementById('app');
 
+const CRM_ROLES = ['admin', 'manager', 'sales'];
 const NAV = [
   { hash: '#/dashboard', label: 'Дашборд' },
-  { hash: '#/pipeline', label: 'Воронка' },
-  { hash: '#/deals', label: 'Сделки' },
-  { hash: '#/leads', label: 'Лиды' },
-  { hash: '#/contacts', label: 'Контакты' },
-  { hash: '#/companies', label: 'Компании' },
-  { hash: '#/activities', label: 'Задачи' },
-  { hash: '#/users', label: 'Пользователи' },
+  { hash: '#/pipeline', label: 'Воронка', roles: CRM_ROLES },
+  { hash: '#/deals', label: 'Сделки', roles: CRM_ROLES },
+  { hash: '#/leads', label: 'Лиды', roles: CRM_ROLES },
+  { hash: '#/contacts', label: 'Контакты', roles: CRM_ROLES },
+  { hash: '#/companies', label: 'Компании', roles: CRM_ROLES },
+  { hash: '#/activities', label: 'Задачи', roles: CRM_ROLES },
+  { hash: '#/orders', label: 'Прямые продажи' },
+  { hash: '#/cashbox', label: 'Касса', roles: CRM_ROLES },
+  { hash: '#/users', label: 'Пользователи', roles: ['admin', 'manager'] },
   { hash: '#/invitations', label: 'Приглашения', roles: ['admin', 'manager'] },
 ];
 
@@ -130,6 +135,8 @@ const ROUTES = {
   '#/activities': (m) => renderResource(m, 'activities'),
   '#/users': (m) => renderResource(m, 'users'),
   '#/invitations': renderInvitations,
+  '#/orders': renderOrders,
+  '#/cashbox': renderCashbox,
 };
 
 function renderApp() {

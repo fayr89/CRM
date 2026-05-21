@@ -678,6 +678,702 @@ export async function renderInvitations(main) {
   reload();
 }
 
+// ============================================================
+// Модуль Avida (прямые продажи): заказы и касса
+// ============================================================
+
+const MARKETPLACES = [
+  { value: '', label: '—' },
+  { value: 'Wildberries', label: 'Wildberries' },
+  { value: 'Ozon', label: 'Ozon' },
+  { value: 'Яндекс.Маркет', label: 'Яндекс.Маркет' },
+  { value: 'Avito', label: 'Avito' },
+  { value: 'Другое', label: 'Другое' },
+];
+
+function itemsEditor(initialItems = []) {
+  const wrap = el('div', { class: 'items-editor' });
+  const tbody = el('tbody');
+  const totalCell = el('td', { colspan: '5', style: { textAlign: 'right' } }, 'Итого: 0 ₽');
+
+  function recalc() {
+    let total = 0;
+    for (const row of getItems()) total += row.quantity * row.unit_price;
+    totalCell.textContent = `Итого: ${total.toLocaleString('ru-RU')} ₽`;
+  }
+
+  function addRow(item = {}) {
+    const skuI = el('input', { type: 'text', value: item.sku || '', placeholder: 'Артикул' });
+    const nameI = el('input', { type: 'text', value: item.name || '', placeholder: 'Название' });
+    const qtyI = el('input', {
+      type: 'number',
+      min: '1',
+      step: '1',
+      value: item.quantity || 1,
+      style: { width: '70px' },
+    });
+    const priceI = el('input', {
+      type: 'number',
+      min: '0',
+      step: 'any',
+      value: item.unit_price ?? 0,
+      style: { width: '100px' },
+    });
+    [qtyI, priceI].forEach((i) => i.addEventListener('input', recalc));
+    const removeBtn = el(
+      'button',
+      {
+        type: 'button',
+        class: 'remove-btn',
+        onClick: () => {
+          row.remove();
+          recalc();
+        },
+      },
+      '×',
+    );
+    const row = el(
+      'tr',
+      {},
+      el('td', {}, skuI),
+      el('td', {}, nameI),
+      el('td', {}, qtyI),
+      el('td', {}, priceI),
+      el('td', {}, removeBtn),
+    );
+    row._inputs = { sku: skuI, name: nameI, quantity: qtyI, unit_price: priceI };
+    tbody.append(row);
+  }
+
+  function getItems() {
+    const out = [];
+    for (const row of tbody.children) {
+      const i = row._inputs;
+      const name = i.name.value.trim();
+      const quantity = Number(i.quantity.value) || 0;
+      const unit_price = Number(i.unit_price.value) || 0;
+      if (!name || quantity <= 0) continue;
+      out.push({
+        sku: i.sku.value.trim() || null,
+        name,
+        quantity,
+        unit_price,
+      });
+    }
+    return out;
+  }
+
+  const head = el(
+    'thead',
+    {},
+    el(
+      'tr',
+      {},
+      el('th', {}, 'Артикул'),
+      el('th', {}, 'Название'),
+      el('th', {}, 'Кол-во'),
+      el('th', {}, 'Цена'),
+      el('th', {}, ''),
+    ),
+  );
+  const tfoot = el('tfoot', {}, el('tr', {}, totalCell));
+  wrap.append(el('table', {}, head, tbody, tfoot));
+
+  const addBtn = el(
+    'button',
+    {
+      type: 'button',
+      class: 'btn btn-sm',
+      onClick: () => addRow(),
+      style: { marginTop: '8px' },
+    },
+    '+ Добавить позицию',
+  );
+  wrap.append(addBtn);
+
+  if (initialItems.length === 0) addRow();
+  else initialItems.forEach(addRow);
+  recalc();
+
+  return { node: wrap, getItems };
+}
+
+async function openOrderForm(order, onSaved) {
+  const isEdit = !!order;
+  const cur = order || {};
+  const refI = el('input', { type: 'text', value: cur.reference_number || '', placeholder: 'WB-123456' });
+  const marketI = el(
+    'select',
+    {},
+    ...MARKETPLACES.map((m) =>
+      el('option', { value: m.value, selected: m.value === cur.marketplace ? true : false }, m.label),
+    ),
+  );
+  const classI = el('input', { type: 'text', value: cur.client_classification || '', placeholder: 'B2B / B2C / VIP / …' });
+  const clientI = el('input', { type: 'text', value: cur.client_name || '' });
+  const currencyI = el('input', { type: 'text', value: cur.currency || 'RUB', maxlength: '3', style: { width: '80px' } });
+  const notesI = el('textarea', {}, cur.notes || '');
+  const items = itemsEditor(cur.items || []);
+
+  const body = el(
+    'div',
+    {},
+    el(
+      'div',
+      { class: 'form-grid' },
+      el('div', { class: 'form-row' }, el('label', {}, 'Номер заказа (с площадки)'), refI),
+      el('div', { class: 'form-row' }, el('label', {}, 'Площадка'), marketI),
+      el(
+        'div',
+        { class: 'form-row' },
+        el('label', {}, 'Классификация клиента'),
+        classI,
+      ),
+      el('div', { class: 'form-row' }, el('label', {}, 'Клиент'), clientI),
+      el('div', { class: 'form-row' }, el('label', {}, 'Валюта'), currencyI),
+      el('div', { class: 'form-row' }, el('label', {}, 'Заметки'), notesI),
+    ),
+    el(
+      'div',
+      { class: 'form-row' },
+      el('label', {}, 'Позиции заказа *'),
+      items.node,
+    ),
+  );
+
+  await openModal(isEdit ? `Заказ #${cur.id}` : 'Новый заказ', body, {
+    primaryLabel: isEdit ? 'Сохранить' : 'Создать',
+    size: 'lg',
+    onSubmit: async () => {
+      const orderItems = items.getItems();
+      if (orderItems.length === 0) {
+        toast('Добавьте хотя бы одну позицию', 'error');
+        return false;
+      }
+      const payload = {
+        reference_number: refI.value || null,
+        marketplace: marketI.value || null,
+        client_classification: classI.value || null,
+        client_name: clientI.value || null,
+        currency: currencyI.value || 'RUB',
+        notes: notesI.value || null,
+        items: orderItems,
+      };
+      if (isEdit) {
+        await api.update('orders', cur.id, payload);
+      } else {
+        await api.create('orders', payload);
+      }
+      toast(isEdit ? 'Сохранено' : 'Заказ создан', 'success');
+      onSaved?.();
+    },
+  });
+}
+
+export async function renderOrders(main) {
+  await loadLookups();
+  const me = JSON.parse(localStorage.getItem('crm_user') || '{}');
+  const isWarehouse = me.role === 'warehouse';
+  const isAdmin = me.role === 'admin';
+  const canCreate = ['admin', 'manager', 'sales'].includes(me.role);
+
+  let state = { page: 1, status: '', marketplace: '', search: '' };
+  const tableArea = el('div');
+
+  async function reload() {
+    clear(tableArea);
+    tableArea.append(el('div', { class: 'loading' }, 'Загрузка…'));
+    try {
+      const result = await api.list('orders', { ...state, limit: 25 });
+      renderTable(result);
+    } catch (e) {
+      clear(tableArea);
+      tableArea.append(el('div', { class: 'empty' }, `Ошибка: ${e.message}`));
+    }
+  }
+
+  function renderTable(result) {
+    clear(tableArea);
+    const rows = result.data || [];
+    if (rows.length === 0) {
+      tableArea.append(
+        el('div', { class: 'card empty' }, 'Заказов нет.'),
+      );
+      return;
+    }
+    const head = el(
+      'tr',
+      {},
+      el('th', {}, '№'),
+      el('th', {}, 'Площадка'),
+      el('th', {}, 'Внеш. №'),
+      el('th', {}, 'Клиент'),
+      el('th', {}, 'Сумма'),
+      el('th', {}, 'Поз.'),
+      el('th', {}, 'Статус'),
+      el('th', {}, 'Менеджер'),
+      el('th', {}, 'Создан'),
+      el('th', { style: { textAlign: 'right' } }, 'Действия'),
+    );
+    const body = rows.map((r) => {
+      const actions = [];
+      // Действия склада / админа
+      if ((isWarehouse || isAdmin) && r.status === 'new') {
+        actions.push(
+          el(
+            'button',
+            {
+              class: 'btn btn-sm',
+              onClick: async (e) => {
+                e.stopPropagation();
+                await api.reserveOrder(r.id);
+                toast('Зарезервировано', 'success');
+                reload();
+              },
+            },
+            'Резервировать',
+          ),
+        );
+      }
+      if ((isWarehouse || isAdmin) && r.status === 'reserved') {
+        actions.push(
+          el(
+            'button',
+            {
+              class: 'btn btn-sm',
+              onClick: async (e) => {
+                e.stopPropagation();
+                await api.shipOrder(r.id);
+                toast('Отгружено', 'success');
+                reload();
+              },
+            },
+            'Отгрузить',
+          ),
+        );
+      }
+      // Действия менеджера / админа
+      if (!isWarehouse && r.status === 'shipped') {
+        actions.push(
+          el(
+            'button',
+            {
+              class: 'btn btn-sm',
+              onClick: async (e) => {
+                e.stopPropagation();
+                await api.completeOrder(r.id);
+                toast('Заказ завершён', 'success');
+                reload();
+              },
+            },
+            'Завершить',
+          ),
+        );
+      }
+      if (!['completed', 'cancelled'].includes(r.status)) {
+        actions.push(
+          el(
+            'button',
+            {
+              class: 'btn btn-sm',
+              onClick: async (e) => {
+                e.stopPropagation();
+                const reason = prompt('Причина отмены (необязательно):') || '';
+                if (!(await confirm(`Отменить заказ #${r.id}?`))) return;
+                await api.cancelOrder(r.id, reason);
+                toast('Заказ отменён', 'success');
+                reload();
+              },
+            },
+            'Отменить',
+          ),
+        );
+      }
+      return el(
+        'tr',
+        {
+          onClick: async () => {
+            // Открыть детали заказа
+            const full = await api.get('orders', r.id);
+            await showOrderDetails(full, reload);
+          },
+        },
+        el('td', {}, `#${r.id}`),
+        el('td', {}, r.marketplace || '—'),
+        el('td', {}, r.reference_number || '—'),
+        el('td', {}, r.client_name || '—'),
+        el('td', {}, fmtMoney(r.total_amount, r.currency)),
+        el('td', {}, r.items_count),
+        el('td', {}, badge(r.status, 'order_status')),
+        el('td', {}, r.manager_name || '—'),
+        el('td', {}, fmtDateTime(r.created_at)),
+        el(
+          'td',
+          { style: { textAlign: 'right' }, onClick: (e) => e.stopPropagation() },
+          ...actions,
+        ),
+      );
+    });
+
+    tableArea.append(
+      el(
+        'div',
+        { class: 'table-wrap' },
+        el('table', { class: 'data' }, el('thead', {}, head), el('tbody', {}, ...body)),
+      ),
+      paginator(result.pagination, (p) => {
+        state.page = p;
+        reload();
+      }),
+    );
+  }
+
+  // Тулбар
+  const searchInput = el('input', {
+    type: 'search',
+    placeholder: 'Поиск…',
+    onInput: (e) => {
+      clearTimeout(searchInput._t);
+      searchInput._t = setTimeout(() => {
+        state.search = e.target.value;
+        state.page = 1;
+        reload();
+      }, 250);
+    },
+  });
+  const statusFilter = el(
+    'select',
+    {
+      onChange: (e) => {
+        state.status = e.target.value;
+        state.page = 1;
+        reload();
+      },
+    },
+    el('option', { value: '' }, 'Статус: все'),
+    ...Object.entries(T.order_status).map(([v, l]) =>
+      el('option', { value: v }, `Статус: ${l}`),
+    ),
+  );
+  const marketFilter = el(
+    'select',
+    {
+      onChange: (e) => {
+        state.marketplace = e.target.value;
+        state.page = 1;
+        reload();
+      },
+    },
+    el('option', { value: '' }, 'Площадка: все'),
+    ...MARKETPLACES.filter((m) => m.value).map((m) =>
+      el('option', { value: m.value }, m.label),
+    ),
+  );
+
+  const toolbar = el(
+    'div',
+    { class: 'toolbar' },
+    searchInput,
+    statusFilter,
+    marketFilter,
+    el('div', { class: 'spacer' }),
+    canCreate
+      ? el(
+          'button',
+          {
+            class: 'btn btn-primary',
+            onClick: () => openOrderForm(null, reload),
+          },
+          'Новый заказ',
+        )
+      : null,
+  );
+
+  main.append(
+    el(
+      'div',
+      { class: 'page-header' },
+      el('h1', { class: 'page-title' }, 'Прямые продажи (Avida)'),
+    ),
+    toolbar,
+    tableArea,
+  );
+  reload();
+}
+
+async function showOrderDetails(order, reload) {
+  const me = JSON.parse(localStorage.getItem('crm_user') || '{}');
+  const canEdit =
+    (me.role === 'admin' || me.id === order.manager_id) && order.status === 'new';
+
+  const itemsTable = el(
+    'table',
+    { class: 'data' },
+    el(
+      'thead',
+      {},
+      el(
+        'tr',
+        {},
+        el('th', {}, 'Артикул'),
+        el('th', {}, 'Название'),
+        el('th', {}, 'Кол-во'),
+        el('th', {}, 'Цена'),
+        el('th', {}, 'Сумма'),
+      ),
+    ),
+    el(
+      'tbody',
+      {},
+      ...(order.items || []).map((it) =>
+        el(
+          'tr',
+          {},
+          el('td', {}, it.sku || '—'),
+          el('td', {}, it.name),
+          el('td', {}, it.quantity),
+          el('td', {}, fmtMoney(it.unit_price, order.currency)),
+          el('td', {}, fmtMoney(it.line_total, order.currency)),
+        ),
+      ),
+    ),
+  );
+
+  const body = el(
+    'div',
+    {},
+    el(
+      'div',
+      { class: 'detail-grid' },
+      el('div', { class: 'k' }, 'Статус'),
+      el('div', {}, badge(order.status, 'order_status')),
+      el('div', { class: 'k' }, 'Площадка'),
+      el('div', {}, order.marketplace || '—'),
+      el('div', { class: 'k' }, 'Внешний номер'),
+      el('div', {}, order.reference_number || '—'),
+      el('div', { class: 'k' }, 'Классификация'),
+      el('div', {}, order.client_classification || '—'),
+      el('div', { class: 'k' }, 'Клиент'),
+      el('div', {}, order.client_name || '—'),
+      el('div', { class: 'k' }, 'Менеджер'),
+      el('div', {}, order.manager_name || '—'),
+      el('div', { class: 'k' }, 'Склад'),
+      el('div', {}, order.warehouse_user_name || '—'),
+      el('div', { class: 'k' }, 'Сумма'),
+      el('div', {}, fmtMoney(order.total_amount, order.currency)),
+      el('div', { class: 'k' }, 'Создан'),
+      el('div', {}, fmtDateTime(order.created_at)),
+      order.reserved_at ? el('div', { class: 'k' }, 'Зарезервирован') : null,
+      order.reserved_at ? el('div', {}, fmtDateTime(order.reserved_at)) : null,
+      order.shipped_at ? el('div', { class: 'k' }, 'Отгружен') : null,
+      order.shipped_at ? el('div', {}, fmtDateTime(order.shipped_at)) : null,
+      order.completed_at ? el('div', { class: 'k' }, 'Завершён') : null,
+      order.completed_at ? el('div', {}, fmtDateTime(order.completed_at)) : null,
+      order.cancelled_at ? el('div', { class: 'k' }, 'Отменён') : null,
+      order.cancelled_at
+        ? el('div', {}, `${fmtDateTime(order.cancelled_at)}${order.cancel_reason ? ' — ' + order.cancel_reason : ''}`)
+        : null,
+    ),
+    order.notes ? el('p', { style: { marginTop: '12px' } }, order.notes) : null,
+    el('h3', { style: { marginTop: '16px' } }, 'Позиции'),
+    itemsTable,
+  );
+
+  await openModal(`Заказ #${order.id}`, body, {
+    size: 'lg',
+    primaryLabel: canEdit ? 'Редактировать' : undefined,
+    onSubmit: canEdit
+      ? async () => {
+          await openOrderForm(order, reload);
+          return true;
+        }
+      : undefined,
+  });
+}
+
+// --- Касса (cashbox)
+
+export async function renderCashbox(main) {
+  await loadLookups();
+  const me = JSON.parse(localStorage.getItem('crm_user') || '{}');
+  const isAdmin = me.role === 'admin';
+  const tableArea = el('div');
+  const summaryArea = el('div');
+
+  async function reload() {
+    clear(summaryArea);
+    clear(tableArea);
+    summaryArea.append(el('div', { class: 'loading' }, 'Загрузка…'));
+    try {
+      const [cashbox, payments] = await Promise.all([
+        api.cashbox(),
+        api.list('payments', { limit: 50 }),
+      ]);
+      renderSummary(cashbox);
+      renderPayments(payments);
+    } catch (e) {
+      clear(summaryArea);
+      summaryArea.append(el('div', { class: 'empty' }, `Ошибка: ${e.message}`));
+    }
+  }
+
+  function renderSummary(cashbox) {
+    clear(summaryArea);
+    summaryArea.append(
+      el(
+        'div',
+        { class: 'balance-card' },
+        el('div', { class: 'label' }, 'Баланс кассы'),
+        el('div', { class: 'value' }, fmtMoney(cashbox.balance, 'RUB')),
+        el(
+          'div',
+          { class: 'sub' },
+          `Подтверждено платежей: ${cashbox.confirmed.count} (${fmtMoney(cashbox.confirmed.sum, 'RUB')})  ·  ` +
+            `На подтверждении: ${cashbox.pending.count} (${fmtMoney(cashbox.pending.sum, 'RUB')})  ·  ` +
+            `Отклонено: ${cashbox.rejected.count}`,
+        ),
+      ),
+    );
+  }
+
+  function renderPayments(result) {
+    clear(tableArea);
+    const rows = result.data || [];
+    if (rows.length === 0) {
+      tableArea.append(el('div', { class: 'card empty' }, 'Платежей нет.'));
+      return;
+    }
+    const head = el(
+      'tr',
+      {},
+      el('th', {}, 'Дата'),
+      el('th', {}, 'Сумма'),
+      el('th', {}, 'Метод'),
+      el('th', {}, 'Заказ'),
+      el('th', {}, 'Транзакция'),
+      el('th', {}, 'Менеджер'),
+      el('th', {}, 'Статус'),
+      el('th', { style: { textAlign: 'right' } }, 'Действия'),
+    );
+    const body = rows.map((p) =>
+      el(
+        'tr',
+        {},
+        el('td', {}, fmtDateTime(p.created_at)),
+        el('td', {}, fmtMoney(p.amount, p.currency)),
+        el('td', {}, p.method ? tr('payment_method', p.method) : '—'),
+        el('td', {}, p.order_reference ? `#${p.order_id} (${p.order_reference})` : p.order_id ? `#${p.order_id}` : '—'),
+        el('td', {}, p.reference || '—'),
+        el('td', {}, p.manager_name || '—'),
+        el('td', {}, badge(p.status, 'payment_status')),
+        el(
+          'td',
+          { style: { textAlign: 'right' } },
+          isAdmin && p.status === 'pending'
+            ? el(
+                'button',
+                {
+                  class: 'btn btn-sm',
+                  style: { color: 'var(--success)' },
+                  onClick: async () => {
+                    await api.confirmPayment(p.id);
+                    toast('Подтверждено', 'success');
+                    reload();
+                  },
+                },
+                'Подтвердить',
+              )
+            : null,
+          isAdmin && p.status === 'pending'
+            ? el(
+                'button',
+                {
+                  class: 'btn btn-sm',
+                  style: { color: 'var(--danger)' },
+                  onClick: async () => {
+                    const reason = prompt('Причина отклонения:') || '';
+                    await api.rejectPayment(p.id, reason);
+                    toast('Отклонено', 'success');
+                    reload();
+                  },
+                },
+                'Отклонить',
+              )
+            : null,
+          p.status === 'rejected' && p.rejection_reason
+            ? el('span', { class: 'hint' }, p.rejection_reason)
+            : null,
+        ),
+      ),
+    );
+    tableArea.append(
+      el(
+        'div',
+        { class: 'table-wrap' },
+        el('table', { class: 'data' }, el('thead', {}, head), el('tbody', {}, ...body)),
+      ),
+    );
+  }
+
+  async function openAddPayment() {
+    const amountI = el('input', { type: 'number', min: '0', step: 'any', required: true });
+    const methodI = el(
+      'select',
+      {},
+      el('option', { value: '' }, '—'),
+      ...Object.entries(T.payment_method).map(([v, l]) =>
+        el('option', { value: v }, l),
+      ),
+    );
+    const referenceI = el('input', { type: 'text', placeholder: 'Номер транзакции' });
+    const orderI = el('input', { type: 'number', min: '1', step: '1', placeholder: 'ID заказа (необязательно)' });
+    const notesI = el('textarea', {});
+
+    const body = el(
+      'div',
+      {},
+      el('div', { class: 'form-row' }, el('label', {}, 'Сумма *'), amountI),
+      el('div', { class: 'form-row' }, el('label', {}, 'Метод'), methodI),
+      el('div', { class: 'form-row' }, el('label', {}, 'Номер транзакции'), referenceI),
+      el('div', { class: 'form-row' }, el('label', {}, 'Привязать к заказу (id)'), orderI),
+      el('div', { class: 'form-row' }, el('label', {}, 'Заметки'), notesI),
+    );
+
+    await openModal('Добавить платёж', body, {
+      primaryLabel: 'Добавить',
+      onSubmit: async () => {
+        const amount = Number(amountI.value);
+        if (!amount || amount <= 0) {
+          toast('Укажите сумму', 'error');
+          return false;
+        }
+        await api.create('payments', {
+          amount,
+          method: methodI.value || null,
+          reference: referenceI.value || null,
+          order_id: orderI.value ? Number(orderI.value) : null,
+          notes: notesI.value || null,
+        });
+        toast('Платёж добавлен, ждёт подтверждения', 'success');
+        reload();
+      },
+    });
+  }
+
+  main.append(
+    el(
+      'div',
+      { class: 'page-header' },
+      el('h1', { class: 'page-title' }, 'Касса'),
+      el('button', { class: 'btn btn-primary', onClick: openAddPayment }, 'Добавить платёж'),
+    ),
+    summaryArea,
+    el('h3', { class: 'page-subtitle', style: { marginTop: '16px', marginBottom: '8px' } }, 'Платежи'),
+    tableArea,
+  );
+  reload();
+}
+
 // --- Страница принятия приглашения (без авторизации)
 export async function renderAcceptInvite(root, token, onAccepted) {
   let invite;

@@ -14,7 +14,7 @@ const DEFAULT_TTL_DAYS = 7;
 const createSchema = z.object({
   email: z.string().email(),
   name: z.string().min(1).optional().nullable(),
-  role: z.enum(['admin', 'manager', 'sales']).default('sales'),
+  role: z.enum(['admin', 'manager', 'sales', 'warehouse']).default('sales'),
   manager_id: z.number().int().positive().optional().nullable(),
   ttl_days: z.number().int().min(1).max(90).optional(),
 });
@@ -38,7 +38,7 @@ router.use(authenticate);
 router.get(
   '/',
   asyncHandler(async (req, res) => {
-    if (req.user.role === 'sales') throw Forbidden();
+    if (!['admin', 'manager'].includes(req.user.role)) throw Forbidden();
     const { page, limit, offset } = parsePagination(req.query);
 
     const where = [];
@@ -78,7 +78,9 @@ router.get(
 router.post(
   '/',
   asyncHandler(async (req, res) => {
-    if (req.user.role === 'sales') throw Forbidden('Продажник не может приглашать');
+    if (!['admin', 'manager'].includes(req.user.role)) {
+      throw Forbidden('Приглашать могут только админ или менеджер');
+    }
     const data = createSchema.parse(req.body);
 
     let role = data.role;

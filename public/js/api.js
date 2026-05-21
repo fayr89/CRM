@@ -75,4 +75,18 @@ export const api = {
 
   dashboard: (query) => request('GET', '/api/dashboard/stats', { query }),
   recent: (query) => request('GET', '/api/dashboard/recent', { query }),
+
+  // Avida / прямые продажи
+  reserveOrder: (id) => request('POST', `/api/orders/${id}/reserve`),
+  shipOrder: (id) => request('POST', `/api/orders/${id}/ship`),
+  completeOrder: (id) => request('POST', `/api/orders/${id}/complete`),
+  cancelOrder: (id, reason) =>
+    request('POST', `/api/orders/${id}/cancel`, { body: { reason } }),
+
+  confirmPayment: (id) => request('POST', `/api/payments/${id}/confirm`),
+  rejectPayment: (id, reason) =>
+    request('POST', `/api/payments/${id}/reject`, { body: { reason } }),
+
+  cashbox: (userId) =>
+    request('GET', userId ? `/api/cashbox/${userId}` : '/api/cashbox'),
 };

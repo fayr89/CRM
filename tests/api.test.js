@@ -17,6 +17,9 @@ if (!dbUrl) {
 
   // Clean DB between test runs
   await ensureInitialized();
+  await db.run('DELETE FROM payments');
+  await db.run('DELETE FROM order_items');
+  await db.run('DELETE FROM orders');
   await db.run('DELETE FROM notes');
   await db.run('DELETE FROM activities');
   await db.run('DELETE FROM deals');
@@ -25,8 +28,10 @@ if (!dbUrl) {
   await db.run('DELETE FROM companies');
   await db.run('DELETE FROM invitations');
   await db.run("DELETE FROM users WHERE email != ?", process.env.ADMIN_EMAIL);
-  // Re-seq for predictable IDs
-  for (const t of ['notes', 'activities', 'deals', 'leads', 'contacts', 'companies', 'invitations']) {
+  for (const t of [
+    'notes', 'activities', 'deals', 'leads', 'contacts', 'companies',
+    'invitations', 'orders', 'order_items', 'payments',
+  ]) {
     await db.run(`ALTER SEQUENCE ${t}_id_seq RESTART WITH 1`);
   }
 
@@ -356,6 +361,159 @@ if (!dbUrl) {
     const r = await req('GET', '/api/dashboard/stats', { token: otherSalesToken });
     assert.equal(r.status, 200);
     assert.equal(r.data.totals.companies, 0);
+  });
+
+  // --- Модуль Avida: заказы, склад, платежи, касса ---
+
+  let warehouseToken, warehouseId, orderId;
+
+  test('admin creates a warehouse user', async () => {
+    const r = await req('POST', '/api/users', {
+      token: adminToken,
+      body: {
+        email: 'wh@test.local',
+        password: 'whpass1',
+        name: 'Склад',
+        role: 'warehouse',
+      },
+    });
+    assert.equal(r.status, 201);
+    assert.equal(r.data.role, 'warehouse');
+    warehouseId = r.data.id;
+    const login = await req('POST', '/api/auth/login', {
+      body: { email: 'wh@test.local', password: 'whpass1' },
+    });
+    warehouseToken = login.data.token;
+  });
+
+  test('manager creates an order with items', async () => {
+    const r = await req('POST', '/api/orders', {
+      token: managerToken,
+      body: {
+        reference_number: 'WB-123456',
+        marketplace: 'Wildberries',
+        client_classification: 'B2C',
+        client_name: 'И.И. Иванов',
+        items: [
+          { sku: 'A-1', name: 'Товар А', quantity: 2, unit_price: 1000 },
+          { sku: 'B-2', name: 'Товар Б', quantity: 1, unit_price: 500 },
+        ],
+      },
+    });
+    assert.equal(r.status, 201);
+    assert.equal(r.data.total_amount, 2500);
+    assert.equal(r.data.status, 'new');
+    assert.equal(r.data.items.length, 2);
+    orderId = r.data.id;
+  });
+
+  test('order requires at least one item', async () => {
+    const r = await req('POST', '/api/orders', {
+      token: managerToken,
+      body: { marketplace: 'Ozon', items: [] },
+    });
+    assert.equal(r.status, 400);
+  });
+
+  test('warehouse sees all orders; sales1 sees nothing from manager', async () => {
+    const fromWh = await req('GET', '/api/orders', { token: warehouseToken });
+    assert.equal(fromWh.status, 200);
+    assert.ok(fromWh.data.data.find((o) => o.id === orderId));
+
+    // Алиса — sales под Марией. Её manager_id = managerId. Заказ создал manager
+    // (managerId), поэтому Алиса (как sales) не видит — она видит только свои.
+    const fromSales = await req('GET', '/api/orders', { token: salesToken });
+    assert.equal(fromSales.status, 200);
+    assert.equal(fromSales.data.data.find((o) => o.id === orderId), undefined);
+  });
+
+  test('warehouse reserves and ships the order', async () => {
+    const reserve = await req('POST', `/api/orders/${orderId}/reserve`, { token: warehouseToken });
+    assert.equal(reserve.status, 200);
+    assert.equal(reserve.data.status, 'reserved');
+    assert.ok(reserve.data.reserved_at);
+
+    const ship = await req('POST', `/api/orders/${orderId}/ship`, { token: warehouseToken });
+    assert.equal(ship.status, 200);
+    assert.equal(ship.data.status, 'shipped');
+    assert.ok(ship.data.shipped_at);
+  });
+
+  test('cannot reserve an already-reserved order', async () => {
+    const r = await req('POST', `/api/orders/${orderId}/reserve`, { token: warehouseToken });
+    assert.equal(r.status, 400);
+  });
+
+  test('manager cannot reserve', async () => {
+    const order2 = await req('POST', '/api/orders', {
+      token: managerToken,
+      body: { items: [{ name: 'X', quantity: 1, unit_price: 100 }] },
+    });
+    const r = await req('POST', `/api/orders/${order2.data.id}/reserve`, { token: managerToken });
+    assert.equal(r.status, 403);
+  });
+
+  test('manager adds a payment for the shipped order', async () => {
+    const r = await req('POST', '/api/payments', {
+      token: managerToken,
+      body: {
+        amount: 2500,
+        currency: 'RUB',
+        method: 'bank_transfer',
+        reference: 'TRX-789',
+        order_id: orderId,
+      },
+    });
+    assert.equal(r.status, 201);
+    assert.equal(r.data.status, 'pending');
+    assert.equal(r.data.amount, 2500);
+  });
+
+  test('cashbox shows pending payment, zero balance until confirmed', async () => {
+    const r = await req('GET', '/api/cashbox', { token: managerToken });
+    assert.equal(r.status, 200);
+    assert.equal(r.data.balance, 0);
+    assert.equal(r.data.pending.count, 1);
+    assert.equal(r.data.pending.sum, 2500);
+  });
+
+  test('warehouse cannot see payments', async () => {
+    const r = await req('GET', '/api/payments', { token: warehouseToken });
+    assert.equal(r.status, 200);
+    assert.equal(r.data.data.length, 0);
+  });
+
+  test('admin confirms the payment, balance updates', async () => {
+    const payments = await req('GET', '/api/payments?status=pending', { token: adminToken });
+    const paymentId = payments.data.data[0].id;
+    const confirm = await req('POST', `/api/payments/${paymentId}/confirm`, { token: adminToken });
+    assert.equal(confirm.status, 200);
+    assert.equal(confirm.data.status, 'confirmed');
+
+    const cashbox = await req('GET', '/api/cashbox', { token: managerToken });
+    assert.equal(cashbox.data.balance, 2500);
+    assert.equal(cashbox.data.confirmed.count, 1);
+    assert.equal(cashbox.data.pending.count, 0);
+  });
+
+  test('admin can reject a payment with reason', async () => {
+    const created = await req('POST', '/api/payments', {
+      token: managerToken,
+      body: { amount: 100, method: 'cash' },
+    });
+    const reject = await req('POST', `/api/payments/${created.data.id}/reject`, {
+      token: adminToken,
+      body: { reason: 'Не подтверждена оплата' },
+    });
+    assert.equal(reject.status, 200);
+    assert.equal(reject.data.status, 'rejected');
+    assert.equal(reject.data.rejection_reason, 'Не подтверждена оплата');
+  });
+
+  test('manager completes the shipped order', async () => {
+    const r = await req('POST', `/api/orders/${orderId}/complete`, { token: managerToken });
+    assert.equal(r.status, 200);
+    assert.equal(r.data.status, 'completed');
   });
 
   test.after(async () => {

@@ -91,12 +91,38 @@ export const T = {
     admin: 'Админ',
     manager: 'Менеджер',
     sales: 'Продажник',
+    warehouse: 'Склад',
   },
   related: {
     contact: 'контакт',
     company: 'компания',
     lead: 'лид',
     deal: 'сделка',
+  },
+  order_status: {
+    new: 'Новый',
+    reserved: 'Зарезервирован',
+    shipped: 'Отгружен',
+    completed: 'Завершён',
+    cancelled: 'Отменён',
+  },
+  payment_status: {
+    pending: 'На подтверждении',
+    confirmed: 'Подтверждён',
+    rejected: 'Отклонён',
+  },
+  payment_method: {
+    cash: 'Наличные',
+    card: 'Карта',
+    bank_transfer: 'Банк. перевод',
+    other: 'Другое',
+  },
+  marketplace: {
+    wildberries: 'Wildberries',
+    ozon: 'Ozon',
+    yandex: 'Яндекс.Маркет',
+    avito: 'Avito',
+    other: 'Другое',
   },
 };
 

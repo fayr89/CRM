@@ -51,6 +51,21 @@ async function seed() {
 
   const [alice, bob] = sales;
 
+  // Кладовщик (warehouse) — без менеджера, отдельная роль
+  let warehouseId;
+  {
+    const r = await db.run(
+      `INSERT INTO users (email, password_hash, name, role)
+       VALUES (?, ?, ?, 'warehouse')
+       ON CONFLICT (email) DO UPDATE SET name = EXCLUDED.name
+       RETURNING id`,
+      'warehouse@example.com',
+      hashPassword('warehouse123'),
+      'Кладовщик Кирилл',
+    );
+    warehouseId = r.lastInsertRowid;
+  }
+
   // Компании
   const companyDefs = [
     ['ООО "Ромашка"', 'Производство', 'large', 50000000, alice],
@@ -127,8 +142,75 @@ async function seed() {
     'meeting', 'Демо для ГлобалКорп', dueIn3Days, 'deal', 2, alice,
   );
 
+  // Avida: заказы и платежи
+  const orderDefs = [
+    {
+      ref: 'WB-100001', market: 'Wildberries', clientClass: 'B2C', client: 'И. Иванов',
+      manager: managerId,
+      items: [
+        { sku: 'A-1', name: 'Футболка XL', qty: 2, price: 1200 },
+        { sku: 'A-2', name: 'Кепка', qty: 1, price: 800 },
+      ],
+      status: 'new',
+    },
+    {
+      ref: 'OZ-200345', market: 'Ozon', clientClass: 'B2C', client: 'А. Петрова',
+      manager: managerId,
+      items: [{ sku: 'B-1', name: 'Кружка', qty: 3, price: 450 }],
+      status: 'reserved',
+    },
+    {
+      ref: 'AVT-555', market: 'Avito', clientClass: 'B2B', client: 'ООО "Закупка"',
+      manager: managerId,
+      items: [
+        { sku: 'C-7', name: 'Коробка передач', qty: 1, price: 28000 },
+      ],
+      status: 'shipped',
+    },
+  ];
+  for (const o of orderDefs) {
+    const total = o.items.reduce((s, i) => s + i.qty * i.price, 0);
+    const r = await db.run(
+      `INSERT INTO orders (reference_number, marketplace, client_classification, client_name,
+                           total_amount, currency, status, manager_id,
+                           warehouse_user_id, reserved_at, shipped_at)
+       VALUES (?, ?, ?, ?, ?, 'RUB', ?, ?, ?,
+               ${o.status === 'reserved' || o.status === 'shipped' ? 'NOW()' : 'NULL'},
+               ${o.status === 'shipped' ? 'NOW()' : 'NULL'})
+       RETURNING id`,
+      o.ref, o.market, o.clientClass, o.client, total, o.status, o.manager,
+      o.status === 'new' ? null : warehouseId,
+    );
+    const orderId = r.lastInsertRowid;
+    for (const it of o.items) {
+      await db.run(
+        `INSERT INTO order_items (order_id, sku, name, quantity, unit_price, line_total)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+        orderId, it.sku, it.name, it.qty, it.price, it.qty * it.price,
+      );
+    }
+  }
+
+  // Платежи менеджера: один подтверждённый, один ждёт подтверждения
+  await db.run(
+    `INSERT INTO payments (manager_id, order_id, amount, currency, method, reference, status,
+                          confirmed_by, confirmed_at)
+     VALUES (?, 3, 28000, 'RUB', 'bank_transfer', 'TRX-2026-001', 'confirmed', ?, NOW())`,
+    managerId, adminId,
+  );
+  await db.run(
+    `INSERT INTO payments (manager_id, amount, currency, method, reference, status)
+     VALUES (?, 1350, 'RUB', 'cash', 'CASH-001', 'pending')`,
+    managerId,
+  );
+
   // eslint-disable-next-line no-console
-  console.log('[seed] Демо-данные созданы. Иерархия: admin → Мария (manager) → Алиса, Борис (sales)');
+  console.log(
+    '[seed] Демо-данные созданы.\n' +
+    '  Иерархия: admin → Мария (manager) → Алиса, Борис (sales)\n' +
+    '  Склад:    Кирилл (warehouse@example.com / warehouse123)\n' +
+    '  Avida:    3 заказа в разных статусах, 2 платежа в кассе Марии',
+  );
 }
 
 try {

@@ -125,13 +125,28 @@ CREATE INDEX IF NOT EXISTS idx_notes_related ON notes(related_to_type, related_t
 ALTER TABLE users ADD COLUMN IF NOT EXISTS manager_id INTEGER REFERENCES users(id) ON DELETE SET NULL;
 CREATE INDEX IF NOT EXISTS idx_users_manager ON users(manager_id);
 
+-- Расширяем enum роли до 4 значений (admin/manager/sales/warehouse).
+-- CHECK-ограничение нужно пересоздать, иначе старая проверка не пропустит warehouse.
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.table_constraints
+    WHERE constraint_name = 'users_role_check' AND table_name = 'users'
+  ) THEN
+    ALTER TABLE users DROP CONSTRAINT users_role_check;
+  END IF;
+  ALTER TABLE users ADD CONSTRAINT users_role_check
+    CHECK (role IN ('admin', 'manager', 'sales', 'warehouse'));
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+
 -- Приглашения для регистрации новых пользователей
 CREATE TABLE IF NOT EXISTS invitations (
   id SERIAL PRIMARY KEY,
   token TEXT UNIQUE NOT NULL,
   email TEXT NOT NULL,
   name TEXT,
-  role TEXT NOT NULL CHECK(role IN ('admin', 'manager', 'sales')),
+  role TEXT NOT NULL,
   manager_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
   invited_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
   expires_at TIMESTAMPTZ NOT NULL,
@@ -141,6 +156,79 @@ CREATE TABLE IF NOT EXISTS invitations (
 );
 CREATE INDEX IF NOT EXISTS idx_invitations_token ON invitations(token);
 CREATE INDEX IF NOT EXISTS idx_invitations_inviter ON invitations(invited_by);
+
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.table_constraints
+    WHERE constraint_name = 'invitations_role_check' AND table_name = 'invitations'
+  ) THEN
+    ALTER TABLE invitations DROP CONSTRAINT invitations_role_check;
+  END IF;
+  ALTER TABLE invitations ADD CONSTRAINT invitations_role_check
+    CHECK (role IN ('admin', 'manager', 'sales', 'warehouse'));
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+
+-- Модуль «Прямые продажи» (Avida): заказы, позиции заказа, платежи (касса)
+CREATE TABLE IF NOT EXISTS orders (
+  id SERIAL PRIMARY KEY,
+  reference_number TEXT,
+  marketplace TEXT,
+  client_classification TEXT,
+  client_name TEXT,
+  total_amount REAL NOT NULL DEFAULT 0,
+  currency TEXT NOT NULL DEFAULT 'RUB',
+  status TEXT NOT NULL DEFAULT 'new'
+    CHECK(status IN ('new','reserved','shipped','completed','cancelled')),
+  manager_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  warehouse_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  reserved_at TIMESTAMPTZ,
+  shipped_at TIMESTAMPTZ,
+  completed_at TIMESTAMPTZ,
+  cancelled_at TIMESTAMPTZ,
+  cancel_reason TEXT,
+  notes TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS order_items (
+  id SERIAL PRIMARY KEY,
+  order_id INTEGER NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
+  sku TEXT,
+  name TEXT NOT NULL,
+  quantity INTEGER NOT NULL CHECK(quantity > 0),
+  unit_price REAL NOT NULL DEFAULT 0,
+  line_total REAL NOT NULL DEFAULT 0,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS payments (
+  id SERIAL PRIMARY KEY,
+  manager_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  order_id INTEGER REFERENCES orders(id) ON DELETE SET NULL,
+  amount REAL NOT NULL,
+  currency TEXT NOT NULL DEFAULT 'RUB',
+  method TEXT CHECK(method IN ('cash','card','bank_transfer','other') OR method IS NULL),
+  reference TEXT,
+  status TEXT NOT NULL DEFAULT 'pending'
+    CHECK(status IN ('pending','confirmed','rejected')),
+  confirmed_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  confirmed_at TIMESTAMPTZ,
+  rejection_reason TEXT,
+  notes TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_orders_manager ON orders(manager_id);
+CREATE INDEX IF NOT EXISTS idx_orders_status ON orders(status);
+CREATE INDEX IF NOT EXISTS idx_orders_marketplace ON orders(marketplace);
+CREATE INDEX IF NOT EXISTS idx_order_items_order ON order_items(order_id);
+CREATE INDEX IF NOT EXISTS idx_payments_manager ON payments(manager_id);
+CREATE INDEX IF NOT EXISTS idx_payments_status ON payments(status);
+CREATE INDEX IF NOT EXISTS idx_payments_order ON payments(order_id);
 `;
 
 // Reuse the pool across warm serverless invocations.

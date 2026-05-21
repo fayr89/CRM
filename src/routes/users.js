@@ -14,14 +14,14 @@ const createSchema = z.object({
   email: z.string().email(),
   password: z.string().min(6),
   name: z.string().min(1),
-  role: z.enum(['admin', 'manager', 'sales']).default('sales'),
+  role: z.enum(['admin', 'manager', 'sales', 'warehouse']).default('sales'),
   manager_id: z.number().int().positive().optional().nullable(),
 });
 
 const updateSchema = z.object({
   email: z.string().email().optional(),
   name: z.string().min(1).optional(),
-  role: z.enum(['admin', 'manager', 'sales']).optional(),
+  role: z.enum(['admin', 'manager', 'sales', 'warehouse']).optional(),
   manager_id: z.number().int().positive().nullable().optional(),
   password: z.string().min(6).optional(),
   active: z.boolean().optional(),
@@ -76,8 +76,8 @@ router.post(
     let role = data.role;
     let managerId = data.manager_id ?? null;
 
-    if (req.user.role === 'sales') {
-      throw Forbidden('Продажник не может создавать пользователей');
+    if (!['admin', 'manager'].includes(req.user.role)) {
+      throw Forbidden('Создавать пользователей могут только админ или менеджер');
     }
     if (req.user.role === 'manager') {
       // Менеджер может создавать только sales-подчинённого под собой

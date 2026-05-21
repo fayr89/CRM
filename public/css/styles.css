@@ -158,6 +158,30 @@ table.data tbody tr:last-child td { border-bottom: none; }
 .badge.negotiation { background: #fed7aa; color: #9a3412; }
 .badge.won { background: #d1fae5; color: #065f46; }
 .badge.lost { background: #fee2e2; color: #991b1b; }
+.badge.reserved { background: #fef3c7; color: #92400e; }
+.badge.shipped { background: #c7d2fe; color: #3730a3; }
+.badge.completed { background: #d1fae5; color: #065f46; }
+.badge.cancelled { background: #e5e7eb; color: #4b5563; }
+.badge.pending { background: #fef3c7; color: #92400e; }
+.badge.confirmed { background: #d1fae5; color: #065f46; }
+.badge.rejected { background: #fee2e2; color: #991b1b; }
+
+/* Order items editor */
+.items-editor { border: 1px solid var(--border); border-radius: var(--radius); padding: 8px; margin-top: 6px; }
+.items-editor table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.items-editor th, .items-editor td { padding: 4px 6px; }
+.items-editor th { color: var(--text-muted); font-weight: 600; text-align: left; }
+.items-editor td input { width: 100%; padding: 4px 6px; border: 1px solid var(--border); border-radius: 4px; font-size: 12px; }
+.items-editor .remove-btn { background: transparent; border: none; color: var(--danger); cursor: pointer; font-size: 16px; }
+.items-editor tfoot td { padding-top: 8px; font-weight: 600; }
+
+.balance-card {
+  background: linear-gradient(135deg, #2563eb, #1d4ed8); color: #fff;
+  padding: 24px; border-radius: var(--radius); margin-bottom: 16px;
+}
+.balance-card .label { font-size: 12px; opacity: 0.85; text-transform: uppercase; letter-spacing: 0.5px; }
+.balance-card .value { font-size: 32px; font-weight: 700; margin-top: 6px; }
+.balance-card .sub { font-size: 12px; opacity: 0.85; margin-top: 6px; }
 
 /* ----- Modal ----- */
 .modal-backdrop {

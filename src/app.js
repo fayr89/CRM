@@ -13,6 +13,9 @@ import activitiesRoutes from './routes/activities.js';
 import notesRoutes from './routes/notes.js';
 import dashboardRoutes from './routes/dashboard.js';
 import invitationsRoutes from './routes/invitations.js';
+import ordersRoutes from './routes/orders.js';
+import paymentsRoutes from './routes/payments.js';
+import cashboxRoutes from './routes/cashbox.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = path.resolve(__dirname, '..', 'public');
@@ -43,6 +46,9 @@ export function createApp({ serveStatic = true } = {}) {
         notes: '/api/notes — заметки',
         dashboard: '/api/dashboard/stats — дашборд',
         invitations: '/api/invitations — приглашения',
+        orders: '/api/orders — заказы (модуль Avida / прямые продажи)',
+        payments: '/api/payments — платежи',
+        cashbox: '/api/cashbox — касса менеджера',
       },
     });
   });
@@ -57,6 +63,9 @@ export function createApp({ serveStatic = true } = {}) {
   app.use('/api/notes', notesRoutes);
   app.use('/api/dashboard', dashboardRoutes);
   app.use('/api/invitations', invitationsRoutes);
+  app.use('/api/orders', ordersRoutes);
+  app.use('/api/payments', paymentsRoutes);
+  app.use('/api/cashbox', cashboxRoutes);
 
   app.use((req, res) => {
     res.status(404).json({ error: `Route not found: ${req.method} ${req.path}` });
