@@ -84,6 +84,38 @@ router.get(
   }),
 );
 
+// Топ-20 популярных товаров за последние 30 дней — для блока быстрого добавления.
+// Если в указанной площадке нет цены, marketplace_price = null (менеджер увидит «нет в прайсе»).
+router.get(
+  '/popular',
+  asyncHandler(async (req, res) => {
+    const marketplace = String(req.query.marketplace || '').trim();
+    const days = Math.min(365, Math.max(1, Number(req.query.days) || 30));
+    const limit = Math.min(50, Math.max(1, Number(req.query.limit) || 20));
+    const rows = await db.all(
+      `SELECT p.id, p.sku, p.name, p.image_url, p.cost_price, p.unit,
+              pp.price AS marketplace_price,
+              COALESCE((
+                SELECT SUM(oi.quantity)::int
+                FROM order_items oi
+                JOIN orders o ON o.id = oi.order_id
+                WHERE oi.product_id = p.id
+                  AND o.created_at > NOW() - (? || ' days')::interval
+                  AND o.status != 'cancelled'
+              ), 0) AS recent_usage
+       FROM products p
+       LEFT JOIN product_prices pp ON pp.product_id = p.id AND pp.marketplace = ?
+       WHERE p.active = TRUE
+       ORDER BY recent_usage DESC, p.name ASC
+       LIMIT ?`,
+      String(days),
+      marketplace,
+      limit,
+    );
+    res.json({ data: rows, marketplace, days });
+  }),
+);
+
 router.get(
   '/:id',
   asyncHandler(async (req, res) => {

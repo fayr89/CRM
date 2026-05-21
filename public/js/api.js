@@ -111,6 +111,8 @@ export const api = {
   // Каталог товаров
   productsForMarketplace: (marketplace, search) =>
     request('GET', '/api/products/for-marketplace', { query: { marketplace, search } }),
+  popularProducts: (marketplace, days) =>
+    request('GET', '/api/products/popular', { query: { marketplace, days } }),
   setProductPrice: (id, body) => request('PUT', `/api/products/${id}/prices`, { body }),
   deleteProductPrice: (id, marketplace) =>
     request('DELETE', `/api/products/${id}/prices/${encodeURIComponent(marketplace)}`),

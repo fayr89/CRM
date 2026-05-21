@@ -134,29 +134,59 @@ Tone: **деловой, дружелюбный, не корпоративный*
 
 ---
 
-## 7. Создание заказа с пикером товаров
+## 7. Создание заказа с быстрым добавлением товаров
 
 > **Промпт v0:**
-> Design an "Order create/edit" modal form:
+> Design an "Order create/edit" modal form with a streamlined product picker UX.
 > 
-> Top section: 2-column grid — Reference #, Marketplace (select with options Wildberries/Ozon/Яндекс.Маркет/Avito/Другое), Client classification, Client name, Currency, Notes (textarea).
+> ### Top section
+> 2-column grid: Reference #, Marketplace (select: Wildberries/Ozon/Яндекс.Маркет/Avito/Другое), Client classification, Client name, Currency, Notes (textarea).
 > 
-> **Items section** below: table with these columns:
+> ### Items section — three layers of speed
+> 
+> **A. Quick-add box** (sits above the items table, light-gray bg, padded box):
+> 
+> 1. **Type-ahead search input** with a search icon — `Начните вводить название или артикул…`
+>    - As user types (debounced ~180ms), show an absolutely-positioned **suggestions dropdown** below the input
+>    - Suggestion rows: 36x36 thumbnail (or 📦 placeholder) | name (bold) + "Арт: XXX" (muted) | marketplace price (bold blue) on right (or "нет в прайсе" in amber)
+>    - Arrow keys ↑/↓ navigate, Enter adds, Esc closes, blur closes
+>    - Highlighted suggestion has `#eff6ff` bg
+>    - Click on suggestion → adds product as new row, clears input, refocuses for next item
+>    - Empty state: "Ничего не найдено. Сначала добавьте товар в Каталог."
+> 
+> 2. **«📦 Каталог» button** on the right of the search input — opens the full picker modal (fallback for when search isn't enough).
+> 
+> 3. **«⚡ Популярные за 30 дней»** — horizontal-scrolling strip of **20 product cards** ranked by recent order usage:
+>    - Each card: 120px wide, 140px tall, white bg, hover lifts with blue border
+>    - Content: 56x56 thumbnail | 2-line truncated name | marketplace price in bold blue
+>    - **Recent-usage badge** top-right (e.g. "× 42") if used more than once recently
+>    - Horizontal scroll with thin scrollbar
+>    - Click → instantly adds as quantity 1 row in items table
+>    - Header above strip: "⚡ Популярные за 30 дней" + small hint "клик — добавить"
+> 
+> **B. Items table** below the quick-add box:
 > | thumbnail (40x40) | SKU + 📦-button | name | qty | price | × |
 > 
-> The **📦-button next to SKU** opens a **product picker modal**:
-> - Top: search input with marketplace tag chip (e.g. "Wildberries") and a close X
-> - Body: scrollable list of products. Each row: 48x48 thumbnail (or 📦 if no image) | name + SKU + cost price (muted) | marketplace-specific price in bold blue right-aligned (or "нет в прайсе" in amber if no price for current marketplace)
-> - On row click → fill the order item line with name, SKU, image, AND price from this marketplace
+> Rows can also be added via the **«+ Добавить пустую позицию»** button at the bottom for ad-hoc items not in the catalog.
 > 
-> **Price field behavior**: if `unit_price !== catalog_price`, show a small inline hint:
+> Each row's 📦-button opens the **full product picker modal**:
+> - Top: search input with marketplace tag chip (e.g. "Wildberries") and a close X
+> - Body: scrollable list of products with thumbnail, name, SKU, marketplace price
+> - On row click → fills the order item line
+> 
+> ### Price field behavior
+> When `unit_price !== catalog_price`, show a small inline hint under the price:
 > - "📝 изменено · прайс: 1500 ₽" (amber, italic) when changed manually
 > - "прайс: 1500 ₽" (green) when matches catalog
 > 
-> Marketplace select change → re-fetch catalog prices for all already-picked items, update the "catalog_price" reference but don't touch the user's unit_price. This way the user sees "📝 изменено" if they kept the old price after switching marketplace.
+> ### Marketplace select change
+> Re-fetch catalog prices for all picked items AND refresh the popular strip with new marketplace prices. Don't touch the user's unit_price values. This way the user sees "📝 изменено" if they kept the old price after switching marketplace.
 > 
-> Below table: "Итого: X ₽" right-aligned in bold.
-> Add row button: "+ Добавить позицию".
+> ### Footer
+> "Итого: X ₽" right-aligned in bold.
+> 
+> ### Keyboard flow
+> A power user should be able to: open form → Tab to search → type "fut" → ↓ → Enter → adds футболку → continues to next position without touching mouse.
 
 ---
 

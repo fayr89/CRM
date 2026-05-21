@@ -882,6 +882,232 @@ function itemsEditor(initialItems = [], { getMarketplace } = {}) {
     ),
   );
   const tfoot = el('tfoot', {}, el('tr', {}, totalCell));
+
+  // --- Блок быстрого добавления: поиск с подсказками + полоса популярных ---
+
+  function addProductRow(product) {
+    addRow({
+      sku: product.sku,
+      name: product.name,
+      quantity: 1,
+      unit_price: product.marketplace_price ?? product.cost_price ?? 0,
+      product_id: product.id,
+      image_url: product.image_url,
+      catalog_price: product.marketplace_price ?? null,
+    });
+  }
+
+  // Поле поиска с autocomplete-выпадашкой
+  const searchInput = el('input', {
+    type: 'text',
+    class: 'quick-add-search',
+    placeholder: 'Начните вводить название или артикул…',
+    autocomplete: 'off',
+  });
+  const suggestions = el('div', { class: 'quick-add-suggestions', style: { display: 'none' } });
+  let highlightIndex = -1;
+  let currentSuggestions = [];
+
+  function renderSuggestions(items) {
+    clear(suggestions);
+    currentSuggestions = items;
+    highlightIndex = -1;
+    if (items.length === 0) {
+      suggestions.append(
+        el('div', { class: 'quick-add-empty' }, 'Ничего не найдено. Сначала добавьте товар в Каталог.'),
+      );
+      suggestions.style.display = 'block';
+      return;
+    }
+    items.forEach((p, idx) => {
+      suggestions.append(
+        el(
+          'div',
+          {
+            class: 'quick-add-suggestion',
+            'data-idx': idx,
+            onMousedown: (e) => {
+              e.preventDefault();
+              pickSuggestion(idx);
+            },
+            onMouseenter: () => setHighlight(idx),
+          },
+          p.image_url
+            ? el('img', { src: p.image_url, class: 'qa-thumb', alt: '' })
+            : el('div', { class: 'qa-thumb empty' }, '📦'),
+          el(
+            'div',
+            { class: 'qa-info' },
+            el('div', { class: 'qa-name' }, p.name),
+            el(
+              'div',
+              { class: 'qa-meta' },
+              p.sku ? `Арт: ${p.sku}` : 'Без артикула',
+            ),
+          ),
+          el(
+            'div',
+            { class: 'qa-price' },
+            p.marketplace_price != null
+              ? `${p.marketplace_price.toLocaleString('ru-RU')} ₽`
+              : el('span', { class: 'qa-no-price' }, 'нет в прайсе'),
+          ),
+        ),
+      );
+    });
+    suggestions.style.display = 'block';
+  }
+
+  function setHighlight(idx) {
+    const items = suggestions.querySelectorAll('.quick-add-suggestion');
+    items.forEach((el2) => el2.classList.remove('highlighted'));
+    if (idx >= 0 && idx < items.length) {
+      items[idx].classList.add('highlighted');
+      items[idx].scrollIntoView({ block: 'nearest' });
+    }
+    highlightIndex = idx;
+  }
+
+  function pickSuggestion(idx) {
+    const p = currentSuggestions[idx];
+    if (!p) return;
+    addProductRow(p);
+    searchInput.value = '';
+    suggestions.style.display = 'none';
+    currentSuggestions = [];
+    searchInput.focus();
+  }
+
+  let searchDebounce;
+  searchInput.addEventListener('input', () => {
+    clearTimeout(searchDebounce);
+    const q = searchInput.value.trim();
+    if (q.length < 1) {
+      suggestions.style.display = 'none';
+      return;
+    }
+    searchDebounce = setTimeout(async () => {
+      try {
+        const r = await api.productsForMarketplace(getMarketplace?.() || '', q);
+        renderSuggestions((r.data || []).slice(0, 8));
+      } catch (e) {
+        renderSuggestions([]);
+      }
+    }, 180);
+  });
+
+  searchInput.addEventListener('keydown', (e) => {
+    if (suggestions.style.display === 'none') return;
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      setHighlight(Math.min(highlightIndex + 1, currentSuggestions.length - 1));
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      setHighlight(Math.max(highlightIndex - 1, 0));
+    } else if (e.key === 'Enter') {
+      if (highlightIndex >= 0) {
+        e.preventDefault();
+        pickSuggestion(highlightIndex);
+      }
+    } else if (e.key === 'Escape') {
+      suggestions.style.display = 'none';
+    }
+  });
+
+  searchInput.addEventListener('blur', () => {
+    setTimeout(() => {
+      suggestions.style.display = 'none';
+    }, 150);
+  });
+  searchInput.addEventListener('focus', () => {
+    if (currentSuggestions.length > 0) suggestions.style.display = 'block';
+  });
+
+  const fullCatalogBtn = el(
+    'button',
+    {
+      type: 'button',
+      class: 'btn btn-sm',
+      onClick: async () => {
+        const product = await openProductPicker(getMarketplace?.() || '');
+        if (product) addProductRow(product);
+      },
+      title: 'Открыть полный каталог',
+    },
+    '📦 Каталог',
+  );
+
+  // Полоса 20 популярных товаров
+  const popularStrip = el('div', { class: 'popular-strip' });
+  const popularHeader = el(
+    'div',
+    { class: 'popular-header' },
+    el('span', {}, '⚡ Популярные за 30 дней'),
+    el('span', { class: 'popular-hint' }, 'клик — добавить'),
+  );
+
+  async function refreshPopular() {
+    try {
+      const r = await api.popularProducts(getMarketplace?.() || '', 30);
+      clear(popularStrip);
+      const items = r.data || [];
+      if (items.length === 0) {
+        popularStrip.append(
+          el(
+            'div',
+            { class: 'popular-empty' },
+            'В каталоге пока нет товаров. Добавьте на странице «Каталог».',
+          ),
+        );
+        return;
+      }
+      for (const p of items) {
+        popularStrip.append(
+          el(
+            'button',
+            {
+              type: 'button',
+              class: 'popular-card',
+              title: p.name + (p.sku ? ` (${p.sku})` : ''),
+              onClick: () => addProductRow(p),
+            },
+            p.image_url
+              ? el('img', { src: p.image_url, class: 'popular-card-img', alt: '' })
+              : el('div', { class: 'popular-card-img empty' }, '📦'),
+            el('div', { class: 'popular-card-name' }, p.name),
+            el(
+              'div',
+              { class: 'popular-card-price' },
+              p.marketplace_price != null
+                ? `${p.marketplace_price.toLocaleString('ru-RU')} ₽`
+                : el('span', { class: 'popular-no-price' }, 'нет в прайсе'),
+            ),
+            p.recent_usage > 0
+              ? el('div', { class: 'popular-card-badge' }, `× ${p.recent_usage}`)
+              : null,
+          ),
+        );
+      }
+    } catch (e) {
+      clear(popularStrip);
+      popularStrip.append(el('div', { class: 'popular-empty' }, `Ошибка: ${e.message}`));
+    }
+  }
+
+  const quickAddBox = el(
+    'div',
+    { class: 'quick-add-box' },
+    el(
+      'div',
+      { class: 'quick-add-row' },
+      el('div', { class: 'quick-add-input-wrap' }, searchInput, suggestions),
+      fullCatalogBtn,
+    ),
+    popularHeader,
+    popularStrip,
+  );
+
+  wrap.append(quickAddBox);
   wrap.append(el('table', {}, head, tbody, tfoot));
 
   const addBtn = el(
@@ -892,15 +1118,21 @@ function itemsEditor(initialItems = [], { getMarketplace } = {}) {
       onClick: () => addRow(),
       style: { marginTop: '8px' },
     },
-    '+ Добавить позицию',
+    '+ Добавить пустую позицию',
   );
   wrap.append(addBtn);
 
   if (initialItems.length === 0) addRow();
   else initialItems.forEach(addRow);
   recalc();
+  refreshPopular();
 
-  return { node: wrap, getItems, refreshCatalogPrices };
+  // При смене площадки — переподтягиваем популярные (цены обновятся) + прайсы выбранных строк.
+  async function refreshAll() {
+    await Promise.all([refreshCatalogPrices(), refreshPopular()]);
+  }
+
+  return { node: wrap, getItems, refreshCatalogPrices: refreshAll };
 }
 
 // Пикер товара: открывает модалку со списком, фильтрация по поиску.
