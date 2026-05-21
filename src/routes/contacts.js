@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { authenticate } from '../auth.js';
-import { getDb } from '../db.js';
+import { db } from '../db.js';
 import { NotFound, asyncHandler } from '../errors.js';
 import { parsePagination, parseSort, paginated } from '../query.js';
 
@@ -30,36 +30,39 @@ router.get(
   asyncHandler(async (req, res) => {
     const { page, limit, offset } = parsePagination(req.query);
     const sort = parseSort(req.query, SORT_COLUMNS, 'created_at', 'DESC');
-    const db = getDb();
 
     const where = [];
     const params = [];
     if (req.query.search) {
-      where.push('(first_name LIKE ? OR last_name LIKE ? OR email LIKE ? OR phone LIKE ?)');
+      where.push(
+        '(c.first_name ILIKE ? OR c.last_name ILIKE ? OR c.email ILIKE ? OR c.phone ILIKE ?)',
+      );
       const s = `%${req.query.search}%`;
       params.push(s, s, s, s);
     }
     if (req.query.company_id) {
-      where.push('company_id = ?');
+      where.push('c.company_id = ?');
       params.push(Number(req.query.company_id));
     }
     if (req.query.owner_id) {
-      where.push('owner_id = ?');
+      where.push('c.owner_id = ?');
       params.push(Number(req.query.owner_id));
     }
     const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
 
-    const rows = db
-      .prepare(
-        `SELECT c.*, comp.name AS company_name
-         FROM contacts c
-         LEFT JOIN companies comp ON comp.id = c.company_id
-         ${whereSql} ORDER BY c.${sort.column} ${sort.dir} LIMIT ? OFFSET ?`,
-      )
-      .all(...params, limit, offset);
-    const { total } = db
-      .prepare(`SELECT COUNT(*) AS total FROM contacts ${whereSql}`)
-      .get(...params);
+    const rows = await db.all(
+      `SELECT c.*, comp.name AS company_name
+       FROM contacts c
+       LEFT JOIN companies comp ON comp.id = c.company_id
+       ${whereSql} ORDER BY c.${sort.column} ${sort.dir} LIMIT ? OFFSET ?`,
+      ...params,
+      limit,
+      offset,
+    );
+    const { total } = await db.get(
+      `SELECT COUNT(*)::int AS total FROM contacts c ${whereSql}`,
+      ...params,
+    );
     res.json(paginated(rows, total, page, limit));
   }),
 );
@@ -67,16 +70,14 @@ router.get(
 router.get(
   '/:id',
   asyncHandler(async (req, res) => {
-    const db = getDb();
-    const contact = db
-      .prepare(
-        `SELECT c.*, comp.name AS company_name
-         FROM contacts c
-         LEFT JOIN companies comp ON comp.id = c.company_id
-         WHERE c.id = ?`,
-      )
-      .get(req.params.id);
-    if (!contact) throw NotFound('Contact not found');
+    const contact = await db.get(
+      `SELECT c.*, comp.name AS company_name
+       FROM contacts c
+       LEFT JOIN companies comp ON comp.id = c.company_id
+       WHERE c.id = ?`,
+      req.params.id,
+    );
+    if (!contact) throw NotFound('Контакт не найден');
     res.json(contact);
   }),
 );
@@ -85,24 +86,20 @@ router.post(
   '/',
   asyncHandler(async (req, res) => {
     const data = createSchema.parse(req.body);
-    const db = getDb();
-    const result = db
-      .prepare(
-        `INSERT INTO contacts
-         (first_name, last_name, email, phone, position, company_id, owner_id, notes)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      )
-      .run(
-        data.first_name,
-        data.last_name ?? null,
-        data.email || null,
-        data.phone ?? null,
-        data.position ?? null,
-        data.company_id ?? null,
-        data.owner_id ?? req.user.id,
-        data.notes ?? null,
-      );
-    const created = db.prepare('SELECT * FROM contacts WHERE id = ?').get(result.lastInsertRowid);
+    const result = await db.run(
+      `INSERT INTO contacts
+       (first_name, last_name, email, phone, position, company_id, owner_id, notes)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
+      data.first_name,
+      data.last_name ?? null,
+      data.email || null,
+      data.phone ?? null,
+      data.position ?? null,
+      data.company_id ?? null,
+      data.owner_id ?? req.user.id,
+      data.notes ?? null,
+    );
+    const created = await db.get('SELECT * FROM contacts WHERE id = ?', result.lastInsertRowid);
     res.status(201).json(created);
   }),
 );
@@ -111,9 +108,8 @@ router.patch(
   '/:id',
   asyncHandler(async (req, res) => {
     const data = updateSchema.parse(req.body);
-    const db = getDb();
-    const existing = db.prepare('SELECT * FROM contacts WHERE id = ?').get(req.params.id);
-    if (!existing) throw NotFound('Contact not found');
+    const existing = await db.get('SELECT * FROM contacts WHERE id = ?', req.params.id);
+    if (!existing) throw NotFound('Контакт не найден');
 
     const updates = [];
     const params = [];
@@ -133,19 +129,18 @@ router.patch(
       }
     }
     if (!updates.length) return res.json(existing);
-    updates.push("updated_at = datetime('now')");
+    updates.push('updated_at = NOW()');
     params.push(req.params.id);
-    db.prepare(`UPDATE contacts SET ${updates.join(', ')} WHERE id = ?`).run(...params);
-    res.json(db.prepare('SELECT * FROM contacts WHERE id = ?').get(req.params.id));
+    await db.run(`UPDATE contacts SET ${updates.join(', ')} WHERE id = ?`, ...params);
+    res.json(await db.get('SELECT * FROM contacts WHERE id = ?', req.params.id));
   }),
 );
 
 router.delete(
   '/:id',
   asyncHandler(async (req, res) => {
-    const db = getDb();
-    const result = db.prepare('DELETE FROM contacts WHERE id = ?').run(req.params.id);
-    if (result.changes === 0) throw NotFound('Contact not found');
+    const result = await db.run('DELETE FROM contacts WHERE id = ?', req.params.id);
+    if (result.changes === 0) throw NotFound('Контакт не найден');
     res.status(204).send();
   }),
 );

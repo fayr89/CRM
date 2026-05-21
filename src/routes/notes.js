@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { authenticate } from '../auth.js';
-import { getDb } from '../db.js';
+import { db } from '../db.js';
 import { Forbidden, NotFound, asyncHandler } from '../errors.js';
 import { parsePagination, paginated } from '../query.js';
 
@@ -25,7 +25,6 @@ router.get(
   '/',
   asyncHandler(async (req, res) => {
     const { page, limit, offset } = parsePagination(req.query);
-    const db = getDb();
 
     const where = [];
     const params = [];
@@ -43,16 +42,18 @@ router.get(
     }
     const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
 
-    const rows = db
-      .prepare(
-        `SELECT n.*, u.name AS author_name FROM notes n
-         LEFT JOIN users u ON u.id = n.author_id
-         ${whereSql} ORDER BY n.created_at DESC LIMIT ? OFFSET ?`,
-      )
-      .all(...params, limit, offset);
-    const { total } = db
-      .prepare(`SELECT COUNT(*) AS total FROM notes ${whereSql}`)
-      .get(...params);
+    const rows = await db.all(
+      `SELECT n.*, u.name AS author_name FROM notes n
+       LEFT JOIN users u ON u.id = n.author_id
+       ${whereSql} ORDER BY n.created_at DESC LIMIT ? OFFSET ?`,
+      ...params,
+      limit,
+      offset,
+    );
+    const { total } = await db.get(
+      `SELECT COUNT(*)::int AS total FROM notes ${whereSql}`,
+      ...params,
+    );
     res.json(paginated(rows, total, page, limit));
   }),
 );
@@ -60,15 +61,13 @@ router.get(
 router.get(
   '/:id',
   asyncHandler(async (req, res) => {
-    const db = getDb();
-    const note = db
-      .prepare(
-        `SELECT n.*, u.name AS author_name FROM notes n
-         LEFT JOIN users u ON u.id = n.author_id
-         WHERE n.id = ?`,
-      )
-      .get(req.params.id);
-    if (!note) throw NotFound('Note not found');
+    const note = await db.get(
+      `SELECT n.*, u.name AS author_name FROM notes n
+       LEFT JOIN users u ON u.id = n.author_id
+       WHERE n.id = ?`,
+      req.params.id,
+    );
+    if (!note) throw NotFound('Заметка не найдена');
     res.json(note);
   }),
 );
@@ -77,16 +76,17 @@ router.post(
   '/',
   asyncHandler(async (req, res) => {
     const data = createSchema.parse(req.body);
-    const db = getDb();
-    const result = db
-      .prepare(
-        `INSERT INTO notes (content, related_to_type, related_to_id, author_id)
-         VALUES (?, ?, ?, ?)`,
-      )
-      .run(data.content, data.related_to_type, data.related_to_id, req.user.id);
+    const result = await db.run(
+      `INSERT INTO notes (content, related_to_type, related_to_id, author_id)
+       VALUES (?, ?, ?, ?) RETURNING id`,
+      data.content,
+      data.related_to_type,
+      data.related_to_id,
+      req.user.id,
+    );
     res
       .status(201)
-      .json(db.prepare('SELECT * FROM notes WHERE id = ?').get(result.lastInsertRowid));
+      .json(await db.get('SELECT * FROM notes WHERE id = ?', result.lastInsertRowid));
   }),
 );
 
@@ -94,29 +94,25 @@ router.patch(
   '/:id',
   asyncHandler(async (req, res) => {
     const data = updateSchema.parse(req.body);
-    const db = getDb();
-    const existing = db.prepare('SELECT * FROM notes WHERE id = ?').get(req.params.id);
-    if (!existing) throw NotFound('Note not found');
+    const existing = await db.get('SELECT * FROM notes WHERE id = ?', req.params.id);
+    if (!existing) throw NotFound('Заметка не найдена');
     if (existing.author_id !== req.user.id && req.user.role !== 'admin') {
-      throw Forbidden('You can only edit your own notes');
+      throw Forbidden('Можно редактировать только свои заметки');
     }
-    db.prepare(
-      `UPDATE notes SET content = ?, updated_at = datetime('now') WHERE id = ?`,
-    ).run(data.content, req.params.id);
-    res.json(db.prepare('SELECT * FROM notes WHERE id = ?').get(req.params.id));
+    await db.run(`UPDATE notes SET content = ?, updated_at = NOW() WHERE id = ?`, data.content, req.params.id);
+    res.json(await db.get('SELECT * FROM notes WHERE id = ?', req.params.id));
   }),
 );
 
 router.delete(
   '/:id',
   asyncHandler(async (req, res) => {
-    const db = getDb();
-    const existing = db.prepare('SELECT * FROM notes WHERE id = ?').get(req.params.id);
-    if (!existing) throw NotFound('Note not found');
+    const existing = await db.get('SELECT * FROM notes WHERE id = ?', req.params.id);
+    if (!existing) throw NotFound('Заметка не найдена');
     if (existing.author_id !== req.user.id && req.user.role !== 'admin') {
-      throw Forbidden('You can only delete your own notes');
+      throw Forbidden('Можно удалять только свои заметки');
     }
-    db.prepare('DELETE FROM notes WHERE id = ?').run(req.params.id);
+    await db.run('DELETE FROM notes WHERE id = ?', req.params.id);
     res.status(204).send();
   }),
 );

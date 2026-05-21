@@ -1,23 +1,21 @@
-import Database from 'better-sqlite3';
+import pg from 'pg';
 import bcrypt from 'bcryptjs';
-import fs from 'node:fs';
-import path from 'node:path';
 import { config } from './config.js';
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS users (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  id SERIAL PRIMARY KEY,
   email TEXT UNIQUE NOT NULL,
   password_hash TEXT NOT NULL,
   name TEXT NOT NULL,
   role TEXT NOT NULL DEFAULT 'sales' CHECK(role IN ('admin', 'manager', 'sales')),
-  active INTEGER NOT NULL DEFAULT 1,
-  created_at TEXT NOT NULL DEFAULT (datetime('now')),
-  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+  active BOOLEAN NOT NULL DEFAULT TRUE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 CREATE TABLE IF NOT EXISTS companies (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  id SERIAL PRIMARY KEY,
   name TEXT NOT NULL,
   industry TEXT,
   website TEXT,
@@ -28,12 +26,12 @@ CREATE TABLE IF NOT EXISTS companies (
   annual_revenue REAL,
   description TEXT,
   owner_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
-  created_at TEXT NOT NULL DEFAULT (datetime('now')),
-  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 CREATE TABLE IF NOT EXISTS contacts (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  id SERIAL PRIMARY KEY,
   first_name TEXT NOT NULL,
   last_name TEXT,
   email TEXT,
@@ -42,12 +40,12 @@ CREATE TABLE IF NOT EXISTS contacts (
   company_id INTEGER REFERENCES companies(id) ON DELETE SET NULL,
   owner_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
   notes TEXT,
-  created_at TEXT NOT NULL DEFAULT (datetime('now')),
-  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 CREATE TABLE IF NOT EXISTS leads (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  id SERIAL PRIMARY KEY,
   first_name TEXT NOT NULL,
   last_name TEXT,
   email TEXT,
@@ -61,51 +59,51 @@ CREATE TABLE IF NOT EXISTS leads (
   owner_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
   converted_contact_id INTEGER REFERENCES contacts(id) ON DELETE SET NULL,
   converted_deal_id INTEGER,
-  converted_at TEXT,
-  created_at TEXT NOT NULL DEFAULT (datetime('now')),
-  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+  converted_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 CREATE TABLE IF NOT EXISTS deals (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  id SERIAL PRIMARY KEY,
   title TEXT NOT NULL,
   amount REAL NOT NULL DEFAULT 0,
   currency TEXT NOT NULL DEFAULT 'USD',
   stage TEXT NOT NULL DEFAULT 'new' CHECK(stage IN ('new','qualified','proposal','negotiation','won','lost')),
   probability INTEGER NOT NULL DEFAULT 10 CHECK(probability BETWEEN 0 AND 100),
-  expected_close_date TEXT,
-  closed_at TEXT,
+  expected_close_date TIMESTAMPTZ,
+  closed_at TIMESTAMPTZ,
   lost_reason TEXT,
   contact_id INTEGER REFERENCES contacts(id) ON DELETE SET NULL,
   company_id INTEGER REFERENCES companies(id) ON DELETE SET NULL,
   owner_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
   description TEXT,
-  created_at TEXT NOT NULL DEFAULT (datetime('now')),
-  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 CREATE TABLE IF NOT EXISTS activities (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  id SERIAL PRIMARY KEY,
   type TEXT NOT NULL CHECK(type IN ('call','email','meeting','task')),
   subject TEXT NOT NULL,
   description TEXT,
-  due_date TEXT,
-  completed_at TEXT,
+  due_date TIMESTAMPTZ,
+  completed_at TIMESTAMPTZ,
   related_to_type TEXT CHECK(related_to_type IN ('contact','company','lead','deal') OR related_to_type IS NULL),
   related_to_id INTEGER,
   owner_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
-  created_at TEXT NOT NULL DEFAULT (datetime('now')),
-  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 CREATE TABLE IF NOT EXISTS notes (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  id SERIAL PRIMARY KEY,
   content TEXT NOT NULL,
   related_to_type TEXT NOT NULL CHECK(related_to_type IN ('contact','company','lead','deal')),
   related_to_id INTEGER NOT NULL,
   author_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
-  created_at TEXT NOT NULL DEFAULT (datetime('now')),
-  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 CREATE INDEX IF NOT EXISTS idx_contacts_company ON contacts(company_id);
@@ -124,42 +122,105 @@ CREATE INDEX IF NOT EXISTS idx_activities_owner ON activities(owner_id);
 CREATE INDEX IF NOT EXISTS idx_notes_related ON notes(related_to_type, related_to_id);
 `;
 
-let dbInstance = null;
-
-export function getDb() {
-  if (dbInstance) return dbInstance;
-
-  const dir = path.dirname(config.databasePath);
-  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-
-  const db = new Database(config.databasePath);
-  db.pragma('journal_mode = WAL');
-  db.pragma('foreign_keys = ON');
-  db.exec(SCHEMA);
-
-  dbInstance = db;
-  ensureDefaultAdmin(db);
-  return db;
+// Reuse the pool across warm serverless invocations.
+function getPool() {
+  if (globalThis.__crmPool) return globalThis.__crmPool;
+  if (!config.databaseUrl) {
+    throw new Error('DATABASE_URL is not set. Configure it in .env or in your Vercel project settings.');
+  }
+  const needsSsl =
+    config.env === 'production' ||
+    /supabase\.com|render\.com|neon\.tech|amazonaws\.com/.test(config.databaseUrl);
+  const pool = new pg.Pool({
+    connectionString: config.databaseUrl,
+    max: config.env === 'production' ? 1 : 5,
+    ssl: needsSsl ? { rejectUnauthorized: false } : false,
+  });
+  pool.on('error', (err) => {
+    // eslint-disable-next-line no-console
+    console.error('[pg] pool error', err);
+  });
+  globalThis.__crmPool = pool;
+  return pool;
 }
 
-function ensureDefaultAdmin(db) {
-  const { count } = db.prepare('SELECT COUNT(*) AS count FROM users').get();
-  if (count > 0) return;
+function convertSql(sql) {
+  let i = 0;
+  return sql.replace(/\?/g, () => `$${++i}`);
+}
 
+async function rawQuery(client, sql, params) {
+  return client.query(convertSql(sql), params);
+}
+
+function makeApi(client) {
+  return {
+    async get(sql, ...params) {
+      const r = await rawQuery(client, sql, params);
+      return r.rows[0];
+    },
+    async all(sql, ...params) {
+      const r = await rawQuery(client, sql, params);
+      return r.rows;
+    },
+    async run(sql, ...params) {
+      const r = await rawQuery(client, sql, params);
+      return { changes: r.rowCount, rows: r.rows, lastInsertRowid: r.rows[0]?.id };
+    },
+    prepare(sql) {
+      return {
+        run: (...args) => this.run(sql, ...args),
+        get: (...args) => this.get(sql, ...args),
+        all: (...args) => this.all(sql, ...args),
+      };
+    },
+  };
+}
+
+export const db = {
+  ...makeApi({ query: (text, params) => getPool().query(text, params) }),
+  async withTransaction(fn) {
+    const client = await getPool().connect();
+    try {
+      await client.query('BEGIN');
+      const txDb = makeApi(client);
+      const result = await fn(txDb);
+      await client.query('COMMIT');
+      return result;
+    } catch (e) {
+      await client.query('ROLLBACK');
+      throw e;
+    } finally {
+      client.release();
+    }
+  },
+};
+
+export async function ensureInitialized() {
+  if (globalThis.__crmInitialized) return;
+  await getPool().query(SCHEMA);
+  await ensureDefaultAdmin();
+  globalThis.__crmInitialized = true;
+}
+
+async function ensureDefaultAdmin() {
+  const r = await db.get('SELECT COUNT(*)::int AS count FROM users');
+  if (r.count > 0) return;
   const hash = bcrypt.hashSync(config.admin.password, 10);
-  db.prepare(
+  await db.run(
     `INSERT INTO users (email, password_hash, name, role) VALUES (?, ?, ?, 'admin')`,
-  ).run(config.admin.email, hash, config.admin.name);
-
-  // eslint-disable-next-line no-console
-  console.log(
-    `[db] Created default admin user: ${config.admin.email} (change ADMIN_PASSWORD in .env!)`,
+    config.admin.email,
+    hash,
+    config.admin.name,
   );
+  // eslint-disable-next-line no-console
+  console.log(`[db] Создан админ по умолчанию: ${config.admin.email} (поменяйте ADMIN_PASSWORD в .env!)`);
 }
 
-export function closeDb() {
-  if (dbInstance) {
-    dbInstance.close();
-    dbInstance = null;
+export async function closeDb() {
+  if (globalThis.__crmPool) {
+    await globalThis.__crmPool.end();
+    globalThis.__crmPool = null;
+    globalThis.__crmInitialized = false;
   }
 }

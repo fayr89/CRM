@@ -1,7 +1,7 @@
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { config } from './config.js';
-import { getDb } from './db.js';
+import { db } from './db.js';
 import { Forbidden, Unauthorized } from './errors.js';
 
 export function hashPassword(plain) {
@@ -24,7 +24,7 @@ export function verifyToken(token) {
   return jwt.verify(token, config.jwt.secret);
 }
 
-export function authenticate(req, _res, next) {
+export async function authenticate(req, _res, next) {
   const header = req.headers.authorization || '';
   const [scheme, token] = header.split(' ');
   if (scheme !== 'Bearer' || !token) {
@@ -32,10 +32,10 @@ export function authenticate(req, _res, next) {
   }
   try {
     const payload = verifyToken(token);
-    const db = getDb();
-    const user = db
-      .prepare('SELECT id, email, name, role, active FROM users WHERE id = ?')
-      .get(payload.sub);
+    const user = await db.get(
+      'SELECT id, email, name, role, active FROM users WHERE id = ?',
+      payload.sub,
+    );
     if (!user || !user.active) return next(Unauthorized('User not found or disabled'));
     req.user = user;
     next();

@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { authenticate } from '../auth.js';
-import { getDb } from '../db.js';
+import { db } from '../db.js';
 import { NotFound, asyncHandler } from '../errors.js';
 import { parsePagination, parseSort, paginated } from '../query.js';
 
@@ -32,7 +32,6 @@ router.get(
   asyncHandler(async (req, res) => {
     const { page, limit, offset } = parsePagination(req.query);
     const sort = parseSort(req.query, SORT_COLUMNS, 'due_date', 'ASC');
-    const db = getDb();
 
     const where = [];
     const params = [];
@@ -58,21 +57,23 @@ router.get(
       where.push('completed_at IS NULL');
     }
     if (req.query.upcoming === 'true') {
-      where.push("completed_at IS NULL AND (due_date IS NULL OR due_date >= datetime('now'))");
+      where.push('completed_at IS NULL AND (due_date IS NULL OR due_date >= NOW())');
     }
     if (req.query.overdue === 'true') {
-      where.push("completed_at IS NULL AND due_date < datetime('now')");
+      where.push('completed_at IS NULL AND due_date < NOW()');
     }
     const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
 
-    const rows = db
-      .prepare(
-        `SELECT * FROM activities ${whereSql} ORDER BY ${sort.column} ${sort.dir} LIMIT ? OFFSET ?`,
-      )
-      .all(...params, limit, offset);
-    const { total } = db
-      .prepare(`SELECT COUNT(*) AS total FROM activities ${whereSql}`)
-      .get(...params);
+    const rows = await db.all(
+      `SELECT * FROM activities ${whereSql} ORDER BY ${sort.column} ${sort.dir} NULLS LAST LIMIT ? OFFSET ?`,
+      ...params,
+      limit,
+      offset,
+    );
+    const { total } = await db.get(
+      `SELECT COUNT(*)::int AS total FROM activities ${whereSql}`,
+      ...params,
+    );
     res.json(paginated(rows, total, page, limit));
   }),
 );
@@ -80,9 +81,8 @@ router.get(
 router.get(
   '/:id',
   asyncHandler(async (req, res) => {
-    const db = getDb();
-    const activity = db.prepare('SELECT * FROM activities WHERE id = ?').get(req.params.id);
-    if (!activity) throw NotFound('Activity not found');
+    const activity = await db.get('SELECT * FROM activities WHERE id = ?', req.params.id);
+    if (!activity) throw NotFound('Задача не найдена');
     res.json(activity);
   }),
 );
@@ -91,27 +91,23 @@ router.post(
   '/',
   asyncHandler(async (req, res) => {
     const data = createSchema.parse(req.body);
-    const db = getDb();
-    const result = db
-      .prepare(
-        `INSERT INTO activities
-         (type, subject, description, due_date, completed_at,
-          related_to_type, related_to_id, owner_id)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      )
-      .run(
-        data.type,
-        data.subject,
-        data.description ?? null,
-        data.due_date ?? null,
-        data.completed_at ?? null,
-        data.related_to_type ?? null,
-        data.related_to_id ?? null,
-        data.owner_id ?? req.user.id,
-      );
+    const result = await db.run(
+      `INSERT INTO activities
+       (type, subject, description, due_date, completed_at,
+        related_to_type, related_to_id, owner_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
+      data.type,
+      data.subject,
+      data.description ?? null,
+      data.due_date ?? null,
+      data.completed_at ?? null,
+      data.related_to_type ?? null,
+      data.related_to_id ?? null,
+      data.owner_id ?? req.user.id,
+    );
     res
       .status(201)
-      .json(db.prepare('SELECT * FROM activities WHERE id = ?').get(result.lastInsertRowid));
+      .json(await db.get('SELECT * FROM activities WHERE id = ?', result.lastInsertRowid));
   }),
 );
 
@@ -119,9 +115,8 @@ router.patch(
   '/:id',
   asyncHandler(async (req, res) => {
     const data = updateSchema.parse(req.body);
-    const db = getDb();
-    const existing = db.prepare('SELECT * FROM activities WHERE id = ?').get(req.params.id);
-    if (!existing) throw NotFound('Activity not found');
+    const existing = await db.get('SELECT * FROM activities WHERE id = ?', req.params.id);
+    if (!existing) throw NotFound('Задача не найдена');
 
     const updates = [];
     const params = [];
@@ -141,34 +136,30 @@ router.patch(
       }
     }
     if (!updates.length) return res.json(existing);
-    updates.push("updated_at = datetime('now')");
+    updates.push('updated_at = NOW()');
     params.push(req.params.id);
-    db.prepare(`UPDATE activities SET ${updates.join(', ')} WHERE id = ?`).run(...params);
-    res.json(db.prepare('SELECT * FROM activities WHERE id = ?').get(req.params.id));
+    await db.run(`UPDATE activities SET ${updates.join(', ')} WHERE id = ?`, ...params);
+    res.json(await db.get('SELECT * FROM activities WHERE id = ?', req.params.id));
   }),
 );
 
 router.post(
   '/:id/complete',
   asyncHandler(async (req, res) => {
-    const db = getDb();
-    const result = db
-      .prepare(
-        `UPDATE activities SET completed_at = datetime('now'), updated_at = datetime('now')
-         WHERE id = ?`,
-      )
-      .run(req.params.id);
-    if (result.changes === 0) throw NotFound('Activity not found');
-    res.json(db.prepare('SELECT * FROM activities WHERE id = ?').get(req.params.id));
+    const result = await db.run(
+      `UPDATE activities SET completed_at = NOW(), updated_at = NOW() WHERE id = ?`,
+      req.params.id,
+    );
+    if (result.changes === 0) throw NotFound('Задача не найдена');
+    res.json(await db.get('SELECT * FROM activities WHERE id = ?', req.params.id));
   }),
 );
 
 router.delete(
   '/:id',
   asyncHandler(async (req, res) => {
-    const db = getDb();
-    const result = db.prepare('DELETE FROM activities WHERE id = ?').run(req.params.id);
-    if (result.changes === 0) throw NotFound('Activity not found');
+    const result = await db.run('DELETE FROM activities WHERE id = ?', req.params.id);
+    if (result.changes === 0) throw NotFound('Задача не найдена');
     res.status(204).send();
   }),
 );

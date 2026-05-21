@@ -232,10 +232,12 @@ table.data tbody tr:last-child td { border-bottom: none; }
   padding: 10px; min-height: 200px;
 }
 .pipeline-column-header {
-  font-size: 12px; font-weight: 700; text-transform: uppercase;
-  letter-spacing: 0.3px; margin-bottom: 10px;
-  display: flex; justify-content: space-between;
+  font-size: 12px; font-weight: 700;
+  letter-spacing: 0.2px; margin-bottom: 10px;
+  display: flex; justify-content: space-between; gap: 8px;
 }
+.pipeline-column-header > span:first-child { flex: 1; min-width: 0; }
+.pipeline-column-header > span:last-child { white-space: nowrap; }
 .pipeline-card {
   background: var(--surface); border: 1px solid var(--border);
   border-radius: var(--radius); padding: 10px;

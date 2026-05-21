@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { authenticate } from '../auth.js';
-import { getDb } from '../db.js';
+import { db } from '../db.js';
 import { BadRequest, NotFound, asyncHandler } from '../errors.js';
 import { parsePagination, parseSort, paginated } from '../query.js';
 
@@ -36,12 +36,13 @@ router.get(
   asyncHandler(async (req, res) => {
     const { page, limit, offset } = parsePagination(req.query);
     const sort = parseSort(req.query, SORT_COLUMNS, 'created_at', 'DESC');
-    const db = getDb();
 
     const where = [];
     const params = [];
     if (req.query.search) {
-      where.push('(first_name LIKE ? OR last_name LIKE ? OR email LIKE ? OR company_name LIKE ?)');
+      where.push(
+        '(first_name ILIKE ? OR last_name ILIKE ? OR email ILIKE ? OR company_name ILIKE ?)',
+      );
       const s = `%${req.query.search}%`;
       params.push(s, s, s, s);
     }
@@ -59,14 +60,16 @@ router.get(
     }
     const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
 
-    const rows = db
-      .prepare(
-        `SELECT * FROM leads ${whereSql} ORDER BY ${sort.column} ${sort.dir} LIMIT ? OFFSET ?`,
-      )
-      .all(...params, limit, offset);
-    const { total } = db
-      .prepare(`SELECT COUNT(*) AS total FROM leads ${whereSql}`)
-      .get(...params);
+    const rows = await db.all(
+      `SELECT * FROM leads ${whereSql} ORDER BY ${sort.column} ${sort.dir} LIMIT ? OFFSET ?`,
+      ...params,
+      limit,
+      offset,
+    );
+    const { total } = await db.get(
+      `SELECT COUNT(*)::int AS total FROM leads ${whereSql}`,
+      ...params,
+    );
     res.json(paginated(rows, total, page, limit));
   }),
 );
@@ -74,9 +77,8 @@ router.get(
 router.get(
   '/:id',
   asyncHandler(async (req, res) => {
-    const db = getDb();
-    const lead = db.prepare('SELECT * FROM leads WHERE id = ?').get(req.params.id);
-    if (!lead) throw NotFound('Lead not found');
+    const lead = await db.get('SELECT * FROM leads WHERE id = ?', req.params.id);
+    if (!lead) throw NotFound('Лид не найден');
     res.json(lead);
   }),
 );
@@ -85,30 +87,24 @@ router.post(
   '/',
   asyncHandler(async (req, res) => {
     const data = createSchema.parse(req.body);
-    const db = getDb();
-    const result = db
-      .prepare(
-        `INSERT INTO leads
-         (first_name, last_name, email, phone, company_name, position, source, status,
-          estimated_value, description, owner_id)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      )
-      .run(
-        data.first_name,
-        data.last_name ?? null,
-        data.email || null,
-        data.phone ?? null,
-        data.company_name ?? null,
-        data.position ?? null,
-        data.source ?? null,
-        data.status ?? 'new',
-        data.estimated_value ?? null,
-        data.description ?? null,
-        data.owner_id ?? req.user.id,
-      );
-    res
-      .status(201)
-      .json(db.prepare('SELECT * FROM leads WHERE id = ?').get(result.lastInsertRowid));
+    const result = await db.run(
+      `INSERT INTO leads
+       (first_name, last_name, email, phone, company_name, position, source, status,
+        estimated_value, description, owner_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
+      data.first_name,
+      data.last_name ?? null,
+      data.email || null,
+      data.phone ?? null,
+      data.company_name ?? null,
+      data.position ?? null,
+      data.source ?? null,
+      data.status ?? 'new',
+      data.estimated_value ?? null,
+      data.description ?? null,
+      data.owner_id ?? req.user.id,
+    );
+    res.status(201).json(await db.get('SELECT * FROM leads WHERE id = ?', result.lastInsertRowid));
   }),
 );
 
@@ -116,9 +112,8 @@ router.patch(
   '/:id',
   asyncHandler(async (req, res) => {
     const data = updateSchema.parse(req.body);
-    const db = getDb();
-    const existing = db.prepare('SELECT * FROM leads WHERE id = ?').get(req.params.id);
-    if (!existing) throw NotFound('Lead not found');
+    const existing = await db.get('SELECT * FROM leads WHERE id = ?', req.params.id);
+    if (!existing) throw NotFound('Лид не найден');
 
     const updates = [];
     const params = [];
@@ -141,24 +136,22 @@ router.patch(
       }
     }
     if (!updates.length) return res.json(existing);
-    updates.push("updated_at = datetime('now')");
+    updates.push('updated_at = NOW()');
     params.push(req.params.id);
-    db.prepare(`UPDATE leads SET ${updates.join(', ')} WHERE id = ?`).run(...params);
-    res.json(db.prepare('SELECT * FROM leads WHERE id = ?').get(req.params.id));
+    await db.run(`UPDATE leads SET ${updates.join(', ')} WHERE id = ?`, ...params);
+    res.json(await db.get('SELECT * FROM leads WHERE id = ?', req.params.id));
   }),
 );
 
 router.delete(
   '/:id',
   asyncHandler(async (req, res) => {
-    const db = getDb();
-    const result = db.prepare('DELETE FROM leads WHERE id = ?').run(req.params.id);
-    if (result.changes === 0) throw NotFound('Lead not found');
+    const result = await db.run('DELETE FROM leads WHERE id = ?', req.params.id);
+    if (result.changes === 0) throw NotFound('Лид не найден');
     res.status(204).send();
   }),
 );
 
-// Convert a lead to a contact (+ optional deal and company).
 const convertSchema = z.object({
   create_deal: z.boolean().optional().default(true),
   deal_title: z.string().optional(),
@@ -171,73 +164,70 @@ router.post(
   '/:id/convert',
   asyncHandler(async (req, res) => {
     const opts = convertSchema.parse(req.body || {});
-    const db = getDb();
-    const lead = db.prepare('SELECT * FROM leads WHERE id = ?').get(req.params.id);
-    if (!lead) throw NotFound('Lead not found');
-    if (lead.status === 'converted') throw BadRequest('Lead already converted');
+    const lead = await db.get('SELECT * FROM leads WHERE id = ?', req.params.id);
+    if (!lead) throw NotFound('Лид не найден');
+    if (lead.status === 'converted') throw BadRequest('Лид уже сконвертирован');
 
-    const tx = db.transaction(() => {
+    const result = await db.withTransaction(async (tx) => {
       let companyId = null;
       if (opts.create_company && lead.company_name) {
-        const companyResult = db
-          .prepare(`INSERT INTO companies (name, owner_id) VALUES (?, ?)`)
-          .run(lead.company_name, lead.owner_id ?? req.user.id);
-        companyId = companyResult.lastInsertRowid;
-      }
-      const contactResult = db
-        .prepare(
-          `INSERT INTO contacts (first_name, last_name, email, phone, position, company_id, owner_id)
-           VALUES (?, ?, ?, ?, ?, ?, ?)`,
-        )
-        .run(
-          lead.first_name,
-          lead.last_name,
-          lead.email,
-          lead.phone,
-          lead.position,
-          companyId,
+        const r = await tx.run(
+          `INSERT INTO companies (name, owner_id) VALUES (?, ?) RETURNING id`,
+          lead.company_name,
           lead.owner_id ?? req.user.id,
         );
-      const contactId = contactResult.lastInsertRowid;
+        companyId = r.lastInsertRowid;
+      }
+      const contactR = await tx.run(
+        `INSERT INTO contacts (first_name, last_name, email, phone, position, company_id, owner_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING id`,
+        lead.first_name,
+        lead.last_name,
+        lead.email,
+        lead.phone,
+        lead.position,
+        companyId,
+        lead.owner_id ?? req.user.id,
+      );
+      const contactId = contactR.lastInsertRowid;
 
       let dealId = null;
       if (opts.create_deal) {
         const title =
           opts.deal_title ||
           `${lead.first_name}${lead.last_name ? ' ' + lead.last_name : ''} - ${
-            lead.company_name || 'New Deal'
+            lead.company_name || 'Новая сделка'
           }`;
-        const dealResult = db
-          .prepare(
-            `INSERT INTO deals (title, amount, stage, contact_id, company_id, owner_id)
-             VALUES (?, ?, ?, ?, ?, ?)`,
-          )
-          .run(
-            title,
-            opts.deal_amount ?? lead.estimated_value ?? 0,
-            opts.deal_stage,
-            contactId,
-            companyId,
-            lead.owner_id ?? req.user.id,
-          );
-        dealId = dealResult.lastInsertRowid;
+        const dealR = await tx.run(
+          `INSERT INTO deals (title, amount, stage, contact_id, company_id, owner_id)
+           VALUES (?, ?, ?, ?, ?, ?) RETURNING id`,
+          title,
+          opts.deal_amount ?? lead.estimated_value ?? 0,
+          opts.deal_stage,
+          contactId,
+          companyId,
+          lead.owner_id ?? req.user.id,
+        );
+        dealId = dealR.lastInsertRowid;
       }
 
-      db.prepare(
+      await tx.run(
         `UPDATE leads SET status = 'converted', converted_contact_id = ?, converted_deal_id = ?,
-         converted_at = datetime('now'), updated_at = datetime('now') WHERE id = ?`,
-      ).run(contactId, dealId, lead.id);
+         converted_at = NOW(), updated_at = NOW() WHERE id = ?`,
+        contactId,
+        dealId,
+        lead.id,
+      );
 
       return { contactId, dealId, companyId };
     });
 
-    const result = tx();
     res.json({
-      lead: db.prepare('SELECT * FROM leads WHERE id = ?').get(lead.id),
-      contact: db.prepare('SELECT * FROM contacts WHERE id = ?').get(result.contactId),
-      deal: result.dealId ? db.prepare('SELECT * FROM deals WHERE id = ?').get(result.dealId) : null,
+      lead: await db.get('SELECT * FROM leads WHERE id = ?', lead.id),
+      contact: await db.get('SELECT * FROM contacts WHERE id = ?', result.contactId),
+      deal: result.dealId ? await db.get('SELECT * FROM deals WHERE id = ?', result.dealId) : null,
       company: result.companyId
-        ? db.prepare('SELECT * FROM companies WHERE id = ?').get(result.companyId)
+        ? await db.get('SELECT * FROM companies WHERE id = ?', result.companyId)
         : null,
     });
   }),

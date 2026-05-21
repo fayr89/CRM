@@ -1,4 +1,4 @@
-// Tiny DOM helpers and reusable components.
+// Маленькие DOM-хелперы и переиспользуемые компоненты.
 
 export function el(tag, props = {}, ...children) {
   const node = document.createElement(tag);
@@ -26,20 +26,20 @@ export function fmtDate(s) {
   if (!s) return '—';
   const d = new Date(s.includes('T') ? s : s.replace(' ', 'T') + 'Z');
   if (isNaN(d)) return s;
-  return d.toLocaleDateString();
+  return d.toLocaleDateString('ru-RU');
 }
 
 export function fmtDateTime(s) {
   if (!s) return '—';
   const d = new Date(s.includes('T') ? s : s.replace(' ', 'T') + 'Z');
   if (isNaN(d)) return s;
-  return d.toLocaleString();
+  return d.toLocaleString('ru-RU');
 }
 
 export function fmtMoney(amount, currency = 'USD') {
   if (amount == null) return '—';
   try {
-    return new Intl.NumberFormat(undefined, {
+    return new Intl.NumberFormat('ru-RU', {
       style: 'currency',
       currency,
       maximumFractionDigits: 0,
@@ -49,8 +49,64 @@ export function fmtMoney(amount, currency = 'USD') {
   }
 }
 
-export function badge(value) {
-  return el('span', { class: `badge ${value || ''}` }, value || '—');
+// --- Переводы для значений из БД (статусы, стадии и т.п.) ---
+export const T = {
+  status: {
+    new: 'Новый',
+    contacted: 'Связались',
+    qualified: 'Квалифицирован',
+    unqualified: 'Отказ',
+    converted: 'Сконвертирован',
+  },
+  source: {
+    website: 'Сайт',
+    referral: 'Рекомендация',
+    cold_call: 'Холодный звонок',
+    social: 'Соцсети',
+    event: 'Мероприятие',
+    advertisement: 'Реклама',
+    other: 'Другое',
+  },
+  stage: {
+    new: 'Новая',
+    qualified: 'Квалифицирована',
+    proposal: 'Предложение',
+    negotiation: 'Переговоры',
+    won: 'Выиграна',
+    lost: 'Проиграна',
+  },
+  activity_type: {
+    call: 'Звонок',
+    email: 'Email',
+    meeting: 'Встреча',
+    task: 'Задача',
+  },
+  size: {
+    small: 'Малая',
+    medium: 'Средняя',
+    large: 'Большая',
+    enterprise: 'Корпорация',
+  },
+  role: {
+    admin: 'Админ',
+    manager: 'Менеджер',
+    sales: 'Продажник',
+  },
+  related: {
+    contact: 'контакт',
+    company: 'компания',
+    lead: 'лид',
+    deal: 'сделка',
+  },
+};
+
+export function tr(category, value) {
+  if (!value) return '—';
+  return T[category]?.[value] || value;
+}
+
+export function badge(value, category) {
+  return el('span', { class: `badge ${value || ''}` }, category ? tr(category, value) : value || '—');
 }
 
 export function toast(message, kind = '') {
@@ -60,7 +116,7 @@ export function toast(message, kind = '') {
   setTimeout(() => t.remove(), 3500);
 }
 
-export function openModal(title, body, { primaryLabel = 'Save', onSubmit, size } = {}) {
+export function openModal(title, body, { primaryLabel = 'Сохранить', onSubmit, size } = {}) {
   return new Promise((resolve) => {
     const root = document.getElementById('modal-root');
     const close = (result) => {
@@ -71,7 +127,7 @@ export function openModal(title, body, { primaryLabel = 'Save', onSubmit, size }
     const footer = el(
       'div',
       { class: 'modal-footer' },
-      el('button', { class: 'btn', onClick: () => close(null) }, 'Cancel'),
+      el('button', { class: 'btn', onClick: () => close(null) }, 'Отмена'),
       onSubmit
         ? el(
             'button',
@@ -82,7 +138,7 @@ export function openModal(title, body, { primaryLabel = 'Save', onSubmit, size }
                   const result = await onSubmit();
                   if (result !== false) close(result);
                 } catch (e) {
-                  toast(e.message || 'Error', 'error');
+                  toast(e.message || 'Ошибка', 'error');
                 }
               },
             },
@@ -119,16 +175,15 @@ export function openModal(title, body, { primaryLabel = 'Save', onSubmit, size }
 }
 
 export async function confirm(message) {
-  return await openModal('Confirm', el('p', {}, message), {
-    primaryLabel: 'Confirm',
+  return await openModal('Подтверждение', el('p', {}, message), {
+    primaryLabel: 'Подтвердить',
     onSubmit: () => true,
   });
 }
 
-// Build a form. `fields` is an array of:
+// Конструктор формы. `fields` — массив:
 //   { name, label, type: 'text'|'number'|'email'|'date'|'textarea'|'select'|'checkbox',
 //     options?: [{value,label}], required?, default? }
-// Returns { node, getValues, setValues }
 export function buildForm(fields, initial = {}) {
   const inputs = {};
   const rows = [];
@@ -181,7 +236,6 @@ export function buildForm(fields, initial = {}) {
     );
   }
 
-  // 2-col layout when there are 6+ fields
   let node;
   if (rows.length >= 6) {
     node = el('div', { class: 'form-grid' }, ...rows);
@@ -205,13 +259,12 @@ export function buildForm(fields, initial = {}) {
   return { node, getValues };
 }
 
-// Build a paginator. `state` has { page, total_pages, total }, `onChange(page)`.
 export function paginator(state, onChange) {
   if (!state || state.total === 0) return el('span');
   return el(
     'div',
     { class: 'pagination' },
-    el('span', {}, `Total: ${state.total}`),
+    el('span', {}, `Всего: ${state.total}`),
     el(
       'button',
       {

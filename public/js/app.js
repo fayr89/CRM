@@ -1,24 +1,24 @@
 import { api, clearSession, getStoredUser, getToken, setSession } from './api.js';
-import { clear, el, toast } from './ui.js';
+import { clear, el, toast, tr } from './ui.js';
 import { renderDashboard, renderPipeline, renderResource } from './views.js';
 
 const root = document.getElementById('app');
 
 const NAV = [
-  { hash: '#/dashboard', label: 'Dashboard' },
-  { hash: '#/pipeline', label: 'Pipeline' },
-  { hash: '#/deals', label: 'Deals' },
-  { hash: '#/leads', label: 'Leads' },
-  { hash: '#/contacts', label: 'Contacts' },
-  { hash: '#/companies', label: 'Companies' },
-  { hash: '#/activities', label: 'Activities' },
-  { hash: '#/users', label: 'Users' },
+  { hash: '#/dashboard', label: 'Дашборд' },
+  { hash: '#/pipeline', label: 'Воронка' },
+  { hash: '#/deals', label: 'Сделки' },
+  { hash: '#/leads', label: 'Лиды' },
+  { hash: '#/contacts', label: 'Контакты' },
+  { hash: '#/companies', label: 'Компании' },
+  { hash: '#/activities', label: 'Задачи' },
+  { hash: '#/users', label: 'Пользователи' },
 ];
 
 function renderLogin() {
   clear(root);
   const emailInput = el('input', { type: 'email', placeholder: 'Email', value: 'admin@example.com' });
-  const passInput = el('input', { type: 'password', placeholder: 'Password' });
+  const passInput = el('input', { type: 'password', placeholder: 'Пароль' });
   const submit = async () => {
     try {
       const r = await api.login(emailInput.value, passInput.value);
@@ -43,24 +43,18 @@ function renderLogin() {
             submit();
           },
         },
-        el('h1', {}, 'CRM Login'),
+        el('h1', {}, 'Вход в CRM'),
+        el('div', { class: 'form-row' }, el('label', {}, 'Email'), emailInput),
+        el('div', { class: 'form-row' }, el('label', {}, 'Пароль'), passInput),
         el(
-          'div',
-          { class: 'form-row' },
-          el('label', {}, 'Email'),
-          emailInput,
+          'button',
+          { class: 'btn btn-primary', type: 'submit', style: { width: '100%' } },
+          'Войти',
         ),
-        el(
-          'div',
-          { class: 'form-row' },
-          el('label', {}, 'Password'),
-          passInput,
-        ),
-        el('button', { class: 'btn btn-primary', type: 'submit', style: { width: '100%' } }, 'Sign in'),
         el(
           'div',
           { class: 'hint' },
-          'Default admin: admin@example.com / admin123 (change in .env)',
+          'Админ по умолчанию: admin@example.com / admin123 (поменяйте ADMIN_PASSWORD в настройках)',
         ),
       ),
     ),
@@ -96,7 +90,7 @@ function renderShell() {
       { class: 'sidebar-user' },
       el('div', { class: 'name' }, user.name),
       el('div', {}, user.email),
-      el('div', {}, `Role: ${user.role}`),
+      el('div', {}, `Роль: ${tr('role', user.role) || user.role}`),
       el(
         'button',
         {
@@ -106,7 +100,7 @@ function renderShell() {
             renderApp();
           },
         },
-        'Sign out',
+        'Выйти',
       ),
     ),
   );

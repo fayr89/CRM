@@ -1,8 +1,8 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { authenticate } from '../auth.js';
-import { getDb } from '../db.js';
-import { BadRequest, NotFound, asyncHandler } from '../errors.js';
+import { db } from '../db.js';
+import { NotFound, asyncHandler } from '../errors.js';
 import { parsePagination, parseSort, paginated } from '../query.js';
 
 const router = Router();
@@ -43,12 +43,11 @@ router.get(
   asyncHandler(async (req, res) => {
     const { page, limit, offset } = parsePagination(req.query);
     const sort = parseSort(req.query, SORT_COLUMNS, 'created_at', 'DESC');
-    const db = getDb();
 
     const where = [];
     const params = [];
     if (req.query.search) {
-      where.push('(d.title LIKE ? OR d.description LIKE ?)');
+      where.push('(d.title ILIKE ? OR d.description ILIKE ?)');
       const s = `%${req.query.search}%`;
       params.push(s, s);
     }
@@ -73,39 +72,42 @@ router.get(
     }
     const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
 
-    const rows = db
-      .prepare(
-        `SELECT d.*, comp.name AS company_name,
-                (c.first_name || COALESCE(' ' || c.last_name, '')) AS contact_name
-         FROM deals d
-         LEFT JOIN companies comp ON comp.id = d.company_id
-         LEFT JOIN contacts c ON c.id = d.contact_id
-         ${whereSql} ORDER BY d.${sort.column} ${sort.dir} LIMIT ? OFFSET ?`,
-      )
-      .all(...params, limit, offset);
-    const { total } = db
-      .prepare(`SELECT COUNT(*) AS total FROM deals d ${whereSql}`)
-      .get(...params);
+    const rows = await db.all(
+      `SELECT d.*, comp.name AS company_name,
+              (c.first_name || COALESCE(' ' || c.last_name, '')) AS contact_name
+       FROM deals d
+       LEFT JOIN companies comp ON comp.id = d.company_id
+       LEFT JOIN contacts c ON c.id = d.contact_id
+       ${whereSql} ORDER BY d.${sort.column} ${sort.dir} LIMIT ? OFFSET ?`,
+      ...params,
+      limit,
+      offset,
+    );
+    const { total } = await db.get(
+      `SELECT COUNT(*)::int AS total FROM deals d ${whereSql}`,
+      ...params,
+    );
     res.json(paginated(rows, total, page, limit));
   }),
 );
 
-// Sales pipeline grouped by stage.
 router.get(
   '/pipeline',
   asyncHandler(async (req, res) => {
-    const db = getDb();
-    const ownerFilter = req.query.owner_id
-      ? `WHERE owner_id = ${Number(req.query.owner_id)}`
-      : '';
-    const rows = db
-      .prepare(
-        `SELECT stage, COUNT(*) AS count, COALESCE(SUM(amount), 0) AS total_amount,
-                COALESCE(SUM(amount * probability / 100.0), 0) AS weighted_amount
-         FROM deals ${ownerFilter}
-         GROUP BY stage`,
-      )
-      .all();
+    const ownerParams = [];
+    let ownerSql = '';
+    if (req.query.owner_id) {
+      ownerSql = 'WHERE owner_id = ?';
+      ownerParams.push(Number(req.query.owner_id));
+    }
+    const rows = await db.all(
+      `SELECT stage, COUNT(*)::int AS count,
+              COALESCE(SUM(amount), 0)::float AS total_amount,
+              COALESCE(SUM(amount * probability / 100.0), 0)::float AS weighted_amount
+       FROM deals ${ownerSql}
+       GROUP BY stage`,
+      ...ownerParams,
+    );
     const byStage = Object.fromEntries(
       STAGES.map((s) => [s, { stage: s, count: 0, total_amount: 0, weighted_amount: 0 }]),
     );
@@ -114,10 +116,10 @@ router.get(
       stages: STAGES.map((s) => byStage[s]),
       pipeline_value: rows
         .filter((r) => OPEN_STAGES.includes(r.stage))
-        .reduce((acc, r) => acc + r.total_amount, 0),
+        .reduce((acc, r) => acc + Number(r.total_amount), 0),
       weighted_pipeline_value: rows
         .filter((r) => OPEN_STAGES.includes(r.stage))
-        .reduce((acc, r) => acc + r.weighted_amount, 0),
+        .reduce((acc, r) => acc + Number(r.weighted_amount), 0),
     });
   }),
 );
@@ -125,18 +127,16 @@ router.get(
 router.get(
   '/:id',
   asyncHandler(async (req, res) => {
-    const db = getDb();
-    const deal = db
-      .prepare(
-        `SELECT d.*, comp.name AS company_name,
-                (c.first_name || COALESCE(' ' || c.last_name, '')) AS contact_name
-         FROM deals d
-         LEFT JOIN companies comp ON comp.id = d.company_id
-         LEFT JOIN contacts c ON c.id = d.contact_id
-         WHERE d.id = ?`,
-      )
-      .get(req.params.id);
-    if (!deal) throw NotFound('Deal not found');
+    const deal = await db.get(
+      `SELECT d.*, comp.name AS company_name,
+              (c.first_name || COALESCE(' ' || c.last_name, '')) AS contact_name
+       FROM deals d
+       LEFT JOIN companies comp ON comp.id = d.company_id
+       LEFT JOIN contacts c ON c.id = d.contact_id
+       WHERE d.id = ?`,
+      req.params.id,
+    );
+    if (!deal) throw NotFound('Сделка не найдена');
     res.json(deal);
   }),
 );
@@ -145,30 +145,24 @@ router.post(
   '/',
   asyncHandler(async (req, res) => {
     const data = createSchema.parse(req.body);
-    const db = getDb();
     const probability = data.probability ?? STAGE_DEFAULT_PROBABILITY[data.stage];
-    const result = db
-      .prepare(
-        `INSERT INTO deals
-         (title, amount, currency, stage, probability, expected_close_date,
-          contact_id, company_id, owner_id, description)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      )
-      .run(
-        data.title,
-        data.amount ?? 0,
-        data.currency ?? 'USD',
-        data.stage,
-        probability,
-        data.expected_close_date ?? null,
-        data.contact_id ?? null,
-        data.company_id ?? null,
-        data.owner_id ?? req.user.id,
-        data.description ?? null,
-      );
-    res
-      .status(201)
-      .json(db.prepare('SELECT * FROM deals WHERE id = ?').get(result.lastInsertRowid));
+    const result = await db.run(
+      `INSERT INTO deals
+       (title, amount, currency, stage, probability, expected_close_date,
+        contact_id, company_id, owner_id, description)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
+      data.title,
+      data.amount ?? 0,
+      data.currency ?? 'USD',
+      data.stage,
+      probability,
+      data.expected_close_date ?? null,
+      data.contact_id ?? null,
+      data.company_id ?? null,
+      data.owner_id ?? req.user.id,
+      data.description ?? null,
+    );
+    res.status(201).json(await db.get('SELECT * FROM deals WHERE id = ?', result.lastInsertRowid));
   }),
 );
 
@@ -176,9 +170,8 @@ router.patch(
   '/:id',
   asyncHandler(async (req, res) => {
     const data = updateSchema.parse(req.body);
-    const db = getDb();
-    const existing = db.prepare('SELECT * FROM deals WHERE id = ?').get(req.params.id);
-    if (!existing) throw NotFound('Deal not found');
+    const existing = await db.get('SELECT * FROM deals WHERE id = ?', req.params.id);
+    if (!existing) throw NotFound('Сделка не найдена');
 
     const updates = [];
     const params = [];
@@ -199,34 +192,31 @@ router.patch(
         params.push(data[key] === '' ? null : data[key]);
       }
     }
-    // Auto-update closed_at when stage transitions to won/lost
     if (data.stage && ['won', 'lost'].includes(data.stage) && !existing.closed_at) {
-      updates.push("closed_at = datetime('now')");
+      updates.push('closed_at = NOW()');
     }
     if (data.stage && !['won', 'lost'].includes(data.stage) && existing.closed_at) {
       updates.push('closed_at = NULL');
     }
     if (!updates.length) return res.json(existing);
-    updates.push("updated_at = datetime('now')");
+    updates.push('updated_at = NOW()');
     params.push(req.params.id);
-    db.prepare(`UPDATE deals SET ${updates.join(', ')} WHERE id = ?`).run(...params);
-    res.json(db.prepare('SELECT * FROM deals WHERE id = ?').get(req.params.id));
+    await db.run(`UPDATE deals SET ${updates.join(', ')} WHERE id = ?`, ...params);
+    res.json(await db.get('SELECT * FROM deals WHERE id = ?', req.params.id));
   }),
 );
 
 router.post(
   '/:id/win',
   asyncHandler(async (req, res) => {
-    const db = getDb();
-    const result = db
-      .prepare(
-        `UPDATE deals SET stage = 'won', probability = 100,
-         closed_at = datetime('now'), updated_at = datetime('now')
-         WHERE id = ?`,
-      )
-      .run(req.params.id);
-    if (result.changes === 0) throw NotFound('Deal not found');
-    res.json(db.prepare('SELECT * FROM deals WHERE id = ?').get(req.params.id));
+    const result = await db.run(
+      `UPDATE deals SET stage = 'won', probability = 100,
+       closed_at = NOW(), updated_at = NOW()
+       WHERE id = ?`,
+      req.params.id,
+    );
+    if (result.changes === 0) throw NotFound('Сделка не найдена');
+    res.json(await db.get('SELECT * FROM deals WHERE id = ?', req.params.id));
   }),
 );
 
@@ -234,24 +224,24 @@ router.post(
   '/:id/lose',
   asyncHandler(async (req, res) => {
     const reason = z.object({ reason: z.string().optional() }).parse(req.body || {}).reason;
-    const db = getDb();
-    const existing = db.prepare('SELECT * FROM deals WHERE id = ?').get(req.params.id);
-    if (!existing) throw NotFound('Deal not found');
-    db.prepare(
+    const existing = await db.get('SELECT * FROM deals WHERE id = ?', req.params.id);
+    if (!existing) throw NotFound('Сделка не найдена');
+    await db.run(
       `UPDATE deals SET stage = 'lost', probability = 0, lost_reason = ?,
-       closed_at = datetime('now'), updated_at = datetime('now')
+       closed_at = NOW(), updated_at = NOW()
        WHERE id = ?`,
-    ).run(reason ?? null, req.params.id);
-    res.json(db.prepare('SELECT * FROM deals WHERE id = ?').get(req.params.id));
+      reason ?? null,
+      req.params.id,
+    );
+    res.json(await db.get('SELECT * FROM deals WHERE id = ?', req.params.id));
   }),
 );
 
 router.delete(
   '/:id',
   asyncHandler(async (req, res) => {
-    const db = getDb();
-    const result = db.prepare('DELETE FROM deals WHERE id = ?').run(req.params.id);
-    if (result.changes === 0) throw NotFound('Deal not found');
+    const result = await db.run('DELETE FROM deals WHERE id = ?', req.params.id);
+    if (result.changes === 0) throw NotFound('Сделка не найдена');
     res.status(204).send();
   }),
 );

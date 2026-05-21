@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { authenticate, hashPassword, requireRole } from '../auth.js';
-import { getDb } from '../db.js';
+import { db } from '../db.js';
 import { BadRequest, Forbidden, NotFound, asyncHandler } from '../errors.js';
 import { parsePagination, paginated } from '../query.js';
 
@@ -28,14 +28,13 @@ router.get(
   '/',
   asyncHandler(async (req, res) => {
     const { page, limit, offset } = parsePagination(req.query);
-    const db = getDb();
-    const rows = db
-      .prepare(
-        `SELECT id, email, name, role, active, created_at, updated_at
-         FROM users ORDER BY id ASC LIMIT ? OFFSET ?`,
-      )
-      .all(limit, offset);
-    const { total } = db.prepare('SELECT COUNT(*) AS total FROM users').get();
+    const rows = await db.all(
+      `SELECT id, email, name, role, active, created_at, updated_at
+       FROM users ORDER BY id ASC LIMIT ? OFFSET ?`,
+      limit,
+      offset,
+    );
+    const { total } = await db.get('SELECT COUNT(*)::int AS total FROM users');
     res.json(paginated(rows, total, page, limit));
   }),
 );
@@ -43,14 +42,12 @@ router.get(
 router.get(
   '/:id',
   asyncHandler(async (req, res) => {
-    const db = getDb();
-    const user = db
-      .prepare(
-        `SELECT id, email, name, role, active, created_at, updated_at
-         FROM users WHERE id = ?`,
-      )
-      .get(req.params.id);
-    if (!user) throw NotFound('User not found');
+    const user = await db.get(
+      `SELECT id, email, name, role, active, created_at, updated_at
+       FROM users WHERE id = ?`,
+      req.params.id,
+    );
+    if (!user) throw NotFound('Пользователь не найден');
     res.json(user);
   }),
 );
@@ -60,19 +57,19 @@ router.post(
   requireRole('admin'),
   asyncHandler(async (req, res) => {
     const data = createSchema.parse(req.body);
-    const db = getDb();
-    const exists = db.prepare('SELECT id FROM users WHERE email = ?').get(data.email);
-    if (exists) throw BadRequest('Email already exists');
-    const result = db
-      .prepare(
-        `INSERT INTO users (email, password_hash, name, role) VALUES (?, ?, ?, ?)`,
-      )
-      .run(data.email, hashPassword(data.password), data.name, data.role);
-    const user = db
-      .prepare(
-        `SELECT id, email, name, role, active, created_at FROM users WHERE id = ?`,
-      )
-      .get(result.lastInsertRowid);
+    const exists = await db.get('SELECT id FROM users WHERE email = ?', data.email);
+    if (exists) throw BadRequest('Email уже существует');
+    const result = await db.run(
+      `INSERT INTO users (email, password_hash, name, role) VALUES (?, ?, ?, ?) RETURNING id`,
+      data.email,
+      hashPassword(data.password),
+      data.name,
+      data.role,
+    );
+    const user = await db.get(
+      `SELECT id, email, name, role, active, created_at FROM users WHERE id = ?`,
+      result.lastInsertRowid,
+    );
     res.status(201).json(user);
   }),
 );
@@ -85,13 +82,11 @@ router.patch(
     const isSelf = req.user.id === id;
     const isAdmin = req.user.role === 'admin';
     if (!isSelf && !isAdmin) throw Forbidden();
-    // Only admin can change role / active
     if (!isAdmin && (data.role || data.active !== undefined)) {
-      throw Forbidden('Only admins can change role or active flag');
+      throw Forbidden('Изменять роль и активность может только администратор');
     }
-    const db = getDb();
-    const existing = db.prepare('SELECT * FROM users WHERE id = ?').get(id);
-    if (!existing) throw NotFound('User not found');
+    const existing = await db.get('SELECT * FROM users WHERE id = ?', id);
+    if (!existing) throw NotFound('Пользователь не найден');
 
     const updates = [];
     const params = [];
@@ -113,17 +108,16 @@ router.patch(
     }
     if (data.active !== undefined) {
       updates.push('active = ?');
-      params.push(data.active ? 1 : 0);
+      params.push(Boolean(data.active));
     }
     if (!updates.length) return res.json(existing);
-    updates.push("updated_at = datetime('now')");
+    updates.push('updated_at = NOW()');
     params.push(id);
-    db.prepare(`UPDATE users SET ${updates.join(', ')} WHERE id = ?`).run(...params);
-    const updated = db
-      .prepare(
-        `SELECT id, email, name, role, active, created_at, updated_at FROM users WHERE id = ?`,
-      )
-      .get(id);
+    await db.run(`UPDATE users SET ${updates.join(', ')} WHERE id = ?`, ...params);
+    const updated = await db.get(
+      `SELECT id, email, name, role, active, created_at, updated_at FROM users WHERE id = ?`,
+      id,
+    );
     res.json(updated);
   }),
 );
@@ -133,10 +127,9 @@ router.delete(
   requireRole('admin'),
   asyncHandler(async (req, res) => {
     const id = Number(req.params.id);
-    if (id === req.user.id) throw BadRequest('Cannot delete yourself');
-    const db = getDb();
-    const result = db.prepare('DELETE FROM users WHERE id = ?').run(id);
-    if (result.changes === 0) throw NotFound('User not found');
+    if (id === req.user.id) throw BadRequest('Нельзя удалить самого себя');
+    const result = await db.run('DELETE FROM users WHERE id = ?', id);
+    if (result.changes === 0) throw NotFound('Пользователь не найден');
     res.status(204).send();
   }),
 );
