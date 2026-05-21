@@ -120,6 +120,27 @@ CREATE INDEX IF NOT EXISTS idx_activities_due ON activities(due_date);
 CREATE INDEX IF NOT EXISTS idx_activities_related ON activities(related_to_type, related_to_id);
 CREATE INDEX IF NOT EXISTS idx_activities_owner ON activities(owner_id);
 CREATE INDEX IF NOT EXISTS idx_notes_related ON notes(related_to_type, related_to_id);
+
+-- Иерархия: менеджер пользователя (для дерева)
+ALTER TABLE users ADD COLUMN IF NOT EXISTS manager_id INTEGER REFERENCES users(id) ON DELETE SET NULL;
+CREATE INDEX IF NOT EXISTS idx_users_manager ON users(manager_id);
+
+-- Приглашения для регистрации новых пользователей
+CREATE TABLE IF NOT EXISTS invitations (
+  id SERIAL PRIMARY KEY,
+  token TEXT UNIQUE NOT NULL,
+  email TEXT NOT NULL,
+  name TEXT,
+  role TEXT NOT NULL CHECK(role IN ('admin', 'manager', 'sales')),
+  manager_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  invited_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  expires_at TIMESTAMPTZ NOT NULL,
+  accepted_at TIMESTAMPTZ,
+  accepted_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_invitations_token ON invitations(token);
+CREATE INDEX IF NOT EXISTS idx_invitations_inviter ON invitations(invited_by);
 `;
 
 // Reuse the pool across warm serverless invocations.

@@ -1,8 +1,9 @@
 import { Router } from 'express';
 import { z } from 'zod';
+import { canAccessOwner, ownerScopeClause } from '../access.js';
 import { authenticate } from '../auth.js';
 import { db } from '../db.js';
-import { BadRequest, NotFound, asyncHandler } from '../errors.js';
+import { BadRequest, Forbidden, NotFound, asyncHandler } from '../errors.js';
 import { parsePagination, parseSort, paginated } from '../query.js';
 
 const router = Router();
@@ -58,6 +59,11 @@ router.get(
       where.push('owner_id = ?');
       params.push(Number(req.query.owner_id));
     }
+    const scope = await ownerScopeClause(req.user);
+    if (scope.sql) {
+      where.push(scope.sql);
+      params.push(...scope.params);
+    }
     const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
 
     const rows = await db.all(
@@ -79,6 +85,7 @@ router.get(
   asyncHandler(async (req, res) => {
     const lead = await db.get('SELECT * FROM leads WHERE id = ?', req.params.id);
     if (!lead) throw NotFound('Лид не найден');
+    if (!(await canAccessOwner(req.user, lead.owner_id))) throw Forbidden();
     res.json(lead);
   }),
 );
@@ -87,6 +94,10 @@ router.post(
   '/',
   asyncHandler(async (req, res) => {
     const data = createSchema.parse(req.body);
+    const ownerId = data.owner_id ?? req.user.id;
+    if (!(await canAccessOwner(req.user, ownerId))) {
+      throw Forbidden('Нет прав назначить этого пользователя ответственным');
+    }
     const result = await db.run(
       `INSERT INTO leads
        (first_name, last_name, email, phone, company_name, position, source, status,
@@ -102,7 +113,7 @@ router.post(
       data.status ?? 'new',
       data.estimated_value ?? null,
       data.description ?? null,
-      data.owner_id ?? req.user.id,
+      ownerId,
     );
     res.status(201).json(await db.get('SELECT * FROM leads WHERE id = ?', result.lastInsertRowid));
   }),
@@ -114,21 +125,16 @@ router.patch(
     const data = updateSchema.parse(req.body);
     const existing = await db.get('SELECT * FROM leads WHERE id = ?', req.params.id);
     if (!existing) throw NotFound('Лид не найден');
+    if (!(await canAccessOwner(req.user, existing.owner_id))) throw Forbidden();
+    if (data.owner_id !== undefined && !(await canAccessOwner(req.user, data.owner_id))) {
+      throw Forbidden('Нет прав назначить этого пользователя ответственным');
+    }
 
     const updates = [];
     const params = [];
     for (const key of [
-      'first_name',
-      'last_name',
-      'email',
-      'phone',
-      'company_name',
-      'position',
-      'source',
-      'status',
-      'estimated_value',
-      'description',
-      'owner_id',
+      'first_name', 'last_name', 'email', 'phone', 'company_name', 'position',
+      'source', 'status', 'estimated_value', 'description', 'owner_id',
     ]) {
       if (data[key] !== undefined) {
         updates.push(`${key} = ?`);
@@ -146,8 +152,10 @@ router.patch(
 router.delete(
   '/:id',
   asyncHandler(async (req, res) => {
-    const result = await db.run('DELETE FROM leads WHERE id = ?', req.params.id);
-    if (result.changes === 0) throw NotFound('Лид не найден');
+    const existing = await db.get('SELECT owner_id FROM leads WHERE id = ?', req.params.id);
+    if (!existing) throw NotFound('Лид не найден');
+    if (!(await canAccessOwner(req.user, existing.owner_id))) throw Forbidden();
+    await db.run('DELETE FROM leads WHERE id = ?', req.params.id);
     res.status(204).send();
   }),
 );
@@ -166,6 +174,7 @@ router.post(
     const opts = convertSchema.parse(req.body || {});
     const lead = await db.get('SELECT * FROM leads WHERE id = ?', req.params.id);
     if (!lead) throw NotFound('Лид не найден');
+    if (!(await canAccessOwner(req.user, lead.owner_id))) throw Forbidden();
     if (lead.status === 'converted') throw BadRequest('Лид уже сконвертирован');
 
     const result = await db.withTransaction(async (tx) => {
@@ -181,13 +190,8 @@ router.post(
       const contactR = await tx.run(
         `INSERT INTO contacts (first_name, last_name, email, phone, position, company_id, owner_id)
          VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING id`,
-        lead.first_name,
-        lead.last_name,
-        lead.email,
-        lead.phone,
-        lead.position,
-        companyId,
-        lead.owner_id ?? req.user.id,
+        lead.first_name, lead.last_name, lead.email, lead.phone, lead.position,
+        companyId, lead.owner_id ?? req.user.id,
       );
       const contactId = contactR.lastInsertRowid;
 
@@ -201,12 +205,8 @@ router.post(
         const dealR = await tx.run(
           `INSERT INTO deals (title, amount, stage, contact_id, company_id, owner_id)
            VALUES (?, ?, ?, ?, ?, ?) RETURNING id`,
-          title,
-          opts.deal_amount ?? lead.estimated_value ?? 0,
-          opts.deal_stage,
-          contactId,
-          companyId,
-          lead.owner_id ?? req.user.id,
+          title, opts.deal_amount ?? lead.estimated_value ?? 0, opts.deal_stage,
+          contactId, companyId, lead.owner_id ?? req.user.id,
         );
         dealId = dealR.lastInsertRowid;
       }
@@ -214,9 +214,7 @@ router.post(
       await tx.run(
         `UPDATE leads SET status = 'converted', converted_contact_id = ?, converted_deal_id = ?,
          converted_at = NOW(), updated_at = NOW() WHERE id = ?`,
-        contactId,
-        dealId,
-        lead.id,
+        contactId, dealId, lead.id,
       );
 
       return { contactId, dealId, companyId };

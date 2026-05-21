@@ -1,8 +1,9 @@
 import { Router } from 'express';
 import { z } from 'zod';
+import { canAccessOwner, ownerScopeClause } from '../access.js';
 import { authenticate } from '../auth.js';
 import { db } from '../db.js';
-import { NotFound, asyncHandler } from '../errors.js';
+import { Forbidden, NotFound, asyncHandler } from '../errors.js';
 import { parsePagination, parseSort, paginated } from '../query.js';
 
 const router = Router();
@@ -52,6 +53,11 @@ router.get(
       where.push('size = ?');
       params.push(req.query.size);
     }
+    const scope = await ownerScopeClause(req.user);
+    if (scope.sql) {
+      where.push(scope.sql);
+      params.push(...scope.params);
+    }
     const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
 
     const rows = await db.all(
@@ -73,6 +79,7 @@ router.get(
   asyncHandler(async (req, res) => {
     const company = await db.get('SELECT * FROM companies WHERE id = ?', req.params.id);
     if (!company) throw NotFound('Компания не найдена');
+    if (!(await canAccessOwner(req.user, company.owner_id))) throw Forbidden();
     res.json(company);
   }),
 );
@@ -80,6 +87,9 @@ router.get(
 router.get(
   '/:id/contacts',
   asyncHandler(async (req, res) => {
+    const company = await db.get('SELECT owner_id FROM companies WHERE id = ?', req.params.id);
+    if (!company) throw NotFound('Компания не найдена');
+    if (!(await canAccessOwner(req.user, company.owner_id))) throw Forbidden();
     const rows = await db.all(
       'SELECT * FROM contacts WHERE company_id = ? ORDER BY id DESC',
       req.params.id,
@@ -91,6 +101,9 @@ router.get(
 router.get(
   '/:id/deals',
   asyncHandler(async (req, res) => {
+    const company = await db.get('SELECT owner_id FROM companies WHERE id = ?', req.params.id);
+    if (!company) throw NotFound('Компания не найдена');
+    if (!(await canAccessOwner(req.user, company.owner_id))) throw Forbidden();
     const rows = await db.all(
       'SELECT * FROM deals WHERE company_id = ? ORDER BY id DESC',
       req.params.id,
@@ -103,6 +116,10 @@ router.post(
   '/',
   asyncHandler(async (req, res) => {
     const data = createSchema.parse(req.body);
+    const ownerId = data.owner_id ?? req.user.id;
+    if (!(await canAccessOwner(req.user, ownerId))) {
+      throw Forbidden('Нет прав назначить этого пользователя ответственным');
+    }
     const result = await db.run(
       `INSERT INTO companies
        (name, industry, website, phone, email, address, size, annual_revenue, description, owner_id)
@@ -116,7 +133,7 @@ router.post(
       data.size ?? null,
       data.annual_revenue ?? null,
       data.description ?? null,
-      data.owner_id ?? req.user.id,
+      ownerId,
     );
     const created = await db.get('SELECT * FROM companies WHERE id = ?', result.lastInsertRowid);
     res.status(201).json(created);
@@ -129,20 +146,16 @@ router.patch(
     const data = updateSchema.parse(req.body);
     const existing = await db.get('SELECT * FROM companies WHERE id = ?', req.params.id);
     if (!existing) throw NotFound('Компания не найдена');
+    if (!(await canAccessOwner(req.user, existing.owner_id))) throw Forbidden();
+    if (data.owner_id !== undefined && !(await canAccessOwner(req.user, data.owner_id))) {
+      throw Forbidden('Нет прав назначить этого пользователя ответственным');
+    }
 
     const updates = [];
     const params = [];
     for (const key of [
-      'name',
-      'industry',
-      'website',
-      'phone',
-      'email',
-      'address',
-      'size',
-      'annual_revenue',
-      'description',
-      'owner_id',
+      'name', 'industry', 'website', 'phone', 'email', 'address',
+      'size', 'annual_revenue', 'description', 'owner_id',
     ]) {
       if (data[key] !== undefined) {
         updates.push(`${key} = ?`);
@@ -160,8 +173,10 @@ router.patch(
 router.delete(
   '/:id',
   asyncHandler(async (req, res) => {
-    const result = await db.run('DELETE FROM companies WHERE id = ?', req.params.id);
-    if (result.changes === 0) throw NotFound('Компания не найдена');
+    const existing = await db.get('SELECT owner_id FROM companies WHERE id = ?', req.params.id);
+    if (!existing) throw NotFound('Компания не найдена');
+    if (!(await canAccessOwner(req.user, existing.owner_id))) throw Forbidden();
+    await db.run('DELETE FROM companies WHERE id = ?', req.params.id);
     res.status(204).send();
   }),
 );

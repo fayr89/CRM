@@ -1,8 +1,9 @@
 import { Router } from 'express';
 import { z } from 'zod';
+import { canAccessOwner, ownerScopeClause } from '../access.js';
 import { authenticate } from '../auth.js';
 import { db } from '../db.js';
-import { NotFound, asyncHandler } from '../errors.js';
+import { Forbidden, NotFound, asyncHandler } from '../errors.js';
 import { parsePagination, parseSort, paginated } from '../query.js';
 
 const router = Router();
@@ -48,6 +49,11 @@ router.get(
       where.push('c.owner_id = ?');
       params.push(Number(req.query.owner_id));
     }
+    const scope = await ownerScopeClause(req.user, 'c.owner_id');
+    if (scope.sql) {
+      where.push(scope.sql);
+      params.push(...scope.params);
+    }
     const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
 
     const rows = await db.all(
@@ -78,6 +84,7 @@ router.get(
       req.params.id,
     );
     if (!contact) throw NotFound('Контакт не найден');
+    if (!(await canAccessOwner(req.user, contact.owner_id))) throw Forbidden();
     res.json(contact);
   }),
 );
@@ -86,6 +93,10 @@ router.post(
   '/',
   asyncHandler(async (req, res) => {
     const data = createSchema.parse(req.body);
+    const ownerId = data.owner_id ?? req.user.id;
+    if (!(await canAccessOwner(req.user, ownerId))) {
+      throw Forbidden('Нет прав назначить этого пользователя ответственным');
+    }
     const result = await db.run(
       `INSERT INTO contacts
        (first_name, last_name, email, phone, position, company_id, owner_id, notes)
@@ -96,7 +107,7 @@ router.post(
       data.phone ?? null,
       data.position ?? null,
       data.company_id ?? null,
-      data.owner_id ?? req.user.id,
+      ownerId,
       data.notes ?? null,
     );
     const created = await db.get('SELECT * FROM contacts WHERE id = ?', result.lastInsertRowid);
@@ -110,18 +121,16 @@ router.patch(
     const data = updateSchema.parse(req.body);
     const existing = await db.get('SELECT * FROM contacts WHERE id = ?', req.params.id);
     if (!existing) throw NotFound('Контакт не найден');
+    if (!(await canAccessOwner(req.user, existing.owner_id))) throw Forbidden();
+    if (data.owner_id !== undefined && !(await canAccessOwner(req.user, data.owner_id))) {
+      throw Forbidden('Нет прав назначить этого пользователя ответственным');
+    }
 
     const updates = [];
     const params = [];
     for (const key of [
-      'first_name',
-      'last_name',
-      'email',
-      'phone',
-      'position',
-      'company_id',
-      'owner_id',
-      'notes',
+      'first_name', 'last_name', 'email', 'phone', 'position',
+      'company_id', 'owner_id', 'notes',
     ]) {
       if (data[key] !== undefined) {
         updates.push(`${key} = ?`);
@@ -139,8 +148,10 @@ router.patch(
 router.delete(
   '/:id',
   asyncHandler(async (req, res) => {
-    const result = await db.run('DELETE FROM contacts WHERE id = ?', req.params.id);
-    if (result.changes === 0) throw NotFound('Контакт не найден');
+    const existing = await db.get('SELECT owner_id FROM contacts WHERE id = ?', req.params.id);
+    if (!existing) throw NotFound('Контакт не найден');
+    if (!(await canAccessOwner(req.user, existing.owner_id))) throw Forbidden();
+    await db.run('DELETE FROM contacts WHERE id = ?', req.params.id);
     res.status(204).send();
   }),
 );

@@ -53,6 +53,9 @@ export const api = {
   login: (email, password) =>
     request('POST', '/api/auth/login', { body: { email, password } }),
   me: () => request('GET', '/api/auth/me'),
+  acceptInvite: (token, name, password) =>
+    request('POST', '/api/auth/accept-invite', { body: { token, name, password } }),
+  inviteByToken: (token) => request('GET', `/api/invitations/by-token/${encodeURIComponent(token)}`),
 
   list: (resource, query) => request('GET', `/api/${resource}`, { query }),
   get: (resource, id) => request('GET', `/api/${resource}/${id}`),
@@ -60,7 +63,7 @@ export const api = {
   update: (resource, id, body) => request('PATCH', `/api/${resource}/${id}`, { body }),
   remove: (resource, id) => request('DELETE', `/api/${resource}/${id}`),
 
-  // Specialty actions
+  // Специальные действия
   pipeline: (query) => request('GET', '/api/deals/pipeline', { query }),
   winDeal: (id) => request('POST', `/api/deals/${id}/win`),
   loseDeal: (id, reason) =>

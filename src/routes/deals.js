@@ -1,8 +1,9 @@
 import { Router } from 'express';
 import { z } from 'zod';
+import { canAccessOwner, ownerScopeClause } from '../access.js';
 import { authenticate } from '../auth.js';
 import { db } from '../db.js';
-import { NotFound, asyncHandler } from '../errors.js';
+import { Forbidden, NotFound, asyncHandler } from '../errors.js';
 import { parsePagination, parseSort, paginated } from '../query.js';
 
 const router = Router();
@@ -28,12 +29,7 @@ const createSchema = baseSchema;
 const updateSchema = baseSchema.partial();
 
 const STAGE_DEFAULT_PROBABILITY = {
-  new: 10,
-  qualified: 25,
-  proposal: 50,
-  negotiation: 75,
-  won: 100,
-  lost: 0,
+  new: 10, qualified: 25, proposal: 50, negotiation: 75, won: 100, lost: 0,
 };
 
 router.use(authenticate);
@@ -70,6 +66,11 @@ router.get(
       where.push('d.contact_id = ?');
       params.push(Number(req.query.contact_id));
     }
+    const scope = await ownerScopeClause(req.user, 'd.owner_id');
+    if (scope.sql) {
+      where.push(scope.sql);
+      params.push(...scope.params);
+    }
     const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
 
     const rows = await db.all(
@@ -79,9 +80,7 @@ router.get(
        LEFT JOIN companies comp ON comp.id = d.company_id
        LEFT JOIN contacts c ON c.id = d.contact_id
        ${whereSql} ORDER BY d.${sort.column} ${sort.dir} LIMIT ? OFFSET ?`,
-      ...params,
-      limit,
-      offset,
+      ...params, limit, offset,
     );
     const { total } = await db.get(
       `SELECT COUNT(*)::int AS total FROM deals d ${whereSql}`,
@@ -94,19 +93,25 @@ router.get(
 router.get(
   '/pipeline',
   asyncHandler(async (req, res) => {
-    const ownerParams = [];
-    let ownerSql = '';
+    const params = [];
+    const where = [];
     if (req.query.owner_id) {
-      ownerSql = 'WHERE owner_id = ?';
-      ownerParams.push(Number(req.query.owner_id));
+      where.push('owner_id = ?');
+      params.push(Number(req.query.owner_id));
     }
+    const scope = await ownerScopeClause(req.user);
+    if (scope.sql) {
+      where.push(scope.sql);
+      params.push(...scope.params);
+    }
+    const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
     const rows = await db.all(
       `SELECT stage, COUNT(*)::int AS count,
               COALESCE(SUM(amount), 0)::float AS total_amount,
               COALESCE(SUM(amount * probability / 100.0), 0)::float AS weighted_amount
-       FROM deals ${ownerSql}
+       FROM deals ${whereSql}
        GROUP BY stage`,
-      ...ownerParams,
+      ...params,
     );
     const byStage = Object.fromEntries(
       STAGES.map((s) => [s, { stage: s, count: 0, total_amount: 0, weighted_amount: 0 }]),
@@ -137,6 +142,7 @@ router.get(
       req.params.id,
     );
     if (!deal) throw NotFound('Сделка не найдена');
+    if (!(await canAccessOwner(req.user, deal.owner_id))) throw Forbidden();
     res.json(deal);
   }),
 );
@@ -145,22 +151,19 @@ router.post(
   '/',
   asyncHandler(async (req, res) => {
     const data = createSchema.parse(req.body);
+    const ownerId = data.owner_id ?? req.user.id;
+    if (!(await canAccessOwner(req.user, ownerId))) {
+      throw Forbidden('Нет прав назначить этого пользователя ответственным');
+    }
     const probability = data.probability ?? STAGE_DEFAULT_PROBABILITY[data.stage];
     const result = await db.run(
       `INSERT INTO deals
        (title, amount, currency, stage, probability, expected_close_date,
         contact_id, company_id, owner_id, description)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
-      data.title,
-      data.amount ?? 0,
-      data.currency ?? 'USD',
-      data.stage,
-      probability,
-      data.expected_close_date ?? null,
-      data.contact_id ?? null,
-      data.company_id ?? null,
-      data.owner_id ?? req.user.id,
-      data.description ?? null,
+      data.title, data.amount ?? 0, data.currency ?? 'USD', data.stage, probability,
+      data.expected_close_date ?? null, data.contact_id ?? null, data.company_id ?? null,
+      ownerId, data.description ?? null,
     );
     res.status(201).json(await db.get('SELECT * FROM deals WHERE id = ?', result.lastInsertRowid));
   }),
@@ -172,20 +175,16 @@ router.patch(
     const data = updateSchema.parse(req.body);
     const existing = await db.get('SELECT * FROM deals WHERE id = ?', req.params.id);
     if (!existing) throw NotFound('Сделка не найдена');
+    if (!(await canAccessOwner(req.user, existing.owner_id))) throw Forbidden();
+    if (data.owner_id !== undefined && !(await canAccessOwner(req.user, data.owner_id))) {
+      throw Forbidden('Нет прав назначить этого пользователя ответственным');
+    }
 
     const updates = [];
     const params = [];
     for (const key of [
-      'title',
-      'amount',
-      'currency',
-      'stage',
-      'probability',
-      'expected_close_date',
-      'contact_id',
-      'company_id',
-      'owner_id',
-      'description',
+      'title', 'amount', 'currency', 'stage', 'probability', 'expected_close_date',
+      'contact_id', 'company_id', 'owner_id', 'description',
     ]) {
       if (data[key] !== undefined) {
         updates.push(`${key} = ?`);
@@ -209,13 +208,14 @@ router.patch(
 router.post(
   '/:id/win',
   asyncHandler(async (req, res) => {
-    const result = await db.run(
+    const existing = await db.get('SELECT owner_id FROM deals WHERE id = ?', req.params.id);
+    if (!existing) throw NotFound('Сделка не найдена');
+    if (!(await canAccessOwner(req.user, existing.owner_id))) throw Forbidden();
+    await db.run(
       `UPDATE deals SET stage = 'won', probability = 100,
-       closed_at = NOW(), updated_at = NOW()
-       WHERE id = ?`,
+       closed_at = NOW(), updated_at = NOW() WHERE id = ?`,
       req.params.id,
     );
-    if (result.changes === 0) throw NotFound('Сделка не найдена');
     res.json(await db.get('SELECT * FROM deals WHERE id = ?', req.params.id));
   }),
 );
@@ -224,14 +224,13 @@ router.post(
   '/:id/lose',
   asyncHandler(async (req, res) => {
     const reason = z.object({ reason: z.string().optional() }).parse(req.body || {}).reason;
-    const existing = await db.get('SELECT * FROM deals WHERE id = ?', req.params.id);
+    const existing = await db.get('SELECT owner_id FROM deals WHERE id = ?', req.params.id);
     if (!existing) throw NotFound('Сделка не найдена');
+    if (!(await canAccessOwner(req.user, existing.owner_id))) throw Forbidden();
     await db.run(
       `UPDATE deals SET stage = 'lost', probability = 0, lost_reason = ?,
-       closed_at = NOW(), updated_at = NOW()
-       WHERE id = ?`,
-      reason ?? null,
-      req.params.id,
+       closed_at = NOW(), updated_at = NOW() WHERE id = ?`,
+      reason ?? null, req.params.id,
     );
     res.json(await db.get('SELECT * FROM deals WHERE id = ?', req.params.id));
   }),
@@ -240,8 +239,10 @@ router.post(
 router.delete(
   '/:id',
   asyncHandler(async (req, res) => {
-    const result = await db.run('DELETE FROM deals WHERE id = ?', req.params.id);
-    if (result.changes === 0) throw NotFound('Сделка не найдена');
+    const existing = await db.get('SELECT owner_id FROM deals WHERE id = ?', req.params.id);
+    if (!existing) throw NotFound('Сделка не найдена');
+    if (!(await canAccessOwner(req.user, existing.owner_id))) throw Forbidden();
+    await db.run('DELETE FROM deals WHERE id = ?', req.params.id);
     res.status(204).send();
   }),
 );

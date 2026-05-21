@@ -12,6 +12,7 @@ import dealsRoutes from './routes/deals.js';
 import activitiesRoutes from './routes/activities.js';
 import notesRoutes from './routes/notes.js';
 import dashboardRoutes from './routes/dashboard.js';
+import invitationsRoutes from './routes/invitations.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = path.resolve(__dirname, '..', 'public');
@@ -41,6 +42,7 @@ export function createApp({ serveStatic = true } = {}) {
         activities: '/api/activities — задачи',
         notes: '/api/notes — заметки',
         dashboard: '/api/dashboard/stats — дашборд',
+        invitations: '/api/invitations — приглашения',
       },
     });
   });
@@ -54,6 +56,7 @@ export function createApp({ serveStatic = true } = {}) {
   app.use('/api/activities', activitiesRoutes);
   app.use('/api/notes', notesRoutes);
   app.use('/api/dashboard', dashboardRoutes);
+  app.use('/api/invitations', invitationsRoutes);
 
   app.use((req, res) => {
     res.status(404).json({ error: `Route not found: ${req.method} ${req.path}` });

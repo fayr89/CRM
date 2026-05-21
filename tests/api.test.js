@@ -23,9 +23,10 @@ if (!dbUrl) {
   await db.run('DELETE FROM leads');
   await db.run('DELETE FROM contacts');
   await db.run('DELETE FROM companies');
+  await db.run('DELETE FROM invitations');
   await db.run("DELETE FROM users WHERE email != ?", process.env.ADMIN_EMAIL);
   // Re-seq for predictable IDs
-  for (const t of ['notes', 'activities', 'deals', 'leads', 'contacts', 'companies']) {
+  for (const t of ['notes', 'activities', 'deals', 'leads', 'contacts', 'companies', 'invitations']) {
     await db.run(`ALTER SEQUENCE ${t}_id_seq RESTART WITH 1`);
   }
 
@@ -195,6 +196,166 @@ if (!dbUrl) {
       body: { last_name: 'Missing first name' },
     });
     assert.equal(r.status, 400);
+  });
+
+  // --- Иерархия и приглашения ---
+
+  let managerToken, managerId, salesToken, salesId, otherSalesToken, otherSalesId;
+
+  test('admin creates a manager', async () => {
+    const r = await req('POST', '/api/users', {
+      token: adminToken,
+      body: {
+        email: 'mgr@test.local',
+        password: 'mgrpass1',
+        name: 'Менеджер',
+        role: 'manager',
+      },
+    });
+    assert.equal(r.status, 201);
+    managerId = r.data.id;
+    const login = await req('POST', '/api/auth/login', {
+      body: { email: 'mgr@test.local', password: 'mgrpass1' },
+    });
+    managerToken = login.data.token;
+  });
+
+  test('manager creates a sales user under themselves', async () => {
+    const r = await req('POST', '/api/users', {
+      token: managerToken,
+      body: {
+        email: 'sales1@test.local',
+        password: 'salespass',
+        name: 'Продажник 1',
+        // role/manager_id игнорируются для manager — всегда sales под менеджером
+      },
+    });
+    assert.equal(r.status, 201);
+    assert.equal(r.data.role, 'sales');
+    assert.equal(r.data.manager_id, managerId);
+    salesId = r.data.id;
+    const login = await req('POST', '/api/auth/login', {
+      body: { email: 'sales1@test.local', password: 'salespass' },
+    });
+    salesToken = login.data.token;
+  });
+
+  test('manager cannot create a manager-role user', async () => {
+    const r = await req('POST', '/api/users', {
+      token: managerToken,
+      body: { email: 'try@test.local', password: 'pass123', name: 'X', role: 'manager' },
+    });
+    assert.equal(r.status, 403);
+  });
+
+  test('admin creates another sales user NOT under our manager', async () => {
+    const r = await req('POST', '/api/users', {
+      token: adminToken,
+      body: {
+        email: 'sales2@test.local',
+        password: 'salespass',
+        name: 'Продажник 2',
+        role: 'sales',
+      },
+    });
+    assert.equal(r.status, 201);
+    otherSalesId = r.data.id;
+    const login = await req('POST', '/api/auth/login', {
+      body: { email: 'sales2@test.local', password: 'salespass' },
+    });
+    otherSalesToken = login.data.token;
+  });
+
+  test('users list scoping: sales sees only self', async () => {
+    const r = await req('GET', '/api/users', { token: salesToken });
+    assert.equal(r.status, 200);
+    assert.equal(r.data.data.length, 1);
+    assert.equal(r.data.data[0].id, salesId);
+  });
+
+  test('users list scoping: manager sees self + subordinates', async () => {
+    const r = await req('GET', '/api/users', { token: managerToken });
+    assert.equal(r.status, 200);
+    const ids = r.data.data.map((u) => u.id).sort();
+    assert.deepEqual(ids, [managerId, salesId].sort());
+  });
+
+  test('sales1 creates a company; sales2 cannot see it', async () => {
+    const c1 = await req('POST', '/api/companies', {
+      token: salesToken,
+      body: { name: 'Sales1 Co' },
+    });
+    assert.equal(c1.status, 201);
+    assert.equal(c1.data.owner_id, salesId);
+
+    const listFromOther = await req('GET', '/api/companies', { token: otherSalesToken });
+    assert.equal(listFromOther.status, 200);
+    assert.equal(listFromOther.data.data.find((c) => c.id === c1.data.id), undefined);
+
+    const get = await req('GET', `/api/companies/${c1.data.id}`, { token: otherSalesToken });
+    assert.equal(get.status, 403);
+  });
+
+  test('manager sees subordinate (sales1) companies', async () => {
+    const list = await req('GET', '/api/companies', { token: managerToken });
+    assert.equal(list.status, 200);
+    assert.ok(list.data.data.find((c) => c.owner_id === salesId));
+  });
+
+  test('manager creates invitation; user accepts it', async () => {
+    const create = await req('POST', '/api/invitations', {
+      token: managerToken,
+      body: { email: 'invitee@test.local', name: 'Приглашённый', role: 'sales' },
+    });
+    assert.equal(create.status, 201);
+    assert.ok(create.data.token);
+    assert.equal(create.data.role, 'sales');
+    assert.equal(create.data.manager_id, managerId);
+
+    const accept = await req('POST', '/api/auth/accept-invite', {
+      body: {
+        token: create.data.token,
+        name: 'Принял Приглашение',
+        password: 'newpass1',
+      },
+    });
+    assert.equal(accept.status, 201);
+    assert.ok(accept.data.token);
+    assert.equal(accept.data.user.role, 'sales');
+
+    // Не должны принять второй раз
+    const reaccept = await req('POST', '/api/auth/accept-invite', {
+      body: { token: create.data.token, name: 'X', password: 'newpass2' },
+    });
+    assert.equal(reaccept.status, 400);
+  });
+
+  test('sales cannot create invitations', async () => {
+    const r = await req('POST', '/api/invitations', {
+      token: salesToken,
+      body: { email: 'x@test.local', role: 'sales' },
+    });
+    assert.equal(r.status, 403);
+  });
+
+  test('manager cannot invite as manager role', async () => {
+    const r = await req('POST', '/api/invitations', {
+      token: managerToken,
+      body: { email: 'y@test.local', role: 'manager' },
+    });
+    assert.equal(r.status, 403);
+  });
+
+  test('only admin can delete users', async () => {
+    const r = await req('DELETE', `/api/users/${salesId}`, { token: managerToken });
+    assert.equal(r.status, 403);
+  });
+
+  test('dashboard is scoped to accessible owners', async () => {
+    // У sales2 ничего нет, поэтому дашборд должен показывать нули
+    const r = await req('GET', '/api/dashboard/stats', { token: otherSalesToken });
+    assert.equal(r.status, 200);
+    assert.equal(r.data.totals.companies, 0);
   });
 
   test.after(async () => {

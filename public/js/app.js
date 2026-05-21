@@ -1,6 +1,12 @@
 import { api, clearSession, getStoredUser, getToken, setSession } from './api.js';
 import { clear, el, toast, tr } from './ui.js';
-import { renderDashboard, renderPipeline, renderResource } from './views.js';
+import {
+  renderAcceptInvite,
+  renderDashboard,
+  renderInvitations,
+  renderPipeline,
+  renderResource,
+} from './views.js';
 
 const root = document.getElementById('app');
 
@@ -13,7 +19,16 @@ const NAV = [
   { hash: '#/companies', label: 'Компании' },
   { hash: '#/activities', label: 'Задачи' },
   { hash: '#/users', label: 'Пользователи' },
+  { hash: '#/invitations', label: 'Приглашения', roles: ['admin', 'manager'] },
 ];
+
+// Парсим query-параметры из hash вида #/route?a=1&b=2
+function parseHash() {
+  const h = location.hash || '';
+  const [path, qs] = h.split('?');
+  const params = new URLSearchParams(qs || '');
+  return { path, params };
+}
 
 function renderLogin() {
   clear(root);
@@ -54,7 +69,7 @@ function renderLogin() {
         el(
           'div',
           { class: 'hint' },
-          'Админ по умолчанию: admin@example.com / admin123 (поменяйте ADMIN_PASSWORD в настройках)',
+          'Войти можно только по приглашению от менеджера или администратора.',
         ),
       ),
     ),
@@ -66,6 +81,9 @@ function renderShell() {
   const main = el('main', { class: 'main' });
 
   const user = getStoredUser() || { name: '?', email: '', role: '' };
+  const userRole = user.role || 'sales';
+  const visibleNav = NAV.filter((n) => !n.roles || n.roles.includes(userRole));
+  const { path } = parseHash();
 
   const sidebar = el(
     'aside',
@@ -74,15 +92,8 @@ function renderShell() {
     el(
       'nav',
       { class: 'sidebar-nav' },
-      ...NAV.map((n) =>
-        el(
-          'a',
-          {
-            href: n.hash,
-            class: location.hash.startsWith(n.hash) ? 'active' : '',
-          },
-          n.label,
-        ),
+      ...visibleNav.map((n) =>
+        el('a', { href: n.hash, class: path.startsWith(n.hash) ? 'active' : '' }, n.label),
       ),
     ),
     el(
@@ -118,19 +129,38 @@ const ROUTES = {
   '#/deals': (m) => renderResource(m, 'deals'),
   '#/activities': (m) => renderResource(m, 'activities'),
   '#/users': (m) => renderResource(m, 'users'),
+  '#/invitations': renderInvitations,
 };
 
 function renderApp() {
+  const { path, params } = parseHash();
+
+  // Приглашение — доступно без авторизации
+  if (path === '#/accept') {
+    const token = params.get('token');
+    if (!token) {
+      location.hash = '#/login';
+      return;
+    }
+    clear(root);
+    renderAcceptInvite(root, token, (result) => {
+      setSession(result.token, result.user);
+      location.hash = '#/dashboard';
+      renderApp();
+    });
+    return;
+  }
+
   if (!getToken()) {
     renderLogin();
     return;
   }
-  if (!location.hash || location.hash === '#/' || location.hash === '#') {
+  if (!path || path === '#/' || path === '#') {
     location.hash = '#/dashboard';
     return;
   }
   const main = renderShell();
-  const handler = ROUTES[location.hash] || ROUTES['#/dashboard'];
+  const handler = ROUTES[path] || ROUTES['#/dashboard'];
   handler(main);
 }
 

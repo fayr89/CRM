@@ -418,6 +418,11 @@ const RESOURCES = {
       { key: 'email', label: 'Email' },
       { key: 'name', label: 'Имя' },
       { key: 'role', label: 'Роль', render: (r) => badge(r.role, 'role') },
+      {
+        key: 'manager_id',
+        label: 'Менеджер',
+        render: (r) => (r.manager_id ? userName(r.manager_id) : '—'),
+      },
       { key: 'active', label: 'Активен', render: (r) => (r.active ? '✓' : '—') },
       { key: 'created_at', label: 'Создан', render: (r) => fmtDate(r.created_at) },
     ],
@@ -436,9 +441,344 @@ const RESOURCES = {
         type: 'select',
         options: Object.entries(T.role).map(([v, l]) => ({ value: v, label: l })),
       },
+      {
+        name: 'manager_id',
+        label: 'Менеджер',
+        type: 'select',
+        numeric: true,
+        options: [
+          { value: '', label: '— (нет менеджера)' },
+          ...CACHE.users.map((u) => ({ value: u.id, label: `${u.name} (${u.email})` })),
+        ],
+      },
     ],
   },
 };
+
+// --- Приглашения — особый ресурс (не в RESOURCES, отдельная страница)
+
+function inviteUrl(token) {
+  return `${location.origin}/#/accept?token=${encodeURIComponent(token)}`;
+}
+
+export async function renderInvitations(main) {
+  await loadLookups();
+
+  let stateFilter = 'pending';
+  const tableArea = el('div');
+
+  async function reload() {
+    clear(tableArea);
+    tableArea.append(el('div', { class: 'loading' }, 'Загрузка…'));
+    try {
+      const result = await api.list('invitations', { status: stateFilter, limit: 100 });
+      renderTable(result);
+    } catch (e) {
+      clear(tableArea);
+      tableArea.append(el('div', { class: 'empty' }, `Ошибка: ${e.message}`));
+    }
+  }
+
+  function statusOfInvite(i) {
+    if (i.accepted_at) return { label: 'Принято', cls: 'won' };
+    if (new Date(i.expires_at) < new Date()) return { label: 'Просрочено', cls: 'lost' };
+    return { label: 'Ожидает', cls: 'new' };
+  }
+
+  function renderTable(result) {
+    clear(tableArea);
+    const rows = result.data || [];
+    if (rows.length === 0) {
+      tableArea.append(
+        el('div', { class: 'card empty' }, 'Нет приглашений в этой категории.'),
+      );
+      return;
+    }
+    const head = el(
+      'tr',
+      {},
+      el('th', {}, 'Email'),
+      el('th', {}, 'Имя'),
+      el('th', {}, 'Роль'),
+      el('th', {}, 'Менеджер'),
+      el('th', {}, 'Истекает'),
+      el('th', {}, 'Статус'),
+      el('th', { style: { textAlign: 'right' } }, 'Действия'),
+    );
+    const body = rows.map((r) => {
+      const status = statusOfInvite(r);
+      return el(
+        'tr',
+        {},
+        el('td', {}, r.email),
+        el('td', {}, r.name || '—'),
+        el('td', {}, badge(r.role, 'role')),
+        el('td', {}, r.manager_name || '—'),
+        el('td', {}, fmtDateTime(r.expires_at)),
+        el('td', {}, el('span', { class: `badge ${status.cls}` }, status.label)),
+        el(
+          'td',
+          { style: { textAlign: 'right' } },
+          !r.accepted_at
+            ? el(
+                'button',
+                {
+                  class: 'btn btn-sm',
+                  onClick: async () => {
+                    const link = inviteUrl(r.token);
+                    try {
+                      await navigator.clipboard.writeText(link);
+                      toast('Ссылка скопирована', 'success');
+                    } catch {
+                      prompt('Скопируйте ссылку:', link);
+                    }
+                  },
+                },
+                'Скопировать ссылку',
+              )
+            : null,
+          el(
+            'button',
+            {
+              class: 'btn btn-sm',
+              onClick: async () => {
+                if (!(await confirm('Удалить приглашение?'))) return;
+                await api.remove('invitations', r.id);
+                toast('Удалено', 'success');
+                reload();
+              },
+            },
+            'Удалить',
+          ),
+        ),
+      );
+    });
+    tableArea.append(
+      el(
+        'div',
+        { class: 'table-wrap' },
+        el('table', { class: 'data' }, el('thead', {}, head), el('tbody', {}, ...body)),
+      ),
+    );
+  }
+
+  async function openCreate() {
+    const me = JSON.parse(localStorage.getItem('crm_user') || '{}');
+    const isAdmin = me.role === 'admin';
+    const fields = [
+      { name: 'email', label: 'Email', type: 'email', required: true },
+      { name: 'name', label: 'Имя (необязательно)' },
+      {
+        name: 'role',
+        label: 'Роль',
+        type: 'select',
+        // Менеджер видит только sales; админ видит всё
+        options: isAdmin
+          ? Object.entries(T.role).map(([v, l]) => ({ value: v, label: l }))
+          : [{ value: 'sales', label: T.role.sales }],
+      },
+      ...(isAdmin
+        ? [
+            {
+              name: 'manager_id',
+              label: 'Менеджер',
+              type: 'select',
+              numeric: true,
+              options: [
+                { value: '', label: '— (без менеджера)' },
+                ...CACHE.users.map((u) => ({
+                  value: u.id,
+                  label: `${u.name} (${u.email})`,
+                })),
+              ],
+            },
+          ]
+        : []),
+      { name: 'ttl_days', label: 'Срок жизни (дней)', type: 'number', default: 7 },
+    ];
+    const { node, getValues } = buildForm(fields, {});
+    let createdInvite = null;
+    await openModal('Новое приглашение', node, {
+      primaryLabel: 'Создать',
+      onSubmit: async () => {
+        createdInvite = await api.create('invitations', getValues());
+        toast('Приглашение создано', 'success');
+      },
+    });
+    if (createdInvite) {
+      await showInviteLink(createdInvite);
+      reload();
+    }
+  }
+
+  async function showInviteLink(inv) {
+    const link = inviteUrl(inv.token);
+    const linkInput = el('input', { type: 'text', value: link, readonly: true });
+    const body = el(
+      'div',
+      {},
+      el('p', {}, `Отправьте эту ссылку ${inv.email}:`),
+      el('div', { class: 'form-row' }, linkInput),
+      el(
+        'div',
+        { class: 'hint' },
+        `Действует до ${fmtDateTime(inv.expires_at)}. После принятия ссылка станет недействительной.`,
+      ),
+      el(
+        'button',
+        {
+          class: 'btn btn-primary',
+          onClick: async () => {
+            try {
+              await navigator.clipboard.writeText(link);
+              toast('Скопировано', 'success');
+            } catch {
+              linkInput.select();
+            }
+          },
+          style: { marginTop: '8px' },
+        },
+        'Скопировать в буфер',
+      ),
+    );
+    await openModal('Ссылка приглашения', body, {});
+  }
+
+  // Тулбар
+  const select = el(
+    'select',
+    {
+      onChange: (e) => {
+        stateFilter = e.target.value;
+        reload();
+      },
+    },
+    el('option', { value: 'pending', selected: true }, 'Ожидают принятия'),
+    el('option', { value: 'accepted' }, 'Принятые'),
+    el('option', { value: 'expired' }, 'Просроченные'),
+    el('option', { value: '' }, 'Все'),
+  );
+  const toolbar = el(
+    'div',
+    { class: 'toolbar' },
+    select,
+    el('div', { class: 'spacer' }),
+    el('button', { class: 'btn btn-primary', onClick: openCreate }, 'Пригласить'),
+  );
+
+  main.append(
+    el(
+      'div',
+      { class: 'page-header' },
+      el('h1', { class: 'page-title' }, 'Приглашения'),
+    ),
+    toolbar,
+    tableArea,
+  );
+  reload();
+}
+
+// --- Страница принятия приглашения (без авторизации)
+export async function renderAcceptInvite(root, token, onAccepted) {
+  let invite;
+  try {
+    invite = await api.inviteByToken(token);
+  } catch (e) {
+    root.append(
+      el(
+        'div',
+        { class: 'login-page' },
+        el(
+          'div',
+          { class: 'login-box' },
+          el('h1', {}, 'Приглашение не найдено'),
+          el('p', {}, 'Ссылка недействительна или приглашение уже использовано.'),
+          el(
+            'a',
+            { href: '#/login', class: 'btn btn-primary', style: { width: '100%' } },
+            'К входу',
+          ),
+        ),
+      ),
+    );
+    return;
+  }
+  if (invite.accepted_at) {
+    root.append(
+      el(
+        'div',
+        { class: 'login-page' },
+        el(
+          'div',
+          { class: 'login-box' },
+          el('h1', {}, 'Приглашение уже использовано'),
+          el(
+            'a',
+            { href: '#/login', class: 'btn btn-primary', style: { width: '100%' } },
+            'Войти',
+          ),
+        ),
+      ),
+    );
+    return;
+  }
+  if (new Date(invite.expires_at) < new Date()) {
+    root.append(
+      el(
+        'div',
+        { class: 'login-page' },
+        el(
+          'div',
+          { class: 'login-box' },
+          el('h1', {}, 'Приглашение просрочено'),
+          el('p', {}, 'Попросите менеджера выслать новое приглашение.'),
+        ),
+      ),
+    );
+    return;
+  }
+
+  const nameInput = el('input', { type: 'text', placeholder: 'Ваше имя', value: invite.name || '' });
+  const passInput = el('input', { type: 'password', placeholder: 'Придумайте пароль' });
+  const submit = async () => {
+    try {
+      const r = await api.acceptInvite(token, nameInput.value, passInput.value);
+      onAccepted(r);
+    } catch (e) {
+      toast(e.message, 'error');
+    }
+  };
+
+  root.append(
+    el(
+      'div',
+      { class: 'login-page' },
+      el(
+        'form',
+        {
+          class: 'login-box',
+          onSubmit: (e) => {
+            e.preventDefault();
+            submit();
+          },
+        },
+        el('h1', {}, 'Принятие приглашения'),
+        el(
+          'p',
+          { class: 'hint' },
+          `Email: ${invite.email}. Роль: ${tr('role', invite.role)}.`,
+        ),
+        el('div', { class: 'form-row' }, el('label', {}, 'Имя'), nameInput),
+        el('div', { class: 'form-row' }, el('label', {}, 'Пароль'), passInput),
+        el(
+          'button',
+          { class: 'btn btn-primary', type: 'submit', style: { width: '100%' } },
+          'Зарегистрироваться',
+        ),
+      ),
+    ),
+  );
+}
 
 // ============================================================
 // Универсальный список ресурса
