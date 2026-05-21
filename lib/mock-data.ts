@@ -305,3 +305,98 @@ export const sizeLabels: Record<string, string> = {
   large: 'Крупный',
   enterprise: 'Корпорация',
 };
+
+// --- Расписание отгрузок и аналитика ---
+
+import type {
+  ShippingSchedule,
+  AnalyticsRevenuePoint,
+  AnalyticsManager,
+  AnalyticsMarketplace,
+  AnalyticsProductTop,
+  Weekday,
+} from './types';
+
+export const mockSchedule: ShippingSchedule = {
+  days: ['mon', 'wed', 'fri'],
+  cutoffTime: '14:00',
+  notes: 'Кейс с Wildberries проходит до полудня',
+};
+
+export const weekdayLabels: Record<Weekday, string> = {
+  mon: 'Пн', tue: 'Вт', wed: 'Ср', thu: 'Чт', fri: 'Пт', sat: 'Сб', sun: 'Вс',
+};
+
+// Возвращает дату ближайшего отгрузочного дня (или null).
+export function nextShippingDate(
+  days: Weekday[],
+  cutoff: string,
+  now = new Date(),
+): Date | null {
+  if (days.length === 0) return null;
+  const dayMap: Record<Weekday, number> = { sun: 0, mon: 1, tue: 2, wed: 3, thu: 4, fri: 5, sat: 6 };
+  const allowed = new Set(days.map((d) => dayMap[d]));
+  const [h, m] = cutoff.split(':').map(Number);
+  const result = new Date(now);
+  result.setHours(h, m, 0, 0);
+  if (allowed.has(now.getDay()) && now.getTime() < result.getTime()) return result;
+  for (let i = 1; i <= 7; i++) {
+    const candidate = new Date(now);
+    candidate.setDate(now.getDate() + i);
+    candidate.setHours(h, m, 0, 0);
+    if (allowed.has(candidate.getDay())) return candidate;
+  }
+  return null;
+}
+
+// Mock — выручка за 30 дней (синусоида + случайный шум для красоты)
+function generateRevenueTrend(days: number): AnalyticsRevenuePoint[] {
+  const out: AnalyticsRevenuePoint[] = [];
+  const now = new Date();
+  for (let i = days - 1; i >= 0; i--) {
+    const d = new Date(now);
+    d.setDate(now.getDate() - i);
+    // выходные обычно ниже
+    const isWeekend = d.getDay() === 0 || d.getDay() === 6;
+    const base = isWeekend ? 8000 : 18000;
+    const variance = Math.random() * 12000 - 4000;
+    const revenue = Math.max(0, Math.round(base + variance + i * 200));
+    out.push({
+      date: d.toISOString().slice(0, 10),
+      ordersCount: Math.max(1, Math.round(revenue / 5500)),
+      revenue,
+    });
+  }
+  return out;
+}
+
+export const mockAnalyticsRevenue = generateRevenueTrend(30);
+
+export const mockAnalyticsManagers: AnalyticsManager[] = [
+  { id: 2, name: 'Мария Иванова', role: 'manager', revenue: 487000, ordersCount: 89, dealsWon: 12, dealsRevenue: 2840000 },
+  { id: 3, name: 'Алиса Петрова', role: 'sales', revenue: 312000, ordersCount: 54, dealsWon: 7, dealsRevenue: 1200000 },
+  { id: 1, name: 'Администратор', role: 'admin', revenue: 96000, ordersCount: 18, dealsWon: 2, dealsRevenue: 320000 },
+];
+
+export const mockAnalyticsMarketplaces: AnalyticsMarketplace[] = [
+  { marketplace: 'Wildberries', ordersCount: 87, revenue: 425000, avgOrderValue: 4885 },
+  { marketplace: 'Ozon', ordersCount: 54, revenue: 268000, avgOrderValue: 4963 },
+  { marketplace: 'Avito', ordersCount: 28, revenue: 142000, avgOrderValue: 5071 },
+  { marketplace: 'Яндекс.Маркет', ordersCount: 21, revenue: 96500, avgOrderValue: 4595 },
+  { marketplace: 'Другое', ordersCount: 8, revenue: 24500, avgOrderValue: 3063 },
+];
+
+export const mockAnalyticsTopProducts: AnalyticsProductTop[] = [
+  { id: 6, sku: 'HDR-001', name: 'Наушники беспроводные', imageUrl: 'https://images.unsplash.com/photo-1505740420928-5e560c06d30e?w=200&h=200&fit=crop', costPrice: 2500, unitsSold: 56, revenue: 279440, profit: 139440 },
+  { id: 1, sku: 'TSH-001', name: 'Футболка базовая белая', imageUrl: 'https://images.unsplash.com/photo-1521572163474-6864f9cf17ab?w=200&h=200&fit=crop', costPrice: 350, unitsSold: 42, revenue: 37380, profit: 22680 },
+  { id: 7, sku: 'CHG-001', name: 'Зарядное устройство USB-C', imageUrl: 'https://images.unsplash.com/photo-1583863788434-e58a36330cf0?w=200&h=200&fit=crop', costPrice: 450, unitsSold: 47, revenue: 46530, profit: 25380 },
+  { id: 2, sku: 'TSH-002', name: 'Футболка базовая чёрная', imageUrl: 'https://images.unsplash.com/photo-1503341504253-dff4815485f1?w=200&h=200&fit=crop', costPrice: 350, unitsSold: 38, revenue: 33820, profit: 20520 },
+  { id: 13, sku: 'SHO-001', name: 'Кроссовки спортивные', imageUrl: 'https://images.unsplash.com/photo-1542291026-7eec264c27ff?w=200&h=200&fit=crop', costPrice: 2200, unitsSold: 33, revenue: 164670, profit: 91410 },
+];
+
+export const mockAnalyticsSummary = {
+  revenue: { total: 956000, completedOrders: 198, avgOrderValue: 4828 },
+  orders: { newOrders: 12, reservedOrders: 8, shippedOrders: 5 },
+  deals: { won: 21, lost: 7, wonAmount: 4360000, open: 18, winRate: 0.75 },
+  customers: { newLeads: 34, newContacts: 22, newCompanies: 9 },
+};

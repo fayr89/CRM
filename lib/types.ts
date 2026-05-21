@@ -179,3 +179,46 @@ export interface Invitation {
   acceptedAt?: string;
   createdAt: string;
 }
+
+export type Weekday = 'mon' | 'tue' | 'wed' | 'thu' | 'fri' | 'sat' | 'sun';
+
+export interface ShippingSchedule {
+  days: Weekday[];
+  cutoffTime: string; // HH:MM
+  notes?: string;
+  nextShippingDate?: string;
+}
+
+export interface AnalyticsRevenuePoint {
+  date: string;
+  ordersCount: number;
+  revenue: number;
+}
+
+export interface AnalyticsManager {
+  id: number;
+  name: string;
+  role: Role;
+  revenue: number;
+  ordersCount: number;
+  dealsWon: number;
+  dealsRevenue: number;
+}
+
+export interface AnalyticsMarketplace {
+  marketplace: string;
+  ordersCount: number;
+  revenue: number;
+  avgOrderValue: number;
+}
+
+export interface AnalyticsProductTop {
+  id: number;
+  sku?: string;
+  name: string;
+  imageUrl?: string;
+  costPrice: number;
+  unitsSold: number;
+  revenue: number;
+  profit: number;
+}

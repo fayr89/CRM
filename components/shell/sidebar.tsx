@@ -14,8 +14,8 @@ import {
   Users, 
   Building2, 
   ClipboardList, 
-  Package, 
-  ShoppingBag, 
+  Package,
+  ShoppingBag,
   Wallet,
   User,
   Mail,
@@ -24,7 +24,9 @@ import {
   Bell,
   LogOut,
   Menu,
-  X
+  X,
+  Truck,
+  BarChart3
 } from "lucide-react";
 import { useState } from "react";
 
@@ -44,11 +46,13 @@ const navItems: NavItem[] = [
   { label: "Компании", href: "/companies", icon: Building2 },
   { label: "Задачи", href: "/activities", icon: ClipboardList },
   { label: "Прямые продажи", href: "/orders", icon: Package },
+  { label: "Отгрузки", href: "/shipping", icon: Truck },
   { label: "Каталог", href: "/products", icon: ShoppingBag },
   { label: "Касса", href: "/cashbox", icon: Wallet },
 ];
 
 const adminNavItems: NavItem[] = [
+  { label: "Аналитика", href: "/analytics", icon: BarChart3, roles: ['admin', 'manager'] },
   { label: "Пользователи", href: "/users", icon: User, roles: ['admin', 'manager'] },
   { label: "Приглашения", href: "/invitations", icon: Mail, roles: ['admin', 'manager'] },
   { label: "Интеграции", href: "/integrations", icon: Plug, roles: ['admin'] },

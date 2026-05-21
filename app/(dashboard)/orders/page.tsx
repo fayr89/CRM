@@ -11,7 +11,8 @@ import { OrderFormModal } from "@/components/orders/order-form-modal";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Plus, List, LayoutGrid, Search } from "lucide-react";
+import { Plus, List, LayoutGrid, Search, Download } from "lucide-react";
+import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 
 type ViewMode = 'list' | 'kanban';
@@ -150,6 +151,44 @@ export default function OrdersPage() {
             Канбан
           </button>
         </div>
+
+        <Button
+          variant="outline"
+          onClick={() => {
+            const rows = [
+              ["№", "Площадка", "Внеш. №", "Клиент", "Статус", "Менеджер", "Сумма", "Создан"],
+              ...filteredOrders.map((o) => [
+                `#${o.id}`,
+                o.marketplace || "",
+                o.referenceNumber || "",
+                o.clientName || "",
+                o.status,
+                o.managerName || "",
+                String(o.totalAmount),
+                o.createdAt,
+              ]),
+            ];
+            const csv =
+              "﻿" +
+              rows
+                .map((r) => r.map((v) => (String(v).includes(";") ? `"${v}"` : v)).join(";"))
+                .join("\r\n");
+            const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement("a");
+            a.href = url;
+            a.download = `orders-${new Date().toISOString().slice(0, 10)}.csv`;
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            URL.revokeObjectURL(url);
+            toast.success(`Выгружено ${filteredOrders.length} заказов`);
+          }}
+          title="Скачать список как Excel (учитывая текущие фильтры)"
+        >
+          <Download className="w-4 h-4 mr-2" />
+          Excel
+        </Button>
 
         <Button onClick={() => setShowOrderForm(true)}>
           <Plus className="w-4 h-4 mr-2" />
