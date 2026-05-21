@@ -57,13 +57,25 @@ const adminNavItems: NavItem[] = [
 interface SidebarProps {
   onOpenSearch: () => void;
   onOpenNotifications: () => void;
+  mobileOpen?: boolean;
+  onMobileOpenChange?: (open: boolean) => void;
 }
 
-export function Sidebar({ onOpenSearch, onOpenNotifications }: SidebarProps) {
+export function Sidebar({
+  onOpenSearch,
+  onOpenNotifications,
+  mobileOpen: externalMobileOpen,
+  onMobileOpenChange,
+}: SidebarProps) {
   const pathname = usePathname();
   const user = mockCurrentUser;
   const unreadCount = mockNotifications.filter(n => !n.readAt).length;
-  const [mobileOpen, setMobileOpen] = useState(false);
+  const [internalMobileOpen, setInternalMobileOpen] = useState(false);
+  const mobileOpen = externalMobileOpen ?? internalMobileOpen;
+  const setMobileOpen = (v: boolean) => {
+    if (onMobileOpenChange) onMobileOpenChange(v);
+    else setInternalMobileOpen(v);
+  };
 
   const canAccess = (item: NavItem) => {
     if (!item.roles) return true;

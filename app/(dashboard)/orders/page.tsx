@@ -172,11 +172,21 @@ export default function OrdersPage() {
       )}
 
       {/* Order Form Modal */}
-      <OrderFormModal 
-        open={showOrderForm} 
+      <OrderFormModal
+        open={showOrderForm}
         onOpenChange={setShowOrderForm}
         onSave={(order) => {
-          setOrders(prev => [...prev, { ...order, id: Math.max(...prev.map(o => o.id)) + 1 }]);
+          setOrders(prev => {
+            const newOrder: Order = {
+              id: Math.max(0, ...prev.map(o => o.id)) + 1,
+              totalAmount: 0,
+              currency: 'RUB',
+              status: 'new',
+              createdAt: new Date().toISOString(),
+              ...order,
+            };
+            return [...prev, newOrder];
+          });
           setShowOrderForm(false);
         }}
       />

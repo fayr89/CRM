@@ -16,7 +16,7 @@ const sizeClasses = {
 export function Avatar({ name, size = 'md', className }: AvatarProps) {
   const initials = getInitials(name);
   const bgColor = getAvatarColor(name);
-  
+
   return (
     <div
       className={cn(
@@ -30,3 +30,6 @@ export function Avatar({ name, size = 'md', className }: AvatarProps) {
     </div>
   );
 }
+
+// Алиас — некоторые компоненты импортируют как UserAvatar
+export const UserAvatar = Avatar;
