@@ -5,6 +5,8 @@ import { authenticate, requireRole } from '../auth.js';
 import { db } from '../db.js';
 import { BadRequest, Forbidden, NotFound, asyncHandler } from '../errors.js';
 import { parsePagination, parseSort, paginated } from '../query.js';
+import { notify, notifyWarehouse } from '../services/notifications.js';
+import { emitEvent } from '../services/webhooks.js';
 
 const router = Router();
 
@@ -182,6 +184,13 @@ router.post(
       'SELECT * FROM order_items WHERE order_id = ? ORDER BY id',
       newId,
     );
+    await notifyWarehouse(
+      'order.created',
+      'Новый заказ ожидает резерва',
+      `${order.client_name || order.reference_number || '#' + newId} · ${(order.total_amount || 0).toLocaleString('ru-RU')} ₽`,
+      '#/orders',
+    );
+    emitEvent('order.created', { ...order, items });
     res.status(201).json({ ...order, items });
   }),
 );
@@ -266,7 +275,16 @@ router.post(
       req.user.id,
       order.id,
     );
-    res.json(await db.get('SELECT * FROM orders WHERE id = ?', order.id));
+    const updated = await db.get('SELECT * FROM orders WHERE id = ?', order.id);
+    await notify(
+      order.manager_id,
+      'order.reserved',
+      'Заказ зарезервирован',
+      `${order.client_name || order.reference_number || '#' + order.id} · склад готов отгружать`,
+      '#/orders',
+    );
+    emitEvent('order.reserved', updated);
+    res.json(updated);
   }),
 );
 
@@ -286,7 +304,16 @@ router.post(
        updated_at = NOW() WHERE id = ?`,
       order.id,
     );
-    res.json(await db.get('SELECT * FROM orders WHERE id = ?', order.id));
+    const updated = await db.get('SELECT * FROM orders WHERE id = ?', order.id);
+    await notify(
+      order.manager_id,
+      'order.shipped',
+      'Заказ отгружен',
+      `${order.client_name || order.reference_number || '#' + order.id} · можно завершать`,
+      '#/orders',
+    );
+    emitEvent('order.shipped', updated);
+    res.json(updated);
   }),
 );
 
@@ -304,7 +331,9 @@ router.post(
        updated_at = NOW() WHERE id = ?`,
       order.id,
     );
-    res.json(await db.get('SELECT * FROM orders WHERE id = ?', order.id));
+    const updated = await db.get('SELECT * FROM orders WHERE id = ?', order.id);
+    emitEvent('order.completed', updated);
+    res.json(updated);
   }),
 );
 
@@ -327,7 +356,9 @@ router.post(
       reason ?? null,
       order.id,
     );
-    res.json(await db.get('SELECT * FROM orders WHERE id = ?', order.id));
+    const updated = await db.get('SELECT * FROM orders WHERE id = ?', order.id);
+    emitEvent('order.cancelled', updated);
+    res.json(updated);
   }),
 );
 

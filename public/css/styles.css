@@ -305,3 +305,163 @@ table.data tbody tr:last-child td { border-bottom: none; }
   .dashboard-grid { grid-template-columns: 1fr 1fr; }
   .form-grid { grid-template-columns: 1fr; }
 }
+
+/* ===== Канбан: drag-and-drop ===== */
+.pipeline.orders-kanban { grid-template-columns: repeat(5, 1fr); }
+.pipeline-cards { min-height: 120px; }
+.pipeline-empty {
+  font-size: 11px; color: #9ca3af; text-align: center;
+  padding: 12px 0; border: 1px dashed #d1d5db; border-radius: var(--radius);
+}
+.pipeline-card[draggable="true"] { transition: transform 0.1s, box-shadow 0.1s, opacity 0.1s; }
+.pipeline-card[draggable="true"]:active { cursor: grabbing; }
+.pipeline-card[draggable="true"].dragging { opacity: 0.4; transform: scale(0.97); }
+.pipeline-column.drop-target {
+  background: #e0f2fe;
+  outline: 2px dashed var(--primary);
+  outline-offset: -4px;
+}
+.pipeline-totals { margin-top: 16px; }
+
+/* ===== Help-баннер ===== */
+.help-banner {
+  background: #fffbeb; border: 1px solid #fde68a; color: #78350f;
+  border-radius: var(--radius); padding: 10px 14px;
+  margin-bottom: 14px; font-size: 13px; line-height: 1.5;
+}
+
+/* ===== Empty state ===== */
+.empty-state {
+  background: var(--surface); border: 1px dashed var(--border);
+  border-radius: var(--radius); padding: 36px 24px;
+  text-align: center;
+}
+.empty-state .empty-icon { font-size: 36px; line-height: 1; }
+.empty-state .empty-title { font-weight: 700; font-size: 16px; margin-top: 12px; }
+.empty-state .empty-desc {
+  color: var(--text-muted); margin-top: 6px; max-width: 520px;
+  margin-left: auto; margin-right: auto; line-height: 1.5;
+}
+.empty-state .btn { margin-top: 14px; }
+
+/* ===== Приветствие на дашборде ===== */
+.greeting-card {
+  background: linear-gradient(135deg, #1e3a8a, #2563eb);
+  color: #fff; border-radius: var(--radius);
+  padding: 20px 24px; margin-bottom: 20px;
+}
+.greeting-text { font-size: 22px; font-weight: 700; }
+.greeting-sub { opacity: 0.85; margin-top: 6px; font-size: 13px; line-height: 1.5; }
+
+.today-card { margin-bottom: 16px; }
+.today-card h3 { font-size: 14px; text-transform: uppercase; letter-spacing: 0.4px; color: var(--text-muted); }
+.today-list { padding: 0; margin: 0; list-style: none; }
+.today-list li { padding: 6px 0; border-bottom: 1px solid var(--border); font-size: 14px; }
+.today-list li:last-child { border-bottom: none; }
+
+/* ===== Переключатель вид «список ↔ канбан» ===== */
+.view-toggle { display: inline-flex; gap: 0; border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+.view-toggle .btn { border: none; border-radius: 0; }
+.view-toggle .btn.active { background: var(--primary); color: #fff; }
+
+/* ===== Sidebar расширения: поиск и колокольчик ===== */
+.sidebar-search, .sidebar-bell {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 8px 20px; color: #9ca3af; font-size: 12px;
+  background: transparent; border: none; cursor: pointer; text-decoration: none;
+  text-align: left;
+}
+.sidebar-search:hover, .sidebar-bell:hover { background: #1f2937; color: #fff; text-decoration: none; }
+.sidebar-search kbd {
+  font-family: inherit; font-size: 10px;
+  background: #1f2937; color: #d1d5db;
+  padding: 2px 5px; border-radius: 3px;
+  border: 1px solid #374151;
+}
+.sidebar-bell { position: relative; }
+.bell-counter {
+  background: var(--danger); color: #fff;
+  border-radius: 999px; padding: 1px 7px;
+  font-size: 10px; font-weight: 700;
+}
+
+/* ===== Дропдаун уведомлений ===== */
+.notif-dropdown {
+  position: fixed; z-index: 2000;
+  width: 340px; max-height: 480px; overflow-y: auto;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius); box-shadow: 0 8px 24px rgba(0,0,0,0.15);
+}
+.notif-header {
+  padding: 10px 14px; border-bottom: 1px solid var(--border);
+  display: flex; justify-content: space-between; align-items: center;
+}
+.notif-empty { padding: 32px 16px; text-align: center; color: var(--text-muted); }
+.notif-item {
+  display: block; padding: 10px 14px; border-bottom: 1px solid var(--border);
+  color: var(--text); text-decoration: none;
+}
+.notif-item:hover { background: #f9fafb; text-decoration: none; }
+.notif-item.unread { background: #eff6ff; }
+.notif-item.unread:hover { background: #dbeafe; }
+.notif-title { font-weight: 600; font-size: 13px; }
+.notif-body { color: var(--text-muted); font-size: 12px; margin-top: 2px; }
+.notif-time { color: var(--text-muted); font-size: 11px; margin-top: 4px; }
+
+/* ===== Глобальный поиск Ctrl+K ===== */
+.search-modal {
+  background: var(--surface); border-radius: var(--radius);
+  width: 90%; max-width: 640px;
+  box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+  display: flex; flex-direction: column;
+  max-height: 70vh;
+}
+.search-input {
+  padding: 16px 20px; font-size: 16px;
+  border: none; border-bottom: 1px solid var(--border);
+  outline: none; width: 100%;
+}
+.search-help { padding: 8px 20px; font-size: 11px; border-bottom: 1px solid var(--border); }
+.search-results { overflow-y: auto; max-height: 50vh; padding: 8px 0; }
+.search-hint { padding: 16px 20px; color: var(--text-muted); font-size: 13px; }
+.search-group-label {
+  padding: 8px 20px 4px;
+  font-size: 11px; text-transform: uppercase; color: var(--text-muted);
+  letter-spacing: 0.4px; font-weight: 700;
+}
+.search-row {
+  display: block; padding: 8px 20px;
+  color: var(--text); text-decoration: none; font-size: 13px;
+}
+.search-row:hover { background: #eff6ff; text-decoration: none; }
+
+/* ===== Страница интеграций ===== */
+.integration-section { margin-bottom: 32px; }
+.section-header {
+  display: flex; justify-content: space-between; align-items: center;
+  margin-bottom: 12px;
+}
+.section-header h2 { margin: 0; font-size: 16px; }
+.token-display {
+  background: #111827; color: #f3f4f6;
+  padding: 14px; border-radius: var(--radius);
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 13px; word-break: break-all;
+  margin: 12px 0;
+}
+.code-block {
+  background: #f3f4f6; padding: 12px; border-radius: var(--radius);
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 12px; overflow-x: auto;
+  white-space: pre; margin: 8px 0;
+}
+.docs-grid {
+  display: grid; grid-template-columns: 1fr 1fr;
+  gap: 14px; margin-top: 12px;
+}
+.docs-grid h3 { margin: 0 0 8px; font-size: 14px; }
+.docs-grid p { color: var(--text-muted); font-size: 13px; line-height: 1.5; }
+@media (max-width: 900px) {
+  .docs-grid { grid-template-columns: 1fr; }
+  .pipeline.orders-kanban { grid-template-columns: 1fr 1fr; }
+}

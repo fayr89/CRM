@@ -17,6 +17,10 @@ if (!dbUrl) {
 
   // Clean DB between test runs
   await ensureInitialized();
+  await db.run('DELETE FROM webhook_deliveries');
+  await db.run('DELETE FROM webhooks');
+  await db.run('DELETE FROM api_tokens');
+  await db.run('DELETE FROM notifications');
   await db.run('DELETE FROM payments');
   await db.run('DELETE FROM order_items');
   await db.run('DELETE FROM orders');
@@ -31,6 +35,7 @@ if (!dbUrl) {
   for (const t of [
     'notes', 'activities', 'deals', 'leads', 'contacts', 'companies',
     'invitations', 'orders', 'order_items', 'payments',
+    'api_tokens', 'webhooks', 'webhook_deliveries', 'notifications',
   ]) {
     await db.run(`ALTER SEQUENCE ${t}_id_seq RESTART WITH 1`);
   }
@@ -514,6 +519,120 @@ if (!dbUrl) {
     const r = await req('POST', `/api/orders/${orderId}/complete`, { token: managerToken });
     assert.equal(r.status, 200);
     assert.equal(r.data.status, 'completed');
+  });
+
+  // --- Интеграции: API-токены, внешние эндпойнты, вебхуки, уведомления ---
+
+  let apiTokenRaw;
+
+  test('admin creates an API token for external website', async () => {
+    const r = await req('POST', '/api/api-tokens', {
+      token: adminToken,
+      body: { name: 'Лендинг example.com', scopes: 'leads:create,orders:create' },
+    });
+    assert.equal(r.status, 201);
+    assert.ok(r.data.token.startsWith('crm_'));
+    apiTokenRaw = r.data.token;
+  });
+
+  test('external lead creation requires X-API-Token', async () => {
+    const r = await fetch(`${base}/api/external/leads`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ first_name: 'Аноним' }),
+    });
+    assert.equal(r.status, 401);
+  });
+
+  test('external lead arrives via valid API token, notifies admins', async () => {
+    const r = await fetch(`${base}/api/external/leads`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-api-token': apiTokenRaw },
+      body: JSON.stringify({
+        first_name: 'Пётр',
+        last_name: 'Петров',
+        phone: '+79991112233',
+        source: 'website',
+        description: 'Хочу узнать про услуги',
+      }),
+    });
+    assert.equal(r.status, 201);
+    const data = await r.json();
+    assert.equal(data.lead.first_name, 'Пётр');
+    assert.equal(data.lead.source, 'website');
+
+    // Уведомление должно прийти администратору
+    const notif = await req('GET', '/api/notifications?unread=true', { token: adminToken });
+    assert.equal(notif.status, 200);
+    assert.ok(notif.data.unread >= 1);
+    assert.ok(notif.data.data.some((n) => n.type === 'lead.created'));
+  });
+
+  test('external order requires items[] and creates with default manager', async () => {
+    const empty = await fetch(`${base}/api/external/orders`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-api-token': apiTokenRaw },
+      body: JSON.stringify({ marketplace: 'Wildberries', items: [] }),
+    });
+    assert.equal(empty.status, 400);
+
+    const r = await fetch(`${base}/api/external/orders`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-api-token': apiTokenRaw },
+      body: JSON.stringify({
+        marketplace: 'Wildberries',
+        reference_number: 'WB-EXT-1',
+        client_name: 'И. Иванов',
+        items: [{ sku: 'A-1', name: 'Носки', quantity: 3, unit_price: 200 }],
+      }),
+    });
+    assert.equal(r.status, 201);
+    const data = await r.json();
+    assert.equal(data.order.total_amount, 600);
+    assert.equal(data.order.status, 'new');
+  });
+
+  test('revoked token stops working', async () => {
+    const list = await req('GET', '/api/api-tokens', { token: adminToken });
+    const tokenId = list.data.data[0].id;
+    const rev = await req('POST', `/api/api-tokens/${tokenId}/revoke`, { token: adminToken });
+    assert.equal(rev.status, 200);
+    const after = await fetch(`${base}/api/external/leads`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-api-token': apiTokenRaw },
+      body: JSON.stringify({ first_name: 'Должен быть отказ' }),
+    });
+    assert.equal(after.status, 401);
+  });
+
+  test('admin creates a webhook, sees it in list', async () => {
+    const r = await req('POST', '/api/webhooks', {
+      token: adminToken,
+      body: { name: 'Бухгалтерия', url: 'https://example.com/hook', events: 'order.created' },
+    });
+    assert.equal(r.status, 201);
+    assert.equal(r.data.name, 'Бухгалтерия');
+    const list = await req('GET', '/api/webhooks', { token: adminToken });
+    assert.equal(list.data.data.length, 1);
+  });
+
+  test('global search returns matches across resources', async () => {
+    const r = await req('GET', '/api/search?q=Петров', { token: adminToken });
+    assert.equal(r.status, 200);
+    assert.ok(r.data.leads.length >= 1);
+  });
+
+  test('notifications can be marked read', async () => {
+    const list = await req('GET', '/api/notifications?unread=true', { token: adminToken });
+    if (list.data.data.length > 0) {
+      const id = list.data.data[0].id;
+      const r = await req('POST', `/api/notifications/${id}/read`, { token: adminToken });
+      assert.equal(r.status, 200);
+    }
+    const readAll = await req('POST', '/api/notifications/read-all', { token: adminToken });
+    assert.equal(readAll.status, 200);
+    const after = await req('GET', '/api/notifications?unread=true', { token: adminToken });
+    assert.equal(after.data.unread, 0);
   });
 
   test.after(async () => {

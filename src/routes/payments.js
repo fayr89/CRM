@@ -5,6 +5,8 @@ import { authenticate, requireRole } from '../auth.js';
 import { db } from '../db.js';
 import { BadRequest, Forbidden, NotFound, asyncHandler } from '../errors.js';
 import { parsePagination, paginated } from '../query.js';
+import { notify } from '../services/notifications.js';
+import { emitEvent } from '../services/webhooks.js';
 
 const router = Router();
 
@@ -175,7 +177,16 @@ router.post(
       req.user.id,
       payment.id,
     );
-    res.json(await db.get('SELECT * FROM payments WHERE id = ?', payment.id));
+    const updated = await db.get('SELECT * FROM payments WHERE id = ?', payment.id);
+    await notify(
+      payment.manager_id,
+      'payment.confirmed',
+      'Платёж подтверждён',
+      `${(payment.amount || 0).toLocaleString('ru-RU')} ${payment.currency || 'RUB'} зачислены в кассу`,
+      '#/cashbox',
+    );
+    emitEvent('payment.confirmed', updated);
+    res.json(updated);
   }),
 );
 
@@ -194,7 +205,16 @@ router.post(
       req.user.id,
       payment.id,
     );
-    res.json(await db.get('SELECT * FROM payments WHERE id = ?', payment.id));
+    const updated = await db.get('SELECT * FROM payments WHERE id = ?', payment.id);
+    await notify(
+      payment.manager_id,
+      'payment.rejected',
+      'Платёж отклонён',
+      reason || 'Без указания причины',
+      '#/cashbox',
+    );
+    emitEvent('payment.rejected', updated);
+    res.json(updated);
   }),
 );
 

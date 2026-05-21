@@ -89,4 +89,22 @@ export const api = {
 
   cashbox: (userId) =>
     request('GET', userId ? `/api/cashbox/${userId}` : '/api/cashbox'),
+
+  // Интеграции и уведомления
+  notifications: (unread) =>
+    request('GET', '/api/notifications', { query: unread ? { unread: 'true' } : {} }),
+  readNotification: (id) => request('POST', `/api/notifications/${id}/read`),
+  readAllNotifications: () => request('POST', '/api/notifications/read-all'),
+  search: (q) => request('GET', '/api/search', { query: { q } }),
+
+  apiTokens: () => request('GET', '/api/api-tokens'),
+  createApiToken: (body) => request('POST', '/api/api-tokens', { body }),
+  revokeApiToken: (id) => request('POST', `/api/api-tokens/${id}/revoke`),
+  deleteApiToken: (id) => request('DELETE', `/api/api-tokens/${id}`),
+
+  webhooks: () => request('GET', '/api/webhooks'),
+  createWebhook: (body) => request('POST', '/api/webhooks', { body }),
+  updateWebhook: (id, body) => request('PATCH', `/api/webhooks/${id}`, { body }),
+  deleteWebhook: (id) => request('DELETE', `/api/webhooks/${id}`),
+  webhookDeliveries: (id) => request('GET', `/api/webhooks/${id}/deliveries`),
 };

@@ -16,6 +16,11 @@ import invitationsRoutes from './routes/invitations.js';
 import ordersRoutes from './routes/orders.js';
 import paymentsRoutes from './routes/payments.js';
 import cashboxRoutes from './routes/cashbox.js';
+import externalRoutes from './routes/external.js';
+import apiTokensRoutes from './routes/apiTokens.js';
+import webhooksRoutes from './routes/webhooks.js';
+import notificationsRoutes from './routes/notifications.js';
+import searchRoutes from './routes/search.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = path.resolve(__dirname, '..', 'public');
@@ -49,6 +54,11 @@ export function createApp({ serveStatic = true } = {}) {
         orders: '/api/orders — заказы (модуль Avito / прямые продажи)',
         payments: '/api/payments — платежи',
         cashbox: '/api/cashbox — касса менеджера',
+        external: '/api/external/{leads,orders} — приём заявок с сайтов и мессенджеров по токену',
+        api_tokens: '/api/api-tokens — управление токенами для внешних интеграций (admin)',
+        webhooks: '/api/webhooks — исходящие вебхуки на изменения данных (admin)',
+        notifications: '/api/notifications — уведомления пользователя',
+        search: '/api/search?q=… — глобальный поиск по объектам',
       },
     });
   });
@@ -66,6 +76,11 @@ export function createApp({ serveStatic = true } = {}) {
   app.use('/api/orders', ordersRoutes);
   app.use('/api/payments', paymentsRoutes);
   app.use('/api/cashbox', cashboxRoutes);
+  app.use('/api/external', externalRoutes);
+  app.use('/api/api-tokens', apiTokensRoutes);
+  app.use('/api/webhooks', webhooksRoutes);
+  app.use('/api/notifications', notificationsRoutes);
+  app.use('/api/search', searchRoutes);
 
   app.use((req, res) => {
     res.status(404).json({ error: `Route not found: ${req.method} ${req.path}` });

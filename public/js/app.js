@@ -1,9 +1,11 @@
 import { api, clearSession, getStoredUser, getToken, setSession } from './api.js';
-import { clear, el, toast, tr } from './ui.js';
+import { clear, el, fmtDateTime, toast, tr } from './ui.js';
 import {
+  openGlobalSearch,
   renderAcceptInvite,
   renderCashbox,
   renderDashboard,
+  renderIntegrations,
   renderInvitations,
   renderOrders,
   renderPipeline,
@@ -25,6 +27,7 @@ const NAV = [
   { hash: '#/cashbox', label: 'Касса', roles: CRM_ROLES },
   { hash: '#/users', label: 'Пользователи', roles: ['admin', 'manager'] },
   { hash: '#/invitations', label: 'Приглашения', roles: ['admin', 'manager'] },
+  { hash: '#/integrations', label: 'Интеграции', roles: ['admin'] },
 ];
 
 // Парсим query-параметры из hash вида #/route?a=1&b=2
@@ -90,10 +93,39 @@ function renderShell() {
   const visibleNav = NAV.filter((n) => !n.roles || n.roles.includes(userRole));
   const { path } = parseHash();
 
+  const searchBtn = el(
+    'button',
+    {
+      class: 'sidebar-search',
+      onClick: () => openGlobalSearch(),
+      title: 'Глобальный поиск (Ctrl+K)',
+    },
+    el('span', {}, '🔍 Поиск'),
+    el('kbd', {}, 'Ctrl K'),
+  );
+
+  const bellCounter = el('span', { class: 'bell-counter', style: { display: 'none' } });
+  const bellBtn = el(
+    'a',
+    {
+      class: 'sidebar-bell',
+      href: '#',
+      onClick: (e) => {
+        e.preventDefault();
+        openNotificationsDropdown(bellBtn, bellCounter);
+      },
+      title: 'Уведомления',
+    },
+    el('span', {}, '🔔 Уведомления'),
+    bellCounter,
+  );
+
   const sidebar = el(
     'aside',
     { class: 'sidebar' },
     el('div', { class: 'sidebar-brand' }, 'CRM'),
+    searchBtn,
+    bellBtn,
     el(
       'nav',
       { class: 'sidebar-nav' },
@@ -111,6 +143,7 @@ function renderShell() {
         'button',
         {
           onClick: () => {
+            stopNotificationsPolling();
             clearSession();
             location.hash = '#/login';
             renderApp();
@@ -122,8 +155,126 @@ function renderShell() {
   );
 
   root.append(el('div', { class: 'shell' }, sidebar, main));
+  startNotificationsPolling(bellCounter);
   return main;
 }
+
+// --- Уведомления: дропдаун + поллинг каждые 20 секунд ---
+
+let notifTimer = null;
+let lastUnread = 0;
+
+function stopNotificationsPolling() {
+  if (notifTimer) clearInterval(notifTimer);
+  notifTimer = null;
+  lastUnread = 0;
+}
+
+function startNotificationsPolling(counter) {
+  if (notifTimer) clearInterval(notifTimer);
+  const tick = async () => {
+    try {
+      const r = await api.notifications(false);
+      const unread = r.unread || 0;
+      if (unread > 0) {
+        counter.textContent = String(unread);
+        counter.style.display = 'inline-block';
+      } else {
+        counter.style.display = 'none';
+      }
+      // Toast для новых
+      if (unread > lastUnread && lastUnread > 0 && r.data?.length) {
+        const newest = r.data.find((n) => !n.read_at);
+        if (newest) toast(`${newest.title}: ${newest.body || ''}`, 'success');
+      }
+      lastUnread = unread;
+    } catch {
+      /* ignore */
+    }
+  };
+  tick();
+  notifTimer = setInterval(tick, 20000);
+}
+
+function openNotificationsDropdown(anchor, counter) {
+  const existing = document.querySelector('.notif-dropdown');
+  if (existing) {
+    existing.remove();
+    return;
+  }
+  const dropdown = el('div', { class: 'notif-dropdown' }, el('div', { class: 'loading' }, 'Загрузка…'));
+  document.body.append(dropdown);
+
+  const rect = anchor.getBoundingClientRect();
+  dropdown.style.left = `${rect.right + 8}px`;
+  dropdown.style.top = `${rect.top}px`;
+
+  const cleanup = () => {
+    dropdown.remove();
+    document.removeEventListener('click', closeOnClick);
+  };
+  const closeOnClick = (e) => {
+    if (!dropdown.contains(e.target) && !anchor.contains(e.target)) cleanup();
+  };
+  setTimeout(() => document.addEventListener('click', closeOnClick), 0);
+
+  api.notifications(false).then((r) => {
+    clear(dropdown);
+    const items = r.data || [];
+    dropdown.append(
+      el(
+        'div',
+        { class: 'notif-header' },
+        el('strong', {}, 'Уведомления'),
+        items.some((n) => !n.read_at)
+          ? el(
+              'button',
+              {
+                class: 'btn btn-sm',
+                onClick: async () => {
+                  await api.readAllNotifications();
+                  counter.style.display = 'none';
+                  lastUnread = 0;
+                  cleanup();
+                },
+              },
+              'Прочитать все',
+            )
+          : null,
+      ),
+    );
+    if (items.length === 0) {
+      dropdown.append(el('div', { class: 'notif-empty' }, 'Уведомлений нет'));
+      return;
+    }
+    for (const n of items) {
+      dropdown.append(
+        el(
+          'a',
+          {
+            class: 'notif-item' + (n.read_at ? '' : ' unread'),
+            href: n.link || '#',
+            onClick: () => {
+              cleanup();
+              if (!n.read_at) api.readNotification(n.id).catch(() => {});
+            },
+          },
+          el('div', { class: 'notif-title' }, n.title),
+          n.body ? el('div', { class: 'notif-body' }, n.body) : null,
+          el('div', { class: 'notif-time' }, fmtDateTime(n.created_at)),
+        ),
+      );
+    }
+  });
+}
+
+// Глобальный хоткей Ctrl+K / Cmd+K
+window.addEventListener('keydown', (e) => {
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
+    e.preventDefault();
+    if (getToken()) openGlobalSearch();
+  }
+});
 
 const ROUTES = {
   '#/dashboard': renderDashboard,
@@ -137,6 +288,7 @@ const ROUTES = {
   '#/invitations': renderInvitations,
   '#/orders': renderOrders,
   '#/cashbox': renderCashbox,
+  '#/integrations': renderIntegrations,
 };
 
 function renderApp() {

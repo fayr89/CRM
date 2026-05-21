@@ -2,6 +2,7 @@
 // Использование: npm run seed
 import { hashPassword } from '../auth.js';
 import { db, ensureInitialized, closeDb } from '../db.js';
+import { generateToken, hashToken, tokenPrefix } from '../middleware/apiToken.js';
 
 async function seed() {
   await ensureInitialized();
@@ -204,12 +205,24 @@ async function seed() {
     managerId,
   );
 
+  // Демо-токен для внешних интеграций
+  const demoToken = generateToken();
+  await db.run(
+    `INSERT INTO api_tokens (name, token_hash, token_prefix, scopes, created_by)
+     VALUES (?, ?, ?, 'leads:create,orders:create', ?)`,
+    'Демо: лендинг',
+    hashToken(demoToken),
+    tokenPrefix(demoToken),
+    adminId,
+  );
+
   // eslint-disable-next-line no-console
   console.log(
     '[seed] Демо-данные созданы.\n' +
     '  Иерархия: admin → Мария (manager) → Алиса, Борис (sales)\n' +
     '  Склад:    Кирилл (warehouse@example.com / warehouse123)\n' +
-    '  Avito:    3 заказа в разных статусах, 2 платежа в кассе Марии',
+    '  Avito:    3 заказа в разных статусах, 2 платежа в кассе Марии\n' +
+    `  API-токен для тестов внешних интеграций: ${demoToken}`,
   );
 }
 

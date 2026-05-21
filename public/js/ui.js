@@ -142,6 +142,39 @@ export function toast(message, kind = '') {
   setTimeout(() => t.remove(), 3500);
 }
 
+// Дружественное «пустое состояние» для таблиц/списков.
+// Помогает новичку понять что делать, а не пугает пустым экраном.
+export function emptyState({ icon = '📭', title, description, actionLabel, onAction } = {}) {
+  return el(
+    'div',
+    { class: 'empty-state' },
+    el('div', { class: 'empty-icon' }, icon),
+    title ? el('div', { class: 'empty-title' }, title) : null,
+    description ? el('div', { class: 'empty-desc' }, description) : null,
+    actionLabel
+      ? el(
+          'button',
+          { class: 'btn btn-primary', onClick: onAction || (() => {}) },
+          actionLabel,
+        )
+      : null,
+  );
+}
+
+export function helpBanner(text) {
+  return el('div', { class: 'help-banner' }, text);
+}
+
+export function greeting(name) {
+  const h = new Date().getHours();
+  let prefix;
+  if (h < 5) prefix = 'Доброй ночи';
+  else if (h < 12) prefix = 'Доброе утро';
+  else if (h < 18) prefix = 'Добрый день';
+  else prefix = 'Добрый вечер';
+  return `${prefix}, ${name?.split(' ')[0] || 'коллега'}!`;
+}
+
 export function openModal(title, body, { primaryLabel = 'Сохранить', onSubmit, size } = {}) {
   return new Promise((resolve) => {
     const root = document.getElementById('modal-root');

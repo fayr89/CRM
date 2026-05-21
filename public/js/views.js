@@ -6,9 +6,12 @@ import {
   clear,
   confirm,
   el,
+  emptyState,
   fmtDate,
   fmtDateTime,
   fmtMoney,
+  greeting,
+  helpBanner,
   openModal,
   paginator,
   toast,
@@ -877,19 +880,132 @@ export async function renderOrders(main) {
   const isAdmin = me.role === 'admin';
   const canCreate = ['admin', 'manager', 'sales'].includes(me.role);
 
-  let state = { page: 1, status: '', marketplace: '', search: '' };
+  let state = { page: 1, status: '', marketplace: '', search: '', view: localStorage.getItem('orders_view') || 'table' };
   const tableArea = el('div');
 
   async function reload() {
     clear(tableArea);
     tableArea.append(el('div', { class: 'loading' }, 'Загрузка…'));
     try {
-      const result = await api.list('orders', { ...state, limit: 25 });
-      renderTable(result);
+      if (state.view === 'kanban') {
+        const result = await api.list('orders', { ...state, status: '', limit: 200 });
+        renderOrdersKanban(result);
+      } else {
+        const result = await api.list('orders', { ...state, limit: 25 });
+        renderTable(result);
+      }
     } catch (e) {
       clear(tableArea);
       tableArea.append(el('div', { class: 'empty' }, `Ошибка: ${e.message}`));
     }
+  }
+
+  function renderOrdersKanban(result) {
+    clear(tableArea);
+    const rows = result.data || [];
+    const stages = ['new', 'reserved', 'shipped', 'completed', 'cancelled'];
+
+    tableArea.append(
+      el(
+        'div',
+        { class: 'help-banner' },
+        isWarehouse
+          ? '💡 Перетаскивайте заказы: «Новый» → «Зарезервирован» → «Отгружен». Клик откроет детали.'
+          : '💡 Перетащите отгруженный заказ в «Завершён», чтобы закрыть. Менеджер может отменить новый заказ.',
+      ),
+    );
+
+    const grid = el('div', { class: 'pipeline orders-kanban' });
+    for (const stage of stages) {
+      const stageRows = rows.filter((r) => r.status === stage);
+      const total = stageRows.reduce((s, r) => s + (r.total_amount || 0), 0);
+      const cardsWrap = el('div', { class: 'pipeline-cards' });
+      const column = el(
+        'div',
+        {
+          class: 'pipeline-column',
+          'data-status': stage,
+          onDragover: (e) => {
+            e.preventDefault();
+            column.classList.add('drop-target');
+          },
+          onDragleave: () => column.classList.remove('drop-target'),
+          onDrop: async (e) => {
+            e.preventDefault();
+            column.classList.remove('drop-target');
+            const id = Number(e.dataTransfer.getData('text/plain'));
+            const src = e.dataTransfer.getData('source-status');
+            if (!id || src === stage) return;
+            try {
+              await transitionOrder(id, src, stage);
+              toast(`Заказ переведён в «${tr('order_status', stage)}»`, 'success');
+              reload();
+            } catch (err) {
+              toast(err.message || 'Не удалось перевести', 'error');
+            }
+          },
+        },
+        el(
+          'div',
+          { class: 'pipeline-column-header' },
+          el('span', {}, tr('order_status', stage)),
+          el('span', {}, `${stageRows.length} · ${fmtMoney(total, 'RUB')}`),
+        ),
+        cardsWrap,
+      );
+      if (stageRows.length === 0) {
+        cardsWrap.append(el('div', { class: 'pipeline-empty' }, 'Пусто'));
+      } else {
+        for (const r of stageRows) {
+          cardsWrap.append(
+            el(
+              'div',
+              {
+                class: 'pipeline-card',
+                draggable: 'true',
+                onDragstart: (e) => {
+                  e.dataTransfer.setData('text/plain', String(r.id));
+                  e.dataTransfer.setData('source-status', r.status);
+                  e.currentTarget.classList.add('dragging');
+                },
+                onDragend: (e) => e.currentTarget.classList.remove('dragging'),
+                onClick: async () => {
+                  const full = await api.get('orders', r.id);
+                  await showOrderDetails(full, reload);
+                },
+              },
+              el('div', { class: 'title' }, `#${r.id} · ${r.client_name || 'Клиент'}`),
+              el(
+                'div',
+                { class: 'meta' },
+                fmtMoney(r.total_amount, r.currency),
+                ' · ',
+                r.marketplace || '—',
+              ),
+              r.reference_number
+                ? el('div', { class: 'meta' }, '№ ' + r.reference_number)
+                : null,
+              el('div', { class: 'meta' }, '👤 ' + (r.manager_name || '—')),
+            ),
+          );
+        }
+      }
+      grid.append(column);
+    }
+    tableArea.append(grid);
+  }
+
+  async function transitionOrder(id, src, dst) {
+    if (dst === 'cancelled') {
+      const reason = prompt('Причина отмены (необязательно):') || '';
+      return api.cancelOrder(id, reason);
+    }
+    if (src === 'new' && dst === 'reserved') return api.reserveOrder(id);
+    if (src === 'reserved' && dst === 'shipped') return api.shipOrder(id);
+    if (src === 'shipped' && dst === 'completed') return api.completeOrder(id);
+    throw new Error(
+      `Нельзя перевести из «${tr('order_status', src)}» в «${tr('order_status', dst)}». Допустимые шаги: новый→зарезервирован→отгружен→завершён.`,
+    );
   }
 
   function renderTable(result) {
@@ -897,7 +1013,13 @@ export async function renderOrders(main) {
     const rows = result.data || [];
     if (rows.length === 0) {
       tableArea.append(
-        el('div', { class: 'card empty' }, 'Заказов нет.'),
+        emptyState({
+          icon: '📦',
+          title: 'Заказов пока нет',
+          description: canCreate
+            ? 'Создайте первый заказ кнопкой «Новый заказ» вверху, или подключите внешний сайт через раздел «Интеграции».'
+            : 'Когда менеджер создаст заказ, он появится здесь.',
+        }),
       );
       return;
     }
@@ -1070,6 +1192,43 @@ export async function renderOrders(main) {
     ),
   );
 
+  const viewToggle = el(
+    'div',
+    { class: 'view-toggle' },
+    el(
+      'button',
+      {
+        class: 'btn btn-sm' + (state.view === 'table' ? ' active' : ''),
+        onClick: () => {
+          state.view = 'table';
+          localStorage.setItem('orders_view', 'table');
+          reload();
+          updateToggle();
+        },
+      },
+      '☰ Список',
+    ),
+    el(
+      'button',
+      {
+        class: 'btn btn-sm' + (state.view === 'kanban' ? ' active' : ''),
+        onClick: () => {
+          state.view = 'kanban';
+          localStorage.setItem('orders_view', 'kanban');
+          reload();
+          updateToggle();
+        },
+      },
+      '▦ Канбан',
+    ),
+  );
+
+  function updateToggle() {
+    const [b1, b2] = viewToggle.querySelectorAll('button');
+    b1.classList.toggle('active', state.view === 'table');
+    b2.classList.toggle('active', state.view === 'kanban');
+  }
+
   const toolbar = el(
     'div',
     { class: 'toolbar' },
@@ -1077,6 +1236,7 @@ export async function renderOrders(main) {
     statusFilter,
     marketFilter,
     el('div', { class: 'spacer' }),
+    viewToggle,
     canCreate
       ? el(
           'button',
@@ -1093,7 +1253,10 @@ export async function renderOrders(main) {
     el(
       'div',
       { class: 'page-header' },
-      el('h1', { class: 'page-title' }, 'Прямые продажи (Avito)'),
+      el('div', {},
+        el('h1', { class: 'page-title' }, 'Прямые продажи (Avito)'),
+        el('div', { class: 'page-subtitle' }, 'Заказы из маркетплейсов и с собственных сайтов'),
+      ),
     ),
     toolbar,
     tableArea,
@@ -1511,8 +1674,30 @@ export async function renderResource(main, key) {
     clear(tableArea);
     const rows = result.data || [];
     if (rows.length === 0) {
+      const icons = {
+        companies: '🏢',
+        contacts: '👥',
+        leads: '🌱',
+        deals: '💼',
+        activities: '📋',
+        users: '🧑',
+      };
+      const helps = {
+        companies: 'Компании — это юрлица, с которыми ведутся сделки. Добавьте первую — и сможете привязывать к ней контакты, лиды и сделки.',
+        contacts: 'Контакты — это конкретные люди (как правило, представители компаний). Удобно фиксировать имя, телефон, должность.',
+        leads: 'Лиды — потенциальные клиенты, которые ещё не стали покупателями. Когда лид готов к сделке, нажмите «Конвертировать».',
+        deals: 'Сделки — это потенциальные продажи. У каждой есть стадия и сумма. На странице «Воронка» их удобно двигать мышью.',
+        activities: 'Задачи — звонки, встречи, письма, дела. Привязываются к контактам, компаниям, лидам или сделкам.',
+        users: 'Пользователи системы. Чтобы добавить нового — отправьте приглашение через раздел «Приглашения».',
+      };
       tableArea.append(
-        el('div', { class: 'card empty' }, 'Пока нет записей. Нажмите «Добавить» чтобы создать.'),
+        emptyState({
+          icon: icons[key] || '📭',
+          title: state.search ? 'Ничего не найдено' : `${cfg.title}: пока пусто`,
+          description: state.search
+            ? `По запросу «${state.search}» совпадений нет. Попробуйте другой запрос.`
+            : helps[key] || 'Нажмите «Добавить» чтобы создать первую запись.',
+        }),
       );
       return;
     }
@@ -1664,20 +1849,63 @@ export async function renderResource(main, key) {
 
 export async function renderDashboard(main) {
   await loadLookups();
-  main.append(el('h1', { class: 'page-title' }, 'Дашборд'));
+  const me = JSON.parse(localStorage.getItem('crm_user') || '{}');
+
+  const tipsForRole = {
+    admin: 'Вы видите все данные. Раздел «Интеграции» позволяет подключить внешние сайты и Telegram-боты.',
+    manager: 'Вы видите данные своих подчинённых. Создавайте сделки и распределяйте задачи.',
+    sales: 'Здесь сводка по вашим сделкам и задачам на сегодня. Перетащите сделку на воронке — стадия поменяется.',
+    warehouse: 'Откройте раздел «Прямые продажи», переключитесь на канбан и тащите заказы между стадиями.',
+  };
+
+  main.append(
+    el(
+      'div',
+      { class: 'greeting-card' },
+      el('div', { class: 'greeting-text' }, greeting(me.name)),
+      el(
+        'div',
+        { class: 'greeting-sub' },
+        tipsForRole[me.role] || 'Откройте боковое меню — там все разделы CRM.',
+      ),
+    ),
+  );
+
   const container = el('div');
   main.append(container);
 
   try {
     const stats = await api.dashboard();
-    renderDashboardContent(container, stats);
+    renderDashboardContent(container, stats, me);
   } catch (e) {
     container.append(el('div', { class: 'empty' }, `Ошибка: ${e.message}`));
   }
 }
 
-function renderDashboardContent(container, stats) {
+function renderDashboardContent(container, stats, me) {
   const { totals, deals, activities, leads } = stats;
+
+  // Карточка «Сегодня» — что требует внимания прямо сейчас.
+  const todayItems = [];
+  if (activities.overdue > 0) todayItems.push(`⚠️ ${activities.overdue} просроченных задач`);
+  if (activities.upcoming > 0) todayItems.push(`📋 ${activities.upcoming} задач в работе`);
+  if (deals.weighted_pipeline_value > 0) {
+    todayItems.push(`💰 Ожидаемая выручка: ${fmtMoney(deals.weighted_pipeline_value)}`);
+  }
+  if (todayItems.length === 0) todayItems.push('✨ Срочных дел нет. Хорошо поработать сегодня!');
+
+  container.append(
+    el(
+      'div',
+      { class: 'today-card card' },
+      el('h3', { style: { margin: '0 0 8px' } }, 'Сегодня'),
+      el(
+        'ul',
+        { class: 'today-list' },
+        ...todayItems.map((t) => el('li', {}, t)),
+      ),
+    ),
+  );
 
   container.append(
     el(
@@ -1804,47 +2032,106 @@ async function renderPipelineBody(body) {
   try {
     const [pipeline, deals] = await Promise.all([
       api.pipeline(),
-      api.list('deals', { limit: 200, open: 'true' }),
+      api.list('deals', { limit: 200 }),
     ]);
     clear(body);
 
+    body.append(
+      el(
+        'div',
+        { class: 'help-banner' },
+        '💡 Перетаскивайте карточки между колонками, чтобы менять стадию сделки. Клик по карточке — открыть детали.',
+      ),
+    );
+
     const grid = el('div', { class: 'pipeline' });
+    const reload = () => renderPipelineBody(body);
+
     for (const stage of pipeline.stages) {
       const stageDeals = (deals.data || []).filter((d) => d.stage === stage.stage);
+      const cardsWrap = el('div', { class: 'pipeline-cards' });
       const column = el(
         'div',
-        { class: 'pipeline-column' },
+        {
+          class: 'pipeline-column',
+          'data-stage': stage.stage,
+          onDragover: (e) => {
+            e.preventDefault();
+            column.classList.add('drop-target');
+          },
+          onDragleave: () => column.classList.remove('drop-target'),
+          onDrop: async (e) => {
+            e.preventDefault();
+            column.classList.remove('drop-target');
+            const dealId = Number(e.dataTransfer.getData('text/plain'));
+            const sourceStage = e.dataTransfer.getData('source-stage');
+            if (!dealId || sourceStage === stage.stage) return;
+            try {
+              if (stage.stage === 'won') await api.winDeal(dealId);
+              else if (stage.stage === 'lost') {
+                const reason = prompt('Причина проигрыша (необязательно):') || '';
+                await api.loseDeal(dealId, reason);
+              } else {
+                await api.update('deals', dealId, { stage: stage.stage });
+              }
+              toast(`Переведено в «${tr('stage', stage.stage)}»`, 'success');
+              reload();
+            } catch (err) {
+              toast(err.message || 'Не удалось перевести', 'error');
+            }
+          },
+        },
         el(
           'div',
           { class: 'pipeline-column-header' },
           el('span', {}, tr('stage', stage.stage)),
-          el('span', {}, fmtMoney(stage.total_amount)),
+          el('span', {}, `${stage.count} · ${fmtMoney(stage.total_amount)}`),
         ),
-        ...stageDeals.map((d) =>
-          el(
-            'div',
-            {
-              class: 'pipeline-card',
-              onClick: () => openDealEdit(d, () => renderPipelineBody(body)),
-            },
-            el('div', { class: 'title' }, d.title),
-            el('div', { class: 'meta' }, fmtMoney(d.amount, d.currency), ' · ', d.probability + '%'),
-            el('div', { class: 'meta' }, d.company_name || companyName(d.company_id)),
+        cardsWrap,
+      );
+
+      if (stageDeals.length === 0) {
+        cardsWrap.append(el('div', { class: 'pipeline-empty' }, 'Пусто'));
+      } else {
+        for (const d of stageDeals) {
+          cardsWrap.append(
             el(
               'div',
-              { class: 'meta' },
-              d.expected_close_date ? `Закрытие: ${fmtDate(d.expected_close_date)}` : '',
+              {
+                class: 'pipeline-card',
+                draggable: 'true',
+                onDragstart: (e) => {
+                  e.dataTransfer.setData('text/plain', String(d.id));
+                  e.dataTransfer.setData('source-stage', d.stage);
+                  e.dataTransfer.effectAllowed = 'move';
+                  e.currentTarget.classList.add('dragging');
+                },
+                onDragend: (e) => e.currentTarget.classList.remove('dragging'),
+                onClick: () => openDealEdit(d, reload),
+              },
+              el('div', { class: 'title' }, d.title),
+              el(
+                'div',
+                { class: 'meta' },
+                fmtMoney(d.amount, d.currency),
+                ' · ',
+                d.probability + '%',
+              ),
+              el('div', { class: 'meta' }, d.company_name || companyName(d.company_id) || '—'),
+              d.expected_close_date
+                ? el('div', { class: 'meta' }, '📅 ' + fmtDate(d.expected_close_date))
+                : null,
             ),
-          ),
-        ),
-      );
+          );
+        }
+      }
       grid.append(column);
     }
     body.append(grid);
     body.append(
       el(
         'div',
-        { class: 'card', style: { marginTop: '16px' } },
+        { class: 'card pipeline-totals' },
         el('strong', {}, 'Сумма воронки: '),
         fmtMoney(pipeline.pipeline_value),
         ' · ',
@@ -1870,4 +2157,579 @@ async function openDealEdit(deal, onSaved) {
       onSaved?.();
     },
   });
+}
+
+// ============================================================
+// Интеграции: API-токены и вебхуки
+// ============================================================
+
+export async function renderIntegrations(main) {
+  main.append(
+    el(
+      'div',
+      { class: 'page-header' },
+      el('div', {},
+        el('h1', { class: 'page-title' }, 'Интеграции'),
+        el('div', { class: 'page-subtitle' }, 'Подключайте внешние сайты, мессенджеры, маркетплейсы — заявки и заказы будут падать прямо в CRM'),
+      ),
+    ),
+  );
+
+  main.append(
+    helpBanner(
+      '🔌 Создайте токен и передайте его внешнему сервису. Он сможет слать POST на /api/external/leads (заявки) и /api/external/orders (заказы). Webhook наоборот — мы отправим JSON на ваш URL, когда что-то изменится.',
+    ),
+  );
+
+  const tokensArea = el('div', { class: 'integration-section' });
+  const webhooksArea = el('div', { class: 'integration-section' });
+  const docsArea = el('div', { class: 'integration-section' });
+
+  main.append(tokensArea, webhooksArea, docsArea);
+
+  await renderTokensSection(tokensArea);
+  await renderWebhooksSection(webhooksArea);
+  renderDocsSection(docsArea);
+}
+
+async function renderTokensSection(area) {
+  clear(area);
+  area.append(
+    el(
+      'div',
+      { class: 'section-header' },
+      el('h2', {}, 'API-токены'),
+      el(
+        'button',
+        { class: 'btn btn-primary', onClick: () => openCreateToken(() => renderTokensSection(area)) },
+        'Новый токен',
+      ),
+    ),
+  );
+
+  try {
+    const res = await api.apiTokens();
+    const rows = res.data || [];
+    if (rows.length === 0) {
+      area.append(
+        emptyState({
+          icon: '🔑',
+          title: 'Нет ни одного токена',
+          description:
+            'Создайте токен и передайте его внешнему сайту, лендингу или Telegram-боту. Каждый клиент получает отдельный токен — так удобнее отзывать доступ.',
+        }),
+      );
+      return;
+    }
+    const table = el(
+      'table',
+      { class: 'data' },
+      el(
+        'thead',
+        {},
+        el(
+          'tr',
+          {},
+          el('th', {}, 'Название'),
+          el('th', {}, 'Префикс'),
+          el('th', {}, 'Права'),
+          el('th', {}, 'Последний раз'),
+          el('th', {}, 'Создан'),
+          el('th', {}, 'Статус'),
+          el('th', { style: { textAlign: 'right' } }, 'Действия'),
+        ),
+      ),
+      el(
+        'tbody',
+        {},
+        ...rows.map((r) => {
+          const isRevoked = !!r.revoked_at;
+          return el(
+            'tr',
+            {},
+            el('td', {}, r.name),
+            el('td', {}, el('code', {}, r.token_prefix)),
+            el('td', {}, r.scopes),
+            el('td', {}, r.last_used_at ? fmtDateTime(r.last_used_at) : 'не использовался'),
+            el('td', {}, fmtDate(r.created_at)),
+            el(
+              'td',
+              {},
+              el(
+                'span',
+                { class: 'badge ' + (isRevoked ? 'cancelled' : 'completed') },
+                isRevoked ? 'Отозван' : 'Активен',
+              ),
+            ),
+            el(
+              'td',
+              { style: { textAlign: 'right' } },
+              isRevoked
+                ? el(
+                    'button',
+                    {
+                      class: 'btn btn-sm',
+                      onClick: async () => {
+                        if (!(await confirm('Удалить запись о токене безвозвратно?'))) return;
+                        await api.deleteApiToken(r.id);
+                        renderTokensSection(area);
+                      },
+                    },
+                    'Удалить',
+                  )
+                : el(
+                    'button',
+                    {
+                      class: 'btn btn-sm btn-danger',
+                      onClick: async () => {
+                        if (!(await confirm(`Отозвать токен «${r.name}»? Внешний сервис перестанет работать.`))) return;
+                        await api.revokeApiToken(r.id);
+                        toast('Токен отозван', 'success');
+                        renderTokensSection(area);
+                      },
+                    },
+                    'Отозвать',
+                  ),
+            ),
+          );
+        }),
+      ),
+    );
+    area.append(el('div', { class: 'table-wrap' }, table));
+  } catch (e) {
+    area.append(el('div', { class: 'empty' }, `Ошибка: ${e.message}`));
+  }
+}
+
+async function openCreateToken(onCreated) {
+  const nameInput = el('input', { type: 'text', placeholder: 'Например: Лендинг example.com' });
+  const scopeLeads = el('input', { type: 'checkbox', checked: true });
+  const scopeOrders = el('input', { type: 'checkbox', checked: true });
+
+  const body = el(
+    'div',
+    {},
+    el('div', { class: 'form-row' }, el('label', {}, 'Название *'), nameInput),
+    el(
+      'div',
+      { class: 'form-row' },
+      el('label', {}, 'Разрешённые действия'),
+      el(
+        'div',
+        {},
+        el('label', { style: { display: 'block' } }, scopeLeads, ' Создавать лидов (leads:create)'),
+        el('label', { style: { display: 'block' } }, scopeOrders, ' Создавать заказы (orders:create)'),
+      ),
+    ),
+    el(
+      'div',
+      { class: 'hint' },
+      'После создания токен будет показан ОДИН раз — скопируйте его сразу.',
+    ),
+  );
+
+  await openModal('Новый API-токен', body, {
+    primaryLabel: 'Создать',
+    onSubmit: async () => {
+      if (!nameInput.value.trim()) {
+        toast('Укажите название', 'error');
+        return false;
+      }
+      const scopes = [
+        scopeLeads.checked && 'leads:create',
+        scopeOrders.checked && 'orders:create',
+      ].filter(Boolean).join(',') || 'leads:create';
+      const r = await api.createApiToken({ name: nameInput.value.trim(), scopes });
+      onCreated?.();
+      await showTokenOnce(r.token);
+    },
+  });
+}
+
+async function showTokenOnce(token) {
+  const tokenBox = el(
+    'div',
+    { class: 'token-display' },
+    el('code', {}, token),
+  );
+  const copyBtn = el(
+    'button',
+    {
+      class: 'btn btn-primary',
+      onClick: async () => {
+        try {
+          await navigator.clipboard.writeText(token);
+          toast('Скопировано', 'success');
+        } catch {
+          prompt('Скопируйте вручную:', token);
+        }
+      },
+    },
+    'Скопировать',
+  );
+  await openModal(
+    'Токен создан — сохраните его сейчас',
+    el(
+      'div',
+      {},
+      el('p', {}, 'Это значение больше нигде не будет показано. Скопируйте и сохраните в безопасном месте.'),
+      tokenBox,
+      copyBtn,
+      el(
+        'div',
+        { class: 'hint', style: { marginTop: '12px' } },
+        'Передавайте этот токен внешним сервисам в заголовке X-API-Token при запросах к /api/external/*.',
+      ),
+    ),
+    {},
+  );
+}
+
+async function renderWebhooksSection(area) {
+  clear(area);
+  area.append(
+    el(
+      'div',
+      { class: 'section-header' },
+      el('h2', {}, 'Исходящие вебхуки'),
+      el(
+        'button',
+        { class: 'btn btn-primary', onClick: () => openCreateWebhook(() => renderWebhooksSection(area)) },
+        'Новый webhook',
+      ),
+    ),
+  );
+
+  try {
+    const res = await api.webhooks();
+    const rows = res.data || [];
+    if (rows.length === 0) {
+      area.append(
+        emptyState({
+          icon: '📡',
+          title: 'Вебхуков нет',
+          description:
+            'Webhook позволяет уведомлять ваши внешние системы об изменениях в CRM. Например, бухгалтерия узнаёт о завершённом заказе, склад — о новом резерве.',
+        }),
+      );
+      return;
+    }
+    const table = el(
+      'table',
+      { class: 'data' },
+      el(
+        'thead',
+        {},
+        el(
+          'tr',
+          {},
+          el('th', {}, 'Название'),
+          el('th', {}, 'URL'),
+          el('th', {}, 'События'),
+          el('th', {}, 'Доставок'),
+          el('th', {}, 'Последняя'),
+          el('th', {}, 'Статус'),
+          el('th', { style: { textAlign: 'right' } }, 'Действия'),
+        ),
+      ),
+      el(
+        'tbody',
+        {},
+        ...rows.map((w) =>
+          el(
+            'tr',
+            {},
+            el('td', {}, w.name),
+            el('td', {}, el('code', { style: { fontSize: '11px' } }, w.url)),
+            el('td', {}, w.events),
+            el('td', {}, w.deliveries_count || 0),
+            el(
+              'td',
+              {},
+              w.last_delivery_at
+                ? `${fmtDateTime(w.last_delivery_at)} (${w.last_status_code || 'err'})`
+                : '—',
+            ),
+            el(
+              'td',
+              {},
+              el(
+                'span',
+                { class: 'badge ' + (w.active ? 'completed' : 'cancelled') },
+                w.active ? 'Вкл' : 'Выкл',
+              ),
+            ),
+            el(
+              'td',
+              { style: { textAlign: 'right' } },
+              el(
+                'button',
+                {
+                  class: 'btn btn-sm',
+                  onClick: async () => {
+                    await api.updateWebhook(w.id, { active: !w.active });
+                    renderWebhooksSection(area);
+                  },
+                },
+                w.active ? 'Выкл' : 'Вкл',
+              ),
+              el(
+                'button',
+                {
+                  class: 'btn btn-sm btn-danger',
+                  onClick: async () => {
+                    if (!(await confirm(`Удалить webhook «${w.name}»?`))) return;
+                    await api.deleteWebhook(w.id);
+                    renderWebhooksSection(area);
+                  },
+                },
+                'Удалить',
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    area.append(el('div', { class: 'table-wrap' }, table));
+  } catch (e) {
+    area.append(el('div', { class: 'empty' }, `Ошибка: ${e.message}`));
+  }
+}
+
+async function openCreateWebhook(onCreated) {
+  const nameI = el('input', { type: 'text', placeholder: 'Например: Уведомления склада' });
+  const urlI = el('input', { type: 'url', placeholder: 'https://...' });
+  const eventsI = el(
+    'select',
+    {},
+    el('option', { value: '*' }, 'Все события (*)'),
+    el('option', { value: 'lead.created' }, 'lead.created'),
+    el('option', { value: 'order.created' }, 'order.created'),
+    el('option', { value: 'order.created,order.reserved' }, 'order.created + order.reserved'),
+    el(
+      'option',
+      { value: 'order.created,order.reserved,order.shipped,order.completed,order.cancelled' },
+      'Все события заказа',
+    ),
+    el(
+      'option',
+      { value: 'payment.confirmed,payment.rejected' },
+      'Платежи (подтверждение/отклонение)',
+    ),
+  );
+  const secretI = el('input', { type: 'text', placeholder: 'Опционально: для подписи HMAC' });
+
+  const body = el(
+    'div',
+    {},
+    el('div', { class: 'form-row' }, el('label', {}, 'Название *'), nameI),
+    el('div', { class: 'form-row' }, el('label', {}, 'URL *'), urlI),
+    el('div', { class: 'form-row' }, el('label', {}, 'События'), eventsI),
+    el('div', { class: 'form-row' }, el('label', {}, 'Секрет для HMAC'), secretI),
+    el(
+      'div',
+      { class: 'hint' },
+      'Мы пошлём POST с JSON {event, payload, ts}. Если указан секрет, добавим заголовок X-CRM-Signature: sha256=…',
+    ),
+  );
+
+  await openModal('Новый webhook', body, {
+    primaryLabel: 'Создать',
+    onSubmit: async () => {
+      if (!nameI.value.trim() || !urlI.value.trim()) {
+        toast('Заполните название и URL', 'error');
+        return false;
+      }
+      await api.createWebhook({
+        name: nameI.value.trim(),
+        url: urlI.value.trim(),
+        events: eventsI.value,
+        secret: secretI.value.trim() || null,
+      });
+      toast('Webhook добавлен', 'success');
+      onCreated?.();
+    },
+  });
+}
+
+function renderDocsSection(area) {
+  clear(area);
+  area.append(
+    el('h2', { style: { marginTop: '24px' } }, 'Как подключить'),
+    el(
+      'div',
+      { class: 'docs-grid' },
+      el(
+        'div',
+        { class: 'card' },
+        el('h3', {}, '🌐 Свой лендинг / сайт'),
+        el('p', {}, 'Самый простой способ — добавить одну строку в HTML:'),
+        el(
+          'pre',
+          { class: 'code-block' },
+          `<script src="${location.origin}/embed/form.js"\n        data-token="ВАШ_ТОКЕН"\n        data-marketplace="Сайт example.com"></script>`,
+        ),
+        el(
+          'p',
+          {},
+          'На странице появится готовая форма заявки. Заявка прилетит в раздел «Лиды» и менеджер получит уведомление.',
+        ),
+      ),
+      el(
+        'div',
+        { class: 'card' },
+        el('h3', {}, '📥 Прямой вызов API'),
+        el('p', {}, 'Для собственной интеграции присылайте POST:'),
+        el(
+          'pre',
+          { class: 'code-block' },
+          `POST ${location.origin}/api/external/leads
+X-API-Token: ВАШ_ТОКЕН
+Content-Type: application/json
+
+{
+  "first_name": "Иван",
+  "phone": "+7...",
+  "email": "ivan@example.com",
+  "source": "website",
+  "description": "Хочет каталог"
+}`,
+        ),
+        el(
+          'p',
+          {},
+          'Для заказов — тот же подход на /api/external/orders с массивом items.',
+        ),
+      ),
+      el(
+        'div',
+        { class: 'card' },
+        el('h3', {}, '🤖 Telegram-бот'),
+        el(
+          'p',
+          {},
+          'В репозитории — examples/telegram-bot.js. Бот спрашивает у пользователя имя/телефон и шлёт лида через тот же /api/external/leads. Запускается как отдельный процесс с TELEGRAM_TOKEN и CRM_API_TOKEN в окружении.',
+        ),
+      ),
+      el(
+        'div',
+        { class: 'card' },
+        el('h3', {}, '📡 Webhook на ваши системы'),
+        el(
+          'p',
+          {},
+          'Когда заказ меняет статус, мы шлём вашему серверу JSON. Удобно для бухгалтерии, складского ПО, аналитики. Подписать запрос можно HMAC-секретом.',
+        ),
+      ),
+    ),
+  );
+}
+
+// ============================================================
+// Глобальный поиск (Ctrl+K)
+// ============================================================
+
+let searchModalOpen = false;
+
+export function openGlobalSearch() {
+  if (searchModalOpen) return;
+  searchModalOpen = true;
+  const root = document.getElementById('modal-root');
+  const input = el('input', {
+    type: 'search',
+    class: 'search-input',
+    placeholder: 'Поиск по контактам, компаниям, лидам, сделкам, заказам…',
+    autofocus: true,
+  });
+  const results = el('div', { class: 'search-results' });
+
+  const close = () => {
+    searchModalOpen = false;
+    backdrop.remove();
+    document.removeEventListener('keydown', escListener);
+  };
+  const escListener = (e) => {
+    if (e.key === 'Escape') close();
+  };
+  document.addEventListener('keydown', escListener);
+
+  let debounce;
+  input.addEventListener('input', () => {
+    clearTimeout(debounce);
+    const q = input.value.trim();
+    if (q.length < 2) {
+      clear(results);
+      results.append(el('div', { class: 'search-hint' }, 'Введите минимум 2 символа…'));
+      return;
+    }
+    debounce = setTimeout(async () => {
+      try {
+        const r = await api.search(q);
+        renderResults(r);
+      } catch (e) {
+        clear(results);
+        results.append(el('div', { class: 'search-hint' }, e.message));
+      }
+    }, 200);
+  });
+
+  function renderResults(r) {
+    clear(results);
+    const groups = [
+      ['leads', '🌱 Лиды', '#/leads', (x) => `${x.first_name} ${x.last_name || ''} — ${x.email || x.phone || ''}`],
+      ['contacts', '👥 Контакты', '#/contacts', (x) => `${x.first_name} ${x.last_name || ''} — ${x.email || x.phone || ''}`],
+      ['companies', '🏢 Компании', '#/companies', (x) => x.name],
+      ['deals', '💼 Сделки', '#/deals', (x) => `${x.title} — ${fmtMoney(x.amount, x.currency)}`],
+      ['orders', '📦 Заказы', '#/orders', (x) => `#${x.id} ${x.client_name || ''} — ${fmtMoney(x.total_amount, x.currency)}`],
+    ];
+    let total = 0;
+    for (const [key, label, href, fmt] of groups) {
+      const items = r[key] || [];
+      if (!items.length) continue;
+      total += items.length;
+      results.append(
+        el('div', { class: 'search-group-label' }, label),
+        ...items.map((it) =>
+          el(
+            'a',
+            {
+              class: 'search-row',
+              href,
+              onClick: close,
+            },
+            fmt(it),
+          ),
+        ),
+      );
+    }
+    if (total === 0) {
+      results.append(el('div', { class: 'search-hint' }, 'Ничего не найдено'));
+    }
+  }
+
+  const modal = el(
+    'div',
+    { class: 'search-modal' },
+    input,
+    el(
+      'div',
+      { class: 'search-hint search-help' },
+      'Esc — закрыть · стрелка вверх/вниз — навигация · Enter — открыть',
+    ),
+    results,
+  );
+  const backdrop = el(
+    'div',
+    {
+      class: 'modal-backdrop',
+      onClick: (e) => {
+        if (e.target === backdrop) close();
+      },
+    },
+    modal,
+  );
+  root.append(backdrop);
+  setTimeout(() => input.focus(), 0);
+  clear(results);
+  results.append(el('div', { class: 'search-hint' }, 'Введите минимум 2 символа…'));
 }
