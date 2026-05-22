@@ -57,8 +57,22 @@ read -s -p "Пароль для базы Supabase (придумайте, >=8): "
 read -p "Имя админа [Администратор]: " ADMIN_NAME
 ADMIN_NAME=${ADMIN_NAME:-Администратор}
 
+echo
+echo "Доступные регионы Supabase:"
+echo "  eu-central-1 (Франкфурт) — для России/Европы, рекомендуется"
+echo "  eu-west-1    (Дублин)"
+echo "  eu-north-1   (Стокгольм)"
+echo "  us-east-1    (Вирджиния)"
+echo "  ap-south-1   (Мумбаи)"
+echo "  ap-northeast-1 (Токио)"
 read -p "Регион Supabase [eu-central-1]: " REGION
 REGION=${REGION:-eu-central-1}
+
+# Валидация региона
+VALID_REGIONS="ap-east-1 ap-northeast-1 ap-northeast-2 ap-south-1 ap-southeast-1 ap-southeast-2 ca-central-1 eu-central-1 eu-central-2 eu-north-1 eu-west-1 eu-west-2 eu-west-3 sa-east-1 us-east-1 us-east-2 us-west-1 us-west-2"
+if ! echo " $VALID_REGIONS " | grep -q " $REGION "; then
+  err "Регион '$REGION' не поддерживается. Используйте один из: $VALID_REGIONS"
+fi
 
 JWT_SECRET=$(openssl rand -hex 32)
 TIMESTAMP=$(date +%s)
