@@ -2,7 +2,6 @@
   "name": "crm",
   "version": "1.0.0",
   "description": "Standard CRM system with REST API: contacts, companies, leads, deals (sales pipeline), activities, notes",
-  "main": "src/server.js",
   "type": "module",
   "engines": {
     "node": ">=20.0.0"
