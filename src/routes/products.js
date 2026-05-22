@@ -249,48 +249,53 @@ router.post(
     }
     let created = 0;
     let updated = 0;
+    const skipped = [];
     for (const p of products) {
-      const existing = await db.get(
-        `SELECT id FROM products WHERE external_source = 'moysklad' AND external_id = ?`,
-        p.externalId,
-      );
-      if (existing) {
-        await db.run(
-          `UPDATE products SET
-            sku = COALESCE(?, sku),
-            name = ?,
-            image_url = COALESCE(?, image_url),
-            cost_price = ?,
-            unit = ?,
-            description = ?,
-            updated_at = NOW()
-           WHERE id = ?`,
-          p.sku,
-          p.name,
-          p.imageUrl,
-          p.costPrice,
-          p.unit,
-          p.description,
-          existing.id,
-        );
-        updated += 1;
-      } else {
-        await db.run(
-          `INSERT INTO products (sku, name, image_url, cost_price, unit, description,
-                                 external_source, external_id, active)
-           VALUES (?, ?, ?, ?, ?, ?, 'moysklad', ?, TRUE)`,
-          p.sku,
-          p.name,
-          p.imageUrl,
-          p.costPrice,
-          p.unit,
-          p.description,
+      try {
+        const existing = await db.get(
+          `SELECT id FROM products WHERE external_source = 'moysklad' AND external_id = ?`,
           p.externalId,
         );
-        created += 1;
+        if (existing) {
+          await db.run(
+            `UPDATE products SET
+              sku = COALESCE(?, sku),
+              name = ?,
+              image_url = COALESCE(?, image_url),
+              cost_price = ?,
+              unit = ?,
+              description = ?,
+              updated_at = NOW()
+             WHERE id = ?`,
+            p.sku,
+            p.name,
+            p.imageUrl,
+            p.costPrice,
+            p.unit,
+            p.description,
+            existing.id,
+          );
+          updated += 1;
+        } else {
+          await db.run(
+            `INSERT INTO products (sku, name, image_url, cost_price, unit, description,
+                                   external_source, external_id, active)
+             VALUES (?, ?, ?, ?, ?, ?, 'moysklad', ?, TRUE)`,
+            p.sku,
+            p.name,
+            p.imageUrl,
+            p.costPrice,
+            p.unit,
+            p.description,
+            p.externalId,
+          );
+          created += 1;
+        }
+      } catch (err) {
+        skipped.push({ name: p.name, sku: p.sku, error: err.message });
       }
     }
-    res.json({ ok: true, created, updated, total: products.length });
+    res.json({ ok: true, created, updated, skipped: skipped.length, skipped_details: skipped, total: products.length });
   }),
 );
 

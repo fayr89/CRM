@@ -3617,7 +3617,7 @@ async function openMoyskladImport(onDone) {
     el(
       'p',
       {},
-      'Импорт подтянет каталог из МойСклад: название, артикул, себестоимость, картинку. Существующие товары обновятся (linked by external_id). Сделать это безопасно несколько раз.',
+      'Импорт подтянет каталог из МойСклад: товары + модификации (размеры/цвета), название, артикул, себестоимость, картинку. Существующие обновятся (linked by external_id). Сделать это безопасно несколько раз. Большой каталог может занять до минуты.',
     ),
     el(
       'p',
@@ -3640,7 +3640,13 @@ async function openMoyskladImport(onDone) {
       statusEl.textContent = '⏳ Импортируем, это может занять до минуты…';
       try {
         const r = await api.importMoysklad(tokenI.value.trim() || undefined);
-        statusEl.innerHTML = `✅ Готово: создано ${r.created}, обновлено ${r.updated}, всего ${r.total}`;
+        const parts = [`создано ${r.created}`, `обновлено ${r.updated}`, `всего получено из МойСклад ${r.total}`];
+        if (r.skipped) parts.push(`пропущено ${r.skipped}`);
+        statusEl.innerHTML = `✅ Готово: ${parts.join(', ')}`;
+        if (r.skipped && r.skipped_details?.length) {
+          const sample = r.skipped_details.slice(0, 3).map((s) => `• ${s.name}${s.sku ? ` (${s.sku})` : ''}: ${s.error}`).join('<br>');
+          statusEl.innerHTML += `<div style="margin-top:8px;font-size:.9em;opacity:.8">${sample}${r.skipped_details.length > 3 ? `<br>… ещё ${r.skipped_details.length - 3}` : ''}</div>`;
+        }
         toast('Импорт завершён', 'success');
         onDone?.();
         return new Promise((resolve) => setTimeout(() => resolve(true), 1500));
