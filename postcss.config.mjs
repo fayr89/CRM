@@ -1,10 +1,7 @@
-// Tailwind v4 PostCSS-плагин. Без этого файла CSS не процессится и
-// `@import "tailwindcss"` в globals.css не разворачивается, страницы
-// рендерятся без стилей.
+// Tailwind v4 + Next.js — официальный синтаксис из доки tailwindcss.com.
+// Массив с именем плагина (не объект как раньше).
 const config = {
-  plugins: {
-    "@tailwindcss/postcss": {},
-  },
+  plugins: ["@tailwindcss/postcss"],
 };
 
 export default config;
