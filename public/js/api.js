@@ -120,6 +120,8 @@ export const api = {
     request('POST', '/api/products/import/moysklad', { body: token ? { token } : {} }),
   refreshMoyskladStock: (token) =>
     request('POST', '/api/products/import/moysklad-stock', { body: token ? { token } : {} }),
+  refreshMoyskladStores: (token, offset) =>
+    request('POST', '/api/products/import/moysklad-stores', { body: { token: token || undefined, offset: offset || 0 } }),
 
   // Расписание отгрузок
   warehouseSchedule: () => request('GET', '/api/warehouse/schedule'),

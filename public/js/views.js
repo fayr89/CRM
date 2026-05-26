@@ -3475,6 +3475,19 @@ export async function renderProducts(main) {
           'button',
           {
             class: 'btn',
+            onClick: () => openMoyskladStores(() => {
+              state.page = 1;
+              return reload();
+            }),
+          },
+          '🏬 Склады',
+        )
+      : null,
+    isAdmin
+      ? el(
+          'button',
+          {
+            class: 'btn',
             onClick: () => openMoyskladStock(() => {
               state.page = 1;
               return reload();
@@ -3807,6 +3820,47 @@ async function openMoyskladStock(onDone) {
         toast('Остатки обновлены', 'success');
         await onDone?.();
         return new Promise((resolve) => setTimeout(() => resolve(true), 1200));
+      } catch (e) {
+        statusEl.innerHTML = `❌ ${e.message}`;
+        return false;
+      }
+    },
+  });
+}
+
+async function openMoyskladStores(onDone) {
+  const tokenI = el('input', { type: 'password', placeholder: 'Bearer-токен МойСклад' });
+  const statusEl = el('div', { class: 'import-status' });
+  const body = el(
+    'div',
+    {},
+    el('p', {}, 'Загрузит остатки по складам (на каком складе сколько). Для большого каталога грузится частями — подождите завершения, не закрывайте окно.'),
+    el('div', { class: 'form-row' }, el('label', {}, 'Токен'), tokenI),
+    statusEl,
+  );
+  await openModal('Остатки по складам', body, {
+    primaryLabel: 'Загрузить склады',
+    onSubmit: async () => {
+      const token = tokenI.value.trim();
+      if (!token) {
+        statusEl.innerHTML = '❌ Введите токен';
+        return false;
+      }
+      let offset = 0;
+      let totalUpdated = 0;
+      try {
+        for (let i = 0; i < 1000; i += 1) {
+          const r = await api.refreshMoyskladStores(token, offset);
+          totalUpdated += r.updated || 0;
+          offset = r.nextOffset;
+          const seen = r.total ? Math.min(offset, r.total) : offset;
+          statusEl.innerHTML = `⏳ Обработано ${seen}${r.total ? ' из ' + r.total : ''}…`;
+          if (r.done) break;
+        }
+        statusEl.innerHTML = `✅ Готово: склады заполнены у ${totalUpdated} позиций`;
+        toast('Склады обновлены', 'success');
+        await onDone?.();
+        return new Promise((resolve) => setTimeout(() => resolve(true), 1500));
       } catch (e) {
         statusEl.innerHTML = `❌ ${e.message}`;
         return false;

@@ -128,21 +128,25 @@ export async function fetchMoyskladStock(token) {
   return { byId, bySku, count: rows.length, sample: rows[0] || null };
 }
 
-// Разбивка остатков по складам: Map(sku → [{ store, stock }]).
-// Из отчёта /report/stock/bystore (у каждой строки массив stockByStore).
-export async function fetchMoyskladStockByStore(token) {
-  const rows = await fetchAll('/report/stock/bystore', token);
+// Одна страница отчёта по складам — для порционной загрузки большого каталога.
+// Возвращает Map(sku → [{store, stock}]) для страницы + общий размер отчёта.
+export async function fetchMoyskladStockByStorePage(token, offset = 0, limit = 500) {
+  const headers = authHeader(token);
+  const url = `${BASE}/report/stock/bystore?limit=${limit}&offset=${offset}`;
+  const res = await fetch(url, { headers, signal: AbortSignal.timeout(60000) });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`МойСклад ответил ${res.status}: ${text.slice(0, 200)}`);
+  }
+  const data = await res.json();
+  const rows = data.rows || [];
   const bySku = new Map();
-  const byId = new Map();
   for (const r of rows) {
     const stores = (r.stockByStore || [])
       .map((s) => ({ store: s.name || '—', stock: Number(s.stock) || 0 }))
       .filter((s) => s.stock !== 0);
-    const entry = stores;
     const sku = r.code || r.article;
-    if (sku) bySku.set(String(sku), entry);
-    const id = extractUuid(r.meta?.href);
-    if (id) byId.set(id, entry);
+    if (sku) bySku.set(String(sku), stores);
   }
-  return { byId, bySku, count: rows.length };
+  return { bySku, size: data.meta?.size ?? offset + rows.length, fetched: rows.length };
 }

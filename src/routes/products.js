@@ -4,7 +4,7 @@ import { authenticate, requireRole } from '../auth.js';
 import { db } from '../db.js';
 import { BadRequest, NotFound, asyncHandler } from '../errors.js';
 import { parsePagination, parseSort, paginated } from '../query.js';
-import { fetchMoyskladProducts, fetchMoyskladStock, fetchMoyskladStockByStore } from '../services/moysklad.js';
+import { fetchMoyskladProducts, fetchMoyskladStock, fetchMoyskladStockByStorePage } from '../services/moysklad.js';
 
 const router = Router();
 
@@ -366,6 +366,51 @@ router.post(
       throw BadRequest('Не удалось записать остатки: ' + e.message);
     }
     res.json({ ok: true, updated, total: count });
+  }),
+);
+
+// Остатки по складам — порционно: фронт вызывает с растущим offset, пока done=false.
+// По 500 позиций за запрос, чтобы тяжёлый отчёт укладывался в лимит времени.
+router.post(
+  '/import/moysklad-stores',
+  requireRole('admin'),
+  asyncHandler(async (req, res) => {
+    const token = req.body?.token || process.env.MOYSKLAD_TOKEN;
+    if (!token) {
+      throw BadRequest('Передайте токен МойСклад в теле запроса {token: "..."}');
+    }
+    const offset = Math.max(0, parseInt(req.body?.offset, 10) || 0);
+    const LIMIT = 500;
+    let page;
+    try {
+      page = await fetchMoyskladStockByStorePage(token, offset, LIMIT);
+    } catch (e) {
+      throw BadRequest(e.message);
+    }
+    const { bySku, size, fetched } = page;
+    let updated = 0;
+    if (bySku.size) {
+      try {
+        await db.withTransaction(async (tx) => {
+          await tx.run('ALTER TABLE products ADD COLUMN IF NOT EXISTS stock_by_store JSONB');
+          const skus = [...bySku.keys()];
+          const jsons = skus.map((s) => JSON.stringify(bySku.get(s)));
+          const r = await tx.run(
+            `UPDATE products AS p SET stock_by_store = d.sbs, updated_at = NOW()
+             FROM unnest(?::text[], ?::jsonb[]) AS d(sku, sbs)
+             WHERE p.external_source = 'moysklad' AND p.sku = d.sku`,
+            skus,
+            jsons,
+          );
+          updated = r.changes || 0;
+        });
+      } catch (e) {
+        throw BadRequest('Не удалось записать склады: ' + e.message);
+      }
+    }
+    const nextOffset = offset + fetched;
+    const done = fetched < LIMIT || nextOffset >= size;
+    res.json({ ok: true, updated, fetched, nextOffset, total: size, done });
   }),
 );
 
