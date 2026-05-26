@@ -4034,26 +4034,33 @@ async function openMoyskladStores(onDone) {
       let totalUpdated = 0;
       let updById = 0;
       let updSku = 0;
-      let diag = null;
+      let samples = null;
+      let debug = null;
       try {
         for (let i = 0; i < 1000; i += 1) {
           const r = await api.refreshMoyskladStores(token, offset);
           totalUpdated += r.updated || 0;
           updById += r.updatedById || 0;
           updSku += r.updatedBySku || 0;
-          if (r.sample && !diag) diag = r.sample;
+          if (r.samples && !samples) samples = r.samples;
+          if (r.debug && !debug) debug = r.debug;
           offset = r.nextOffset;
           const seen = r.total ? Math.min(offset, r.total) : offset;
           statusEl.innerHTML = `⏳ Обработано ${seen}${r.total ? ' из ' + r.total : ''}…`;
           if (r.done) break;
         }
         let msg = `✅ Готово: склады у <strong>${totalUpdated}</strong> позиций (по id: ${updById}, по артикулу: ${updSku}).`;
-        if (diag) {
-          msg +=
-            `<br><small style="color:#64748b">Диагностика 1-й строки отчёта: ` +
-            `артикул=${diag.article ?? diag.code ?? '—'}, uuid=${diag.uuid ? 'есть' : 'нет'}, ` +
-            `складов в строке=${diag.storeCount}, поля склада=[${(diag.storeKeys || []).join(', ')}], ` +
-            `имя склада=${diag.storeName ?? '—'}, кол-во=${diag.storeStock ?? '—'}</small>`;
+        if (debug) {
+          msg += `<br><small style="color:#64748b">В отчёте: ${debug.byIdCount} товаров с uuid, ${debug.bySkuCount} с артикулом`;
+          if (debug.matchedIds && debug.matchedIds.length > 0) msg += `; совпали в БД: ${debug.matchedIds.slice(0, 3).join(', ')}`;
+          if (debug.matchedSkus && debug.matchedSkus.length > 0) msg += `; по артикулу: ${debug.matchedSkus.slice(0, 3).join(', ')}`;
+          msg += '</small>';
+        }
+        if (samples && samples.length > 0) {
+          const samplesHtml = samples.map((s) =>
+            `${s.article ?? s.code ?? '?'} (uuid=${s.uuid ? '✓' : '✗'}, складов=${s.storeCount})`
+          ).join('; ');
+          msg += `<br><small style="color:#64748b">Примеры товаров: ${samplesHtml}</small>`;
         }
         statusEl.innerHTML = msg;
         toast('Склады обновлены', 'success');
