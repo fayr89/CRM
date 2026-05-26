@@ -423,6 +423,9 @@ router.post(
     const { byId, bySku, size, fetched, sample } = page;
     let updatedById = 0;
     let updatedBySku = 0;
+    let matchedIds = [];
+    let matchedSkus = [];
+
     if (byId.size || bySku.size) {
       try {
         await db.withTransaction(async (tx) => {
@@ -431,6 +434,12 @@ router.post(
           if (byId.size) {
             const ids = [...byId.keys()];
             const jsons = ids.map((k) => JSON.stringify(byId.get(k)));
+            // Проверяем, какие external_id есть в БД
+            const existing = await tx.all(
+              `SELECT external_id FROM products WHERE external_source = 'moysklad' AND external_id = ANY(?)`,
+              ids,
+            );
+            matchedIds = existing.map((r) => r.external_id);
             const r = await tx.run(
               `UPDATE products AS p SET stock_by_store = d.sbs, updated_at = NOW()
                FROM unnest(?::text[], ?::jsonb[]) AS d(external_id, sbs)
@@ -444,6 +453,12 @@ router.post(
           if (bySku.size) {
             const skus = [...bySku.keys()];
             const jsons = skus.map((s) => JSON.stringify(bySku.get(s)));
+            // Проверяем, какие sku есть в БД
+            const existing = await tx.all(
+              `SELECT sku FROM products WHERE external_source = 'moysklad' AND sku = ANY(?)`,
+              skus,
+            );
+            matchedSkus = existing.map((r) => r.sku);
             const r = await tx.run(
               `UPDATE products AS p SET stock_by_store = d.sbs, updated_at = NOW()
                FROM unnest(?::text[], ?::jsonb[]) AS d(sku, sbs)
@@ -462,8 +477,8 @@ router.post(
     const nextOffset = offset + fetched;
     const done = fetched < LIMIT || nextOffset >= size;
     console.log(
-      `[stores] offset=${offset} fetched=${fetched} byId=${byId.size} bySku=${bySku.size} ` +
-        `updatedById=${updatedById} updatedBySku=${updatedBySku} size=${size}`,
+      `[stores] offset=${offset} fetched=${fetched} byId=${byId.size} (matched ${matchedIds.length}) ` +
+        `bySku=${bySku.size} (matched ${matchedSkus.length}) updatedById=${updatedById} updatedBySku=${updatedBySku}`,
     );
     res.json({
       ok: true,
@@ -475,6 +490,7 @@ router.post(
       total: size,
       done,
       sample: offset === 0 ? sample : undefined,
+      debug: offset === 0 ? { byIdCount: byId.size, bySkuCount: bySku.size, matchedIds: matchedIds.slice(0, 5), matchedSkus: matchedSkus.slice(0, 5) } : undefined,
     });
   }),
 );
