@@ -4072,11 +4072,11 @@ async function openMoyskladStores(onDone) {
         statusEl.innerHTML = msg;
         isLoading = false;
         toast('Склады обновлены', 'success');
+        // НЕ закрываем окно - пусть пользователь прочитает результаты
         await onDone?.();
-        return false;
       } catch (e) {
         statusEl.innerHTML = `❌ ${e.message}`;
-        return false;
+        isLoading = false;
       }
     },
   });
