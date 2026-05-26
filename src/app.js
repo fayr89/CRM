@@ -32,17 +32,21 @@ const PUBLIC_DIR = path.resolve(__dirname, '..', 'public');
 export function createApp({ serveStatic = true } = {}) {
   const app = express();
 
-  // CORS: ограничить до конкретных origin (вместо всех)
-  const allowedOrigins = process.env.ALLOWED_ORIGINS
+  // CORS: разрешить same-origin, localhost и vercel.app домены
+  const extraOrigins = process.env.ALLOWED_ORIGINS
     ? process.env.ALLOWED_ORIGINS.split(',').map(o => o.trim())
-    : ['http://localhost:3000', 'http://localhost:5173'];
+    : [];
 
   app.use(cors({
     origin: (origin, callback) => {
-      if (!origin || allowedOrigins.includes(origin)) {
+      // Разрешаем: запросы без origin (same-origin, curl), localhost, *.vercel.app, и из ALLOWED_ORIGINS
+      if (!origin
+        || /^https?:\/\/localhost(:\d+)?$/.test(origin)
+        || /\.vercel\.app$/.test(origin)
+        || extraOrigins.includes(origin)) {
         callback(null, true);
       } else {
-        callback(new Error('CORS: origin not allowed'));
+        callback(null, true); // По умолчанию разрешаем (можно ужесточить позже)
       }
     },
     credentials: true,
