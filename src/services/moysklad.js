@@ -179,10 +179,12 @@ export async function fetchMoyskladStockByStorePage(token, offset = 0, limit = 5
       store: s.name || '—',
       stock: Number(s.stock) || 0,
     }));
+    // Добавляем только если есть хотя бы один склад (даже с нулевыми остатками)
+    if (!stores.length) continue;
     const id = extractUuid(r.meta?.href);
-    if (id && stores.length) byId.set(id, stores);
+    if (id) byId.set(id, stores);
     const sku = r.code || r.article;
-    if (sku && stores.length) bySku.set(String(sku), stores);
+    if (sku) bySku.set(String(sku), stores);
   }
   const samples = rows.slice(0, 3).map((r) => ({
     code: r.code ?? null,
