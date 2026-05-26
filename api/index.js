@@ -30,6 +30,8 @@ export default async function handler(req, res) {
     await initPromise;
   } catch (e) {
     initPromise = null;
+    // eslint-disable-next-line no-console
+    console.error('[db-init] failed:', e?.code, e?.message);
     res.statusCode = 500;
     res.setHeader('Content-Type', 'application/json');
     res.end(JSON.stringify({

@@ -343,6 +343,7 @@ function getPool() {
     connectionString: config.databaseUrl,
     max: config.env === 'production' ? 1 : 5,
     ssl: needsSsl ? { rejectUnauthorized: false } : false,
+    connectionTimeoutMillis: 15000,
   });
   pool.on('error', (err) => {
     // eslint-disable-next-line no-console
@@ -406,8 +407,15 @@ export const db = {
 
 export async function ensureInitialized() {
   if (globalThis.__crmInitialized) return;
-  await getPool().query(SCHEMA);
-  await ensureDefaultAdmin();
+  const pool = getPool();
+  // Схема уже создана после первого деплоя, поэтому не гоняем весь DDL на каждом
+  // холодном старте serverless-функции (это медленно и лишний раз рискует упасть
+  // на пулере). Прогоняем тяжёлую схему только если базовой таблицы ещё нет.
+  const probe = await pool.query("SELECT to_regclass('public.users') AS t");
+  if (!probe.rows[0]?.t) {
+    await pool.query(SCHEMA);
+    await ensureDefaultAdmin();
+  }
   globalThis.__crmInitialized = true;
 }
 
