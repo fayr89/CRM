@@ -169,4 +169,28 @@ export const api = {
     a.remove();
     URL.revokeObjectURL(downloadUrl);
   },
+
+  // Прайсы: шаблон, загрузка, правила цен
+  importPrices: (rows) => request('POST', '/api/products/import/prices', { body: { rows } }),
+  pricingSettings: () => request('GET', '/api/pricing/settings'),
+  savePricingSettings: (body) => request('PUT', '/api/pricing/settings', { body }),
+
+  downloadPriceTemplate: async (marketplace) => {
+    const token = getToken();
+    const qs = marketplace ? `?marketplace=${encodeURIComponent(marketplace)}` : '';
+    const url = `/api/products/price-template.csv${qs}`;
+    const res = await fetch(url, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const blob = await res.blob();
+    const downloadUrl = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = downloadUrl;
+    a.download = `price-template-${marketplace || 'all'}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(downloadUrl);
+  },
 };

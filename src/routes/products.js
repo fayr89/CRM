@@ -5,6 +5,7 @@ import { db } from '../db.js';
 import { BadRequest, NotFound, asyncHandler } from '../errors.js';
 import { parsePagination, parseSort, paginated } from '../query.js';
 import { fetchMoyskladProducts, fetchMoyskladStock, fetchMoyskladStockByStorePage } from '../services/moysklad.js';
+import { toCsv } from '../services/csv.js';
 
 const router = Router();
 
@@ -115,6 +116,38 @@ router.get(
       limit,
     );
     res.json({ data: rows, marketplace, days });
+  }),
+);
+
+// Шаблон прайса (CSV для Excel). Колонки: Артикул мойсклад, Себестоимость, Название,
+// Канал продаж, Цена для канала продаж. Если задан ?marketplace=… — колонка канала
+// предзаполняется, а в цену подставляется текущая цена этого канала (если есть).
+router.get(
+  '/price-template.csv',
+  asyncHandler(async (req, res) => {
+    const marketplace = String(req.query.marketplace || '').trim();
+    const rows = await db.all(
+      `SELECT p.sku, p.name, p.cost_price,
+              ${marketplace ? 'pp.price AS channel_price' : 'NULL::real AS channel_price'}
+       FROM products p
+       ${marketplace ? 'LEFT JOIN product_prices pp ON pp.product_id = p.id AND pp.marketplace = ?' : ''}
+       WHERE p.active = TRUE
+       ORDER BY p.name ASC`,
+      ...(marketplace ? [marketplace] : []),
+    );
+    const columns = [
+      { key: 'sku', label: 'Артикул мойсклад' },
+      { key: 'cost_price', label: 'Себестоимость' },
+      { key: 'name', label: 'Название' },
+      { key: 'channel', label: 'Канал продаж', get: () => marketplace },
+      { key: 'channel_price', label: 'Цена для канала продаж', format: (v) => (v == null ? '' : v) },
+    ];
+    const csv = toCsv(rows, columns);
+    // В имени файла только ASCII — Node не пропускает кириллицу в заголовке.
+    const safe = (marketplace || 'all').replace(/[^a-zA-Z0-9_-]+/g, '_') || 'all';
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="price-template-${safe}.csv"`);
+    res.send(csv);
   }),
 );
 
@@ -411,6 +444,56 @@ router.post(
     const nextOffset = offset + fetched;
     const done = fetched < LIMIT || nextOffset >= size;
     res.json({ ok: true, updated, fetched, nextOffset, total: size, done });
+  }),
+);
+
+// Загрузка прайса из CSV-шаблона. Фронт парсит файл и присылает строки
+// [{ sku, marketplace, price }] (только заполненные). Сопоставляем по артикулу.
+const priceRowSchema = z.object({
+  sku: z.string().min(1),
+  marketplace: z.string().min(1),
+  price: z.number().nonnegative(),
+});
+
+router.post(
+  '/import/prices',
+  requireRole('admin', 'manager'),
+  asyncHandler(async (req, res) => {
+    const input = z.array(priceRowSchema).max(50000).parse(req.body?.rows || []);
+    if (!input.length) {
+      res.json({ ok: true, upserted: 0, notFound: 0, total: 0 });
+      return;
+    }
+    // Дедуп по (sku, marketplace) — последняя строка побеждает. Иначе ON CONFLICT
+    // упадёт на повторе одного и того же ключа в рамках одного INSERT.
+    const seen = new Map();
+    for (const r of input) seen.set(`${r.sku} ${r.marketplace}`, r);
+    const rows = [...seen.values()];
+
+    const skus = rows.map((r) => r.sku);
+    const markets = rows.map((r) => r.marketplace);
+    const prices = rows.map((r) => r.price);
+
+    let upserted = 0;
+    try {
+      await db.withTransaction(async (tx) => {
+        const r = await tx.run(
+          `INSERT INTO product_prices (product_id, marketplace, price)
+           SELECT p.id, d.marketplace, d.price
+           FROM unnest(?::text[], ?::text[], ?::real[]) AS d(sku, marketplace, price)
+           JOIN products p ON p.sku = d.sku
+           ON CONFLICT (product_id, marketplace)
+           DO UPDATE SET price = EXCLUDED.price, updated_at = NOW()`,
+          skus,
+          markets,
+          prices,
+        );
+        upserted = r.changes || 0;
+      });
+    } catch (e) {
+      throw BadRequest('Не удалось загрузить прайс: ' + e.message);
+    }
+    res.json({ ok: true, upserted, notFound: rows.length - upserted, total: input.length });
   }),
 );
 

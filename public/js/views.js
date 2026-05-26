@@ -3510,6 +3510,25 @@ export async function renderProducts(main) {
         )
       : null,
     canEdit
+      ? el('button', { class: 'btn', onClick: () => openPriceTemplate() }, '📥 Шаблон прайса')
+      : null,
+    canEdit
+      ? el(
+          'button',
+          {
+            class: 'btn',
+            onClick: () => openPriceUpload(() => {
+              state.page = 1;
+              return reload();
+            }),
+          },
+          '📤 Загрузить прайс',
+        )
+      : null,
+    isAdmin
+      ? el('button', { class: 'btn', onClick: () => openPricingSettings() }, '⚙ Правила цен')
+      : null,
+    canEdit
       ? el(
           'button',
           {
@@ -3863,6 +3882,284 @@ async function openMoyskladStores(onDone) {
         return new Promise((resolve) => setTimeout(() => resolve(true), 1500));
       } catch (e) {
         statusEl.innerHTML = `❌ ${e.message}`;
+        return false;
+      }
+    },
+  });
+}
+
+// --- Прайсы: шаблон, загрузка, правила цен ---
+
+// Простой парсер CSV: BOM, разделитель ; или , автоопределяется, поддержка кавычек.
+function parseCsvText(text) {
+  const t = String(text).replace(/^﻿/, '');
+  const lines = t.split(/\r\n|\n|\r/).filter((l) => l.length > 0);
+  if (!lines.length) return { header: [], rows: [] };
+  const sep = lines[0].includes(';') ? ';' : ',';
+  const parseLine = (line) => {
+    const out = [];
+    let cur = '';
+    let inQ = false;
+    for (let i = 0; i < line.length; i += 1) {
+      const ch = line[i];
+      if (inQ) {
+        if (ch === '"') {
+          if (line[i + 1] === '"') {
+            cur += '"';
+            i += 1;
+          } else {
+            inQ = false;
+          }
+        } else {
+          cur += ch;
+        }
+      } else if (ch === '"') {
+        inQ = true;
+      } else if (ch === sep) {
+        out.push(cur);
+        cur = '';
+      } else {
+        cur += ch;
+      }
+    }
+    out.push(cur);
+    return out.map((s) => s.trim());
+  };
+  return { header: parseLine(lines[0]), rows: lines.slice(1).map(parseLine) };
+}
+
+function findCsvCol(header, ...names) {
+  const norm = (s) => String(s).toLowerCase().replace(/\s+/g, ' ').trim();
+  const H = header.map(norm);
+  for (const n of names) {
+    const idx = H.indexOf(norm(n));
+    if (idx >= 0) return idx;
+  }
+  return -1;
+}
+
+async function openPriceTemplate() {
+  const channelSel = el(
+    'select',
+    { class: 'select' },
+    el('option', { value: '' }, '— пусто (заполню канал вручную)'),
+    ...MARKETPLACES.filter((m) => m.value).map((m) => el('option', { value: m.value }, m.label)),
+  );
+  const body = el(
+    'div',
+    {},
+    el(
+      'p',
+      {},
+      'Скачает CSV со всеми активными товарами: артикул, себестоимость, название. Выберите канал — в шаблон подставится колонка «Канал продаж» и текущие цены этого канала (если уже заданы). Заполните цены и загрузите файл обратно кнопкой «Загрузить прайс».',
+    ),
+    el('div', { class: 'form-row' }, el('label', {}, 'Канал продаж'), channelSel),
+  );
+  await openModal('Шаблон прайса', body, {
+    primaryLabel: 'Скачать CSV',
+    onSubmit: async () => {
+      try {
+        await api.downloadPriceTemplate(channelSel.value || '');
+        toast('Шаблон скачан', 'success');
+      } catch (e) {
+        toast(e.message, 'error');
+        return false;
+      }
+    },
+  });
+}
+
+async function openPriceUpload(onDone) {
+  const fileI = el('input', { type: 'file', accept: '.csv,text/csv' });
+  const statusEl = el('div', { class: 'import-status' });
+  let parsed = null;
+
+  fileI.addEventListener('change', async () => {
+    parsed = null;
+    statusEl.textContent = '';
+    const file = fileI.files && fileI.files[0];
+    if (!file) return;
+    try {
+      const text = await file.text();
+      const { header, rows } = parseCsvText(text);
+      const cSku = findCsvCol(header, 'Артикул мойсклад', 'Артикул', 'sku');
+      const cMarket = findCsvCol(header, 'Канал продаж', 'Канал', 'marketplace');
+      const cPrice = findCsvCol(header, 'Цена для канала продаж', 'Цена', 'price');
+      if (cSku < 0 || cMarket < 0 || cPrice < 0) {
+        statusEl.innerHTML =
+          '❌ Не нашёл нужные колонки. Нужны: «Артикул мойсклад», «Канал продаж», «Цена для канала продаж». Скачайте шаблон кнопкой «Шаблон прайса».';
+        return;
+      }
+      const out = [];
+      let skippedEmpty = 0;
+      for (const r of rows) {
+        const sku = (r[cSku] || '').trim();
+        const marketplace = (r[cMarket] || '').trim();
+        const priceRaw = (r[cPrice] || '').trim().replace(/\s/g, '').replace(/₽/g, '').replace(',', '.');
+        const price = Number(priceRaw);
+        if (!sku || !marketplace || !priceRaw || !Number.isFinite(price) || price < 0) {
+          skippedEmpty += 1;
+          continue;
+        }
+        out.push({ sku, marketplace, price });
+      }
+      parsed = out;
+      statusEl.innerHTML = out.length
+        ? `📋 Готово к загрузке: <strong>${out.length}</strong> строк${
+            skippedEmpty ? ` · пропущено пустых/без цены: ${skippedEmpty}` : ''
+          }. Нажмите «Загрузить».`
+        : '❌ Не нашёл ни одной строки с заполненной ценой. Заполните колонку «Цена для канала продаж».';
+    } catch (e) {
+      statusEl.innerHTML = `❌ Не удалось прочитать файл: ${e.message}`;
+    }
+  });
+
+  const body = el(
+    'div',
+    {},
+    el(
+      'p',
+      {},
+      'Загрузите CSV из шаблона: проставьте «Канал продаж» и «Цена для канала продаж». Товары находятся по «Артикул мойсклад». Пустые строки и строки без цены пропускаются — можно грузить частями.',
+    ),
+    el('div', { class: 'form-row' }, el('label', {}, 'Файл CSV'), fileI),
+    statusEl,
+  );
+
+  await openModal('Загрузка прайса', body, {
+    primaryLabel: 'Загрузить',
+    onSubmit: async () => {
+      if (!parsed || !parsed.length) {
+        statusEl.innerHTML = '❌ Сначала выберите CSV с заполненными ценами.';
+        return false;
+      }
+      statusEl.textContent = '⏳ Загружаю цены…';
+      try {
+        const r = await api.importPrices(parsed);
+        statusEl.innerHTML =
+          `✅ Обновлено цен: <strong>${r.upserted}</strong> из ${r.total}` +
+          (r.notFound ? ` · не найдено по артикулу: ${r.notFound}` : '');
+        toast('Прайс загружен', 'success');
+        await onDone?.();
+        return new Promise((resolve) => setTimeout(() => resolve(true), 1800));
+      } catch (e) {
+        statusEl.innerHTML = `❌ ${e.message}`;
+        return false;
+      }
+    },
+  });
+}
+
+async function openPricingSettings() {
+  let settings;
+  try {
+    settings = await api.pricingSettings();
+  } catch (e) {
+    toast(e.message, 'error');
+    return;
+  }
+  const methods = settings.payment_methods || [];
+  const tiers = settings.order_tiers || [];
+
+  const pmInputs = [];
+  const pmArea = el('div', { class: 'pricing-list' });
+  for (const m of methods) {
+    const inp = el('input', { type: 'number', step: 'any', value: m.percent ?? 0, style: { width: '90px' } });
+    pmInputs.push({ key: m.key, label: m.label, input: inp });
+    pmArea.append(
+      el(
+        'div',
+        { class: 'pricing-row' },
+        el('span', { class: 'pricing-label' }, m.label),
+        inp,
+        el('span', { class: 'pricing-suffix' }, '%'),
+      ),
+    );
+  }
+
+  const tiersArea = el('div', { class: 'pricing-list' });
+  const tierRows = [];
+  function addTierRow(t = {}) {
+    const fromI = el('input', {
+      type: 'number',
+      step: 'any',
+      min: '0',
+      value: t.threshold ?? '',
+      placeholder: 'сумма, ₽',
+      style: { width: '130px' },
+    });
+    const pctI = el('input', { type: 'number', step: 'any', value: t.percent ?? '', placeholder: '%', style: { width: '90px' } });
+    const ref = { fromI, pctI };
+    const row = el(
+      'div',
+      { class: 'pricing-row' },
+      el('span', { class: 'pricing-label' }, 'От'),
+      fromI,
+      el('span', { class: 'pricing-suffix' }, '₽ →'),
+      pctI,
+      el('span', { class: 'pricing-suffix' }, '%'),
+      el(
+        'button',
+        {
+          type: 'button',
+          class: 'remove-btn',
+          onClick: () => {
+            row.remove();
+            const i = tierRows.indexOf(ref);
+            if (i >= 0) tierRows.splice(i, 1);
+          },
+        },
+        '×',
+      ),
+    );
+    ref.row = row;
+    tierRows.push(ref);
+    tiersArea.append(row);
+  }
+  tiers.forEach((t) => addTierRow(t));
+
+  const body = el(
+    'div',
+    { class: 'pricing-settings' },
+    el('h3', { class: 'pricing-h3' }, 'Скидки / надбавки по способу оплаты'),
+    el(
+      'p',
+      { class: 'hint' },
+      'Процент к цене из прайса. Минус — скидка, плюс — надбавка. Например, «На РС (С НДС)» = +20.',
+    ),
+    pmArea,
+    el('h3', { class: 'pricing-h3', style: { marginTop: '18px' } }, 'Скидки по сумме заказа'),
+    el(
+      'p',
+      { class: 'hint' },
+      'Пороги задаёте сами: при сумме заказа от указанной применяется процент (минус — скидка). Берётся наибольший подходящий порог.',
+    ),
+    tiersArea,
+    el('button', { type: 'button', class: 'btn btn-sm', style: { marginTop: '8px' }, onClick: () => addTierRow() }, '+ Добавить порог'),
+  );
+
+  await openModal('Правила цен', body, {
+    primaryLabel: 'Сохранить',
+    size: 'lg',
+    onSubmit: async () => {
+      const payment_methods = pmInputs.map((p) => ({
+        key: p.key,
+        label: p.label,
+        percent: Number(p.input.value) || 0,
+      }));
+      const order_tiers = [];
+      for (const r of tierRows) {
+        if (r.fromI.value === '') continue;
+        const threshold = Number(r.fromI.value);
+        const percent = Number(r.pctI.value);
+        if (!Number.isFinite(threshold) || threshold < 0) continue;
+        order_tiers.push({ threshold, percent: Number.isFinite(percent) ? percent : 0 });
+      }
+      try {
+        await api.savePricingSettings({ payment_methods, order_tiers });
+        toast('Правила цен сохранены', 'success');
+      } catch (e) {
+        toast(e.message, 'error');
         return false;
       }
     },

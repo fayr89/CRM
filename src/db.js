@@ -329,6 +329,16 @@ CREATE TABLE IF NOT EXISTS shipping_schedule (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 INSERT INTO shipping_schedule (id) VALUES (1) ON CONFLICT (id) DO NOTHING;
+
+-- Произвольные настройки приложения (key → JSON). Используется для правил цен:
+--   pricing.payment_methods — [{key,label,percent}]
+--   pricing.order_tiers     — [{threshold,percent}]
+CREATE TABLE IF NOT EXISTS app_settings (
+  key TEXT PRIMARY KEY,
+  value JSONB NOT NULL,
+  updated_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
 `;
 
 // Reuse the pool across warm serverless invocations.
@@ -424,6 +434,14 @@ export async function ensureInitialized() {
       // Лёгкие миграции для уже существующей БД (заодно освежают схему на этом соединении).
       await pool.query('ALTER TABLE products ADD COLUMN IF NOT EXISTS stock REAL');
       await pool.query('ALTER TABLE products ADD COLUMN IF NOT EXISTS stock_by_store JSONB');
+      await pool.query(
+        `CREATE TABLE IF NOT EXISTS app_settings (
+           key TEXT PRIMARY KEY,
+           value JSONB NOT NULL,
+           updated_by INTEGER,
+           updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+         )`,
+      );
       globalThis.__crmInitialized = true;
       return;
     } catch (e) {

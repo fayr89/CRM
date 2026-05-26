@@ -22,6 +22,7 @@ import webhooksRoutes from './routes/webhooks.js';
 import notificationsRoutes from './routes/notifications.js';
 import searchRoutes from './routes/search.js';
 import productsRoutes from './routes/products.js';
+import pricingRoutes from './routes/pricing.js';
 import warehouseRoutes from './routes/warehouseSettings.js';
 import analyticsRoutes from './routes/analytics.js';
 
@@ -90,6 +91,7 @@ export function createApp({ serveStatic = true } = {}) {
   app.use('/api/notifications', notificationsRoutes);
   app.use('/api/search', searchRoutes);
   app.use('/api/products', productsRoutes);
+  app.use('/api/pricing', pricingRoutes);
   app.use('/api/warehouse', warehouseRoutes);
   app.use('/api/analytics', analyticsRoutes);
 
