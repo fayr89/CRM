@@ -420,7 +420,7 @@ router.post(
     } catch (e) {
       throw BadRequest(e.message);
     }
-    const { byId, bySku, size, fetched, samples } = page;
+    const { byId, bySku, size, fetched, samples, rowCount } = page;
     let updatedById = 0;
     let updatedBySku = 0;
     let matchedIds = [];
@@ -490,7 +490,13 @@ router.post(
       total: size,
       done,
       samples: offset === 0 ? samples : undefined,
-      debug: offset === 0 ? { byIdCount: byId.size, bySkuCount: bySku.size, matchedIds: matchedIds.slice(0, 5), matchedSkus: matchedSkus.slice(0, 5) } : undefined,
+      debug: offset === 0 ? {
+        rowCount,
+        byIdCount: byId.size,
+        bySkuCount: bySku.size,
+        matchedIds: matchedIds.slice(0, 5),
+        matchedSkus: matchedSkus.slice(0, 5),
+      } : undefined,
     });
   }),
 );

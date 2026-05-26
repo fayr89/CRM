@@ -182,7 +182,6 @@ export async function fetchMoyskladStockByStorePage(token, offset = 0, limit = 5
     const sku = r.code || r.article;
     if (sku && stores.length) bySku.set(String(sku), stores);
   }
-  const fs = (rows[0]?.stockByStore || [])[0] || null;
   const samples = rows.slice(0, 3).map((r) => ({
     code: r.code ?? null,
     article: r.article ?? null,
@@ -193,5 +192,15 @@ export async function fetchMoyskladStockByStorePage(token, offset = 0, limit = 5
       stock: Number(s.stock) ?? null,
     })),
   }));
-  return { byId, bySku, samples, size: data.meta?.size ?? offset + rows.length, fetched: rows.length };
+
+  // Полная структура первой строки для отладки
+  const firstRowFull = rows[0] ? JSON.stringify(rows[0], null, 2) : null;
+  console.log(
+    `[moysklad] /report/stock/bystore: ${rows.length} rows, ` +
+    `byId.size=${byId.size}, bySku.size=${bySku.size}, ` +
+    `first row keys=${rows[0] ? Object.keys(rows[0]).join(', ') : 'N/A'}`,
+  );
+  if (firstRowFull) console.log('[moysklad] first row:', firstRowFull);
+
+  return { byId, bySku, samples, size: data.meta?.size ?? offset + rows.length, fetched: rows.length, rowCount: rows.length };
 }

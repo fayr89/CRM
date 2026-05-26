@@ -4053,16 +4053,21 @@ async function openMoyskladStores(onDone) {
         }
         let msg = `✅ Готово: склады у <strong>${totalUpdated}</strong> позиций (по id: ${updById}, по артикулу: ${updSku}).`;
         if (debug) {
-          msg += `<br><small style="color:#64748b">В отчёте: ${debug.byIdCount} товаров с uuid, ${debug.bySkuCount} с артикулом`;
-          if (debug.matchedIds && debug.matchedIds.length > 0) msg += `; совпали в БД: ${debug.matchedIds.slice(0, 3).join(', ')}`;
-          if (debug.matchedSkus && debug.matchedSkus.length > 0) msg += `; по артикулу: ${debug.matchedSkus.slice(0, 3).join(', ')}`;
+          msg += `<br><small style="color:#64748b"><strong>Отчёт МойСклада:</strong> ${debug.rowCount} строк, ${debug.byIdCount} с uuid, ${debug.bySkuCount} с артикулом`;
+          msg += `<br>Совпали в БД: ${debug.matchedIds.length} по uuid${debug.matchedIds.length > 0 ? ` (${debug.matchedIds.join(', ')})` : ''}`;
+          msg += `<br>${debug.matchedSkus.length} по артикулу${debug.matchedSkus.length > 0 ? ` (${debug.matchedSkus.join(', ')})` : ''}`;
           msg += '</small>';
         }
         if (samples && samples.length > 0) {
-          const samplesHtml = samples.map((s) =>
-            `${s.article ?? s.code ?? '?'} (uuid=${s.uuid ? '✓' : '✗'}, складов=${s.storeCount})`
-          ).join('; ');
-          msg += `<br><small style="color:#64748b">Примеры товаров: ${samplesHtml}</small>`;
+          msg += `<br><small style="color:#64748b"><strong>Примеры товаров из отчёта:</strong><br>`;
+          samples.forEach((s) => {
+            msg += `• ${s.article ?? s.code ?? '?'}: uuid=${s.uuid ? '✓' : '✗'}, складов=${s.storeCount}`;
+            if (s.stores && s.stores.length > 0) {
+              msg += ` → ${s.stores.slice(0, 2).map((st) => `${st.name}:${st.stock}`).join(', ')}`;
+            }
+            msg += '<br>';
+          });
+          msg += '</small>';
         }
         statusEl.innerHTML = msg;
         isLoading = false;
