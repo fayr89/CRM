@@ -4144,14 +4144,41 @@ async function openPriceUpload(onDone) {
     const file = fileI.files && fileI.files[0];
     if (!file) return;
     try {
-      const text = await file.text();
-      const { header, rows } = parseCsvText(text);
-      const cSku = findCsvCol(header, 'Артикул мойсклад', 'Артикул', 'sku');
-      const cMarket = findCsvCol(header, 'Канал продаж', 'Канал', 'marketplace');
-      const cPrice = findCsvCol(header, 'Цена для канала продаж', 'Цена', 'price');
+      const buf = new Uint8Array(await file.arrayBuffer());
+      // .xlsx (и любой zip) начинается с сигнатуры PK — это не CSV.
+      if (buf[0] === 0x50 && buf[1] === 0x4b) {
+        statusEl.innerHTML =
+          '❌ Это файл Excel (.xlsx), а нужен CSV. В Excel: «Файл → Сохранить как → CSV (разделители — запятые)» и загрузите получившийся .csv.';
+        return;
+      }
+      // Excel в русской локали часто сохраняет CSV в Windows-1251. Пробуем UTF-8,
+      // и если кириллические заголовки не распознались — Windows-1251.
+      let rows = [];
+      let cSku = -1;
+      let cMarket = -1;
+      let cPrice = -1;
+      for (const enc of ['utf-8', 'windows-1251']) {
+        let text;
+        try {
+          text = new TextDecoder(enc).decode(buf);
+        } catch {
+          continue;
+        }
+        const p = parseCsvText(text);
+        const a = findCsvCol(p.header, 'Артикул мойсклад', 'Артикул', 'sku');
+        const b = findCsvCol(p.header, 'Канал продаж', 'Канал', 'marketplace');
+        const c = findCsvCol(p.header, 'Цена для канала продаж', 'Цена', 'price');
+        if (a >= 0 && b >= 0 && c >= 0) {
+          rows = p.rows;
+          cSku = a;
+          cMarket = b;
+          cPrice = c;
+          break;
+        }
+      }
       if (cSku < 0 || cMarket < 0 || cPrice < 0) {
         statusEl.innerHTML =
-          '❌ Не нашёл нужные колонки. Нужны: «Артикул мойсклад», «Канал продаж», «Цена для канала продаж». Скачайте шаблон кнопкой «Шаблон прайса».';
+          '❌ Не нашёл нужные колонки. Нужны: «Артикул мойсклад», «Канал продаж», «Цена для канала продаж». Скачайте шаблон кнопкой «Шаблон прайса» и не меняйте названия колонок.';
         return;
       }
       const out = [];
@@ -4185,6 +4212,11 @@ async function openPriceUpload(onDone) {
       'p',
       {},
       'Загрузите CSV из шаблона: проставьте «Канал продаж» и «Цена для канала продаж». Товары находятся по «Артикул мойсклад». Пустые строки и строки без цены пропускаются — можно грузить частями.',
+    ),
+    el(
+      'p',
+      { class: 'hint' },
+      'Из Excel сохраняйте как «CSV (разделители — запятые)». Если Excel предложит создать новый файл — соглашайтесь, это нормально. Кодировку выбирать не нужно: понимаем и UTF-8, и Windows-1251. Названия колонок не меняйте.',
     ),
     el('div', { class: 'form-row' }, el('label', {}, 'Файл CSV'), fileI),
     statusEl,
