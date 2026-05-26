@@ -332,6 +332,18 @@ router.post(
     }
     const ids = entries.map(([ext]) => ext);
     const vals = entries.map(([, s]) => Number(s) || 0);
+    // Диагностика: сколько ключей из отчёта реально есть в нашей таблице товаров.
+    try {
+      const hit = await db.get(
+        `SELECT count(*)::int AS c FROM products WHERE external_source = 'moysklad' AND external_id = ANY(?::text[])`,
+        ids.slice(0, 300),
+      );
+      // eslint-disable-next-line no-console
+      console.log(`[stock] entries=${entries.length} hitInDb=${hit?.c} key0=${ids[0]}`);
+    } catch (e) {
+      // eslint-disable-next-line no-console
+      console.log('[stock] diag error:', e.message);
+    }
     let updated = 0;
     try {
       await db.withTransaction(async (tx) => {
