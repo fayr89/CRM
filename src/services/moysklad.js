@@ -92,9 +92,11 @@ function mapProduct(p) {
   };
 }
 
-// .../entity/product/<UUID> → <UUID>
+// .../entity/product/<UUID> → <UUID> (убираем query параметры типа ?expand=supplier)
 function extractUuid(href) {
-  return href ? href.split('/').pop() : null;
+  if (!href) return null;
+  const path = href.split('?')[0];
+  return path.split('/').pop();
 }
 
 // У модификаций часть полей наследуется от родителя (uom, описание, изображения, цены).
