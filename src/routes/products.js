@@ -319,52 +319,79 @@ router.post(
     if (!token) {
       throw BadRequest('Передайте токен МойСклад в теле запроса {token: "..."}');
     }
-    let stockMap;
+    let report;
     try {
-      stockMap = await fetchMoyskladStock(token);
+      report = await fetchMoyskladStock(token);
     } catch (e) {
       throw BadRequest(e.message);
     }
-    const entries = [...stockMap.entries()];
-    if (entries.length === 0) {
-      res.json({ ok: true, updated: 0, total: 0 });
-      return;
-    }
-    const ids = entries.map(([ext]) => ext);
-    const vals = entries.map(([, s]) => Number(s) || 0);
-    // Диагностика: сколько ключей из отчёта реально есть в нашей таблице товаров.
+    const { byId, bySku, count, sample } = report;
+
+    // Диагностику пишем в БД (логи Vercel режут длинные сообщения).
     try {
-      const hit = await db.get(
-        `SELECT count(*)::int AS c FROM products WHERE external_source = 'moysklad' AND external_id = ANY(?::text[])`,
-        ids.slice(0, 300),
+      const h1 = await db.get(
+        `SELECT count(*)::int AS c FROM products WHERE external_source='moysklad' AND external_id = ANY(?::text[])`,
+        [...byId.keys()].slice(0, 500),
       );
-      // eslint-disable-next-line no-console
-      console.log(`[stock] entries=${entries.length} hitInDb=${hit?.c} key0=${ids[0]}`);
+      const h2 = await db.get(
+        `SELECT count(*)::int AS c FROM products WHERE external_source='moysklad' AND sku = ANY(?::text[])`,
+        [...bySku.keys()].slice(0, 500),
+      );
+      const diag = {
+        reportRows: count,
+        mappedById: byId.size,
+        mappedBySku: bySku.size,
+        hitById: h1?.c,
+        hitBySku: h2?.c,
+        href0: sample?.meta?.href || null,
+        rowKeys: sample ? Object.keys(sample) : [],
+        stock0: sample?.stock,
+        idKey0: [...byId.keys()][0] || null,
+        skuKey0: [...bySku.keys()][0] || null,
+      };
+      await db.run('UPDATE shipping_schedule SET notes = ? WHERE id = 1', JSON.stringify(diag).slice(0, 4000));
     } catch (e) {
       // eslint-disable-next-line no-console
       console.log('[stock] diag error:', e.message);
     }
+
+    if (count === 0) {
+      res.json({ ok: true, updated: 0, total: 0 });
+      return;
+    }
+
     let updated = 0;
     try {
       await db.withTransaction(async (tx) => {
-        // На пулере соединение могло «застрять» на старой схеме без колонки stock.
-        // В той же транзакции гарантируем колонку (освежает схему на соединении),
-        // затем одним запросом раскладываем массивы в пары (id, остаток).
+        // На пулере соединение могло «застрять» на старой схеме без колонки stock —
+        // в той же транзакции гарантируем её, затем обновляем остатки.
         await tx.run('ALTER TABLE products ADD COLUMN IF NOT EXISTS stock REAL');
-        const r = await tx.run(
-          `UPDATE products AS p SET stock = d.stock, updated_at = NOW()
-           FROM unnest(?::text[], ?::real[]) AS d(external_id, stock)
-           WHERE p.external_source = 'moysklad' AND p.external_id = d.external_id`,
-          ids,
-          vals,
-        );
-        updated = r.changes || 0;
+        if (byId.size) {
+          const r = await tx.run(
+            `UPDATE products AS p SET stock = d.stock, updated_at = NOW()
+             FROM unnest(?::text[], ?::real[]) AS d(external_id, stock)
+             WHERE p.external_source = 'moysklad' AND p.external_id = d.external_id`,
+            [...byId.keys()],
+            [...byId.values()],
+          );
+          updated += r.changes || 0;
+        }
+        if (bySku.size) {
+          // Запасной путь: по артикулу — для тех, кого не нашли по UUID.
+          const r = await tx.run(
+            `UPDATE products AS p SET stock = d.stock, updated_at = NOW()
+             FROM unnest(?::text[], ?::real[]) AS d(sku, stock)
+             WHERE p.external_source = 'moysklad' AND p.sku = d.sku AND p.stock IS NULL`,
+            [...bySku.keys()],
+            [...bySku.values()],
+          );
+          updated += r.changes || 0;
+        }
       });
     } catch (e) {
-      // Показываем реальную причину, а не «Internal server error».
       throw BadRequest('Не удалось записать остатки: ' + e.message);
     }
-    res.json({ ok: true, updated, total: entries.length });
+    res.json({ ok: true, updated, total: count });
   }),
 );
 

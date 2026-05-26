@@ -110,18 +110,14 @@ export async function fetchMoyskladProducts(token) {
 // Берём из отчёта /report/stock/all, привязка по UUID из meta.href.
 export async function fetchMoyskladStock(token) {
   const rows = await fetchAll('/report/stock/all', token);
-  const map = new Map();
+  const byId = new Map();
+  const bySku = new Map();
   for (const r of rows) {
+    const stock = Number(r.stock) || 0;
     const id = extractUuid(r.meta?.href);
-    if (id) map.set(id, Number(r.stock) || 0);
+    if (id) byId.set(id, stock);
+    const sku = r.code || r.article;
+    if (sku) bySku.set(String(sku), stock);
   }
-  // eslint-disable-next-line no-console
-  console.log(
-    '[stock] rows:', rows.length,
-    'mapped:', map.size,
-    'row0keys:', rows[0] ? Object.keys(rows[0]).join(',') : '-',
-    'row0href:', rows[0]?.meta?.href || '-',
-    'row0stock:', rows[0]?.stock,
-  );
-  return map;
+  return { byId, bySku, count: rows.length, sample: rows[0] || null };
 }
