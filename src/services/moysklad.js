@@ -161,7 +161,7 @@ export async function fetchMoyskladStock(token) {
 // Возвращает Map(sku → [{store, stock}]) для страницы + общий размер отчёта.
 export async function fetchMoyskladStockByStorePage(token, offset = 0, limit = 500) {
   const headers = authHeader(token);
-  const url = `${BASE}/report/stock/bystore?limit=${limit}&offset=${offset}`;
+  const url = `${BASE}/report/stock/bystore/current?limit=${limit}&offset=${offset}`;
   const res = await msFetch(url, headers);
   if (!res.ok) {
     const text = await res.text();
