@@ -18,6 +18,15 @@ import {
   tr,
 } from './ui.js';
 
+// Безопасно отображать пользовательский текст с HTML разметкой
+function safeHtml(plainText, htmlParts = {}) {
+  let result = plainText;
+  for (const [key, value] of Object.entries(htmlParts)) {
+    result = result.replace(new RegExp(`{${key}}`, 'g'), value);
+  }
+  return result.replace(/[<>&]/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' }[c]));
+}
+
 let CACHE = { users: [], companies: [], contacts: [] };
 
 async function loadLookups() {
@@ -4075,7 +4084,8 @@ async function openMoyskladStores(onDone) {
         // НЕ закрываем окно - пусть пользователь прочитает результаты
         await onDone?.();
       } catch (e) {
-        statusEl.innerHTML = `❌ ${e.message}`;
+        // XSS защита: escapeHTML для e.message
+        statusEl.innerHTML = '❌ ' + document.createElement('div').appendChild(document.createTextNode(e.message)).parentNode.innerHTML;
         isLoading = false;
       }
     },

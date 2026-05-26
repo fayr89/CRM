@@ -32,7 +32,21 @@ const PUBLIC_DIR = path.resolve(__dirname, '..', 'public');
 export function createApp({ serveStatic = true } = {}) {
   const app = express();
 
-  app.use(cors());
+  // CORS: ограничить до конкретных origin (вместо всех)
+  const allowedOrigins = process.env.ALLOWED_ORIGINS
+    ? process.env.ALLOWED_ORIGINS.split(',').map(o => o.trim())
+    : ['http://localhost:3000', 'http://localhost:5173'];
+
+  app.use(cors({
+    origin: (origin, callback) => {
+      if (!origin || allowedOrigins.includes(origin)) {
+        callback(null, true);
+      } else {
+        callback(new Error('CORS: origin not allowed'));
+      }
+    },
+    credentials: true,
+  }));
   app.use(express.json({ limit: '1mb' }));
   if (serveStatic) app.use(express.static(PUBLIC_DIR));
 

@@ -6,6 +6,38 @@ import { BadRequest, Unauthorized, asyncHandler } from '../errors.js';
 
 const router = Router();
 
+// Rate limiting для защиты от brute-force (простая in-memory реализация)
+const loginAttempts = new Map();
+const MAX_ATTEMPTS = 5;
+const LOCKOUT_TIME = 15 * 60 * 1000; // 15 минут
+
+function checkRateLimit(ip) {
+  const key = `login_${ip}`;
+  const attempts = loginAttempts.get(key) || { count: 0, until: 0 };
+
+  if (attempts.until > Date.now()) {
+    throw Unauthorized(`Слишком много попыток входа. Подождите ${Math.ceil((attempts.until - Date.now()) / 1000)} сек`);
+  }
+
+  if (attempts.count >= MAX_ATTEMPTS) {
+    attempts.until = Date.now() + LOCKOUT_TIME;
+    loginAttempts.set(key, attempts);
+    throw Unauthorized(`Слишком много попыток. Заблокировано на 15 минут`);
+  }
+
+  return { key, attempts };
+}
+
+function recordLoginAttempt(key) {
+  const attempts = loginAttempts.get(key) || { count: 0, until: 0 };
+  attempts.count += 1;
+  loginAttempts.set(key, attempts);
+}
+
+function clearLoginAttempts(key) {
+  loginAttempts.delete(key);
+}
+
 const loginSchema = z.object({
   email: z.string().email(),
   password: z.string().min(1),
@@ -20,14 +52,20 @@ const acceptSchema = z.object({
 router.post(
   '/login',
   asyncHandler(async (req, res) => {
+    const ip = req.ip || req.connection.remoteAddress || 'unknown';
+    const { key, attempts } = checkRateLimit(ip);
+
     const { email, password } = loginSchema.parse(req.body);
     const user = await db.get(
       'SELECT id, email, name, role, password_hash, active FROM users WHERE email = ?',
       email,
     );
     if (!user || !user.active || !verifyPassword(password, user.password_hash)) {
+      recordLoginAttempt(key);
       throw Unauthorized('Неверный email или пароль');
     }
+
+    clearLoginAttempts(key);
     const token = signToken(user);
     res.json({
       token,
