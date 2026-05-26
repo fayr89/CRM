@@ -183,16 +183,15 @@ export async function fetchMoyskladStockByStorePage(token, offset = 0, limit = 5
     if (sku && stores.length) bySku.set(String(sku), stores);
   }
   const fs = (rows[0]?.stockByStore || [])[0] || null;
-  const sample = rows[0]
-    ? {
-        code: rows[0].code ?? null,
-        article: rows[0].article ?? null,
-        uuid: extractUuid(rows[0].meta?.href),
-        storeCount: (rows[0].stockByStore || []).length,
-        storeKeys: fs ? Object.keys(fs) : [],
-        storeName: fs ? (fs.name ?? fs.store?.name ?? null) : null,
-        storeStock: fs ? (fs.stock ?? null) : null,
-      }
-    : null;
-  return { byId, bySku, sample, size: data.meta?.size ?? offset + rows.length, fetched: rows.length };
+  const samples = rows.slice(0, 3).map((r) => ({
+    code: r.code ?? null,
+    article: r.article ?? null,
+    uuid: extractUuid(r.meta?.href),
+    storeCount: (r.stockByStore || []).length,
+    stores: (r.stockByStore || []).map((s) => ({
+      name: s.name ?? null,
+      stock: Number(s.stock) ?? null,
+    })),
+  }));
+  return { byId, bySku, samples, size: data.meta?.size ?? offset + rows.length, fetched: rows.length };
 }
