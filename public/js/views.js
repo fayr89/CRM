@@ -3362,7 +3362,10 @@ export async function renderProducts(main) {
           'button',
           {
             class: 'btn',
-            onClick: () => openMoyskladImport(reload),
+            onClick: () => openMoyskladImport(() => {
+              state.page = 1;
+              return reload();
+            }),
           },
           '⬇ Импорт из МойСклад',
         )
@@ -3648,7 +3651,7 @@ async function openMoyskladImport(onDone) {
           statusEl.innerHTML += `<div style="margin-top:8px;font-size:.9em;opacity:.8">${sample}${r.skipped_details.length > 3 ? `<br>… ещё ${r.skipped_details.length - 3}` : ''}</div>`;
         }
         toast('Импорт завершён', 'success');
-        onDone?.();
+        await onDone?.();
         return new Promise((resolve) => setTimeout(() => resolve(true), 1500));
       } catch (e) {
         statusEl.innerHTML = `❌ ${e.message}`;
