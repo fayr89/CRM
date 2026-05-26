@@ -421,6 +421,8 @@ export async function ensureInitialized() {
         await pool.query(SCHEMA);
         await ensureDefaultAdmin();
       }
+      // Лёгкие миграции для уже существующей БД (заодно освежают схему на этом соединении).
+      await pool.query('ALTER TABLE products ADD COLUMN IF NOT EXISTS stock REAL');
       globalThis.__crmInitialized = true;
       return;
     } catch (e) {

@@ -334,15 +334,20 @@ router.post(
     const vals = entries.map(([, s]) => Number(s) || 0);
     let updated = 0;
     try {
-      // Один запрос на все позиции: распаковываем два массива в пары (id, остаток).
-      const r = await db.run(
-        `UPDATE products AS p SET stock = d.stock, updated_at = NOW()
-         FROM unnest(?::text[], ?::real[]) AS d(external_id, stock)
-         WHERE p.external_source = 'moysklad' AND p.external_id = d.external_id`,
-        ids,
-        vals,
-      );
-      updated = r.changes || 0;
+      await db.withTransaction(async (tx) => {
+        // На пулере соединение могло «застрять» на старой схеме без колонки stock.
+        // В той же транзакции гарантируем колонку (освежает схему на соединении),
+        // затем одним запросом раскладываем массивы в пары (id, остаток).
+        await tx.run('ALTER TABLE products ADD COLUMN IF NOT EXISTS stock REAL');
+        const r = await tx.run(
+          `UPDATE products AS p SET stock = d.stock, updated_at = NOW()
+           FROM unnest(?::text[], ?::real[]) AS d(external_id, stock)
+           WHERE p.external_source = 'moysklad' AND p.external_id = d.external_id`,
+          ids,
+          vals,
+        );
+        updated = r.changes || 0;
+      });
     } catch (e) {
       // Показываем реальную причину, а не «Internal server error».
       throw BadRequest('Не удалось записать остатки: ' + e.message);
