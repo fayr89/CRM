@@ -169,13 +169,16 @@ export async function fetchMoyskladStockByStorePage(token, offset = 0, limit = 5
   }
   const data = await res.json();
   const rows = data.rows || [];
+  const byId = new Map();
   const bySku = new Map();
   for (const r of rows) {
     const stores = (r.stockByStore || [])
       .map((s) => ({ store: s.name || '—', stock: Number(s.stock) || 0 }))
       .filter((s) => s.stock !== 0);
+    const id = extractUuid(r.meta?.href);
+    if (id) byId.set(id, stores);
     const sku = r.code || r.article;
     if (sku) bySku.set(String(sku), stores);
   }
-  return { bySku, size: data.meta?.size ?? offset + rows.length, fetched: rows.length };
+  return { byId, bySku, size: data.meta?.size ?? offset + rows.length, fetched: rows.length };
 }

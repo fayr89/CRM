@@ -4029,6 +4029,7 @@ async function openMoyskladStores(onDone) {
         statusEl.innerHTML = '❌ Введите токен';
         return false;
       }
+      statusEl.innerHTML = '⏳ Запрашиваю склады из МойСклад…';
       let offset = 0;
       let totalUpdated = 0;
       try {

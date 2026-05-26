@@ -420,30 +420,52 @@ router.post(
     } catch (e) {
       throw BadRequest(e.message);
     }
-    const { bySku, size, fetched } = page;
-    let updated = 0;
-    if (bySku.size) {
+    const { byId, bySku, size, fetched } = page;
+    let updatedById = 0;
+    let updatedBySku = 0;
+    if (byId.size || bySku.size) {
       try {
         await db.withTransaction(async (tx) => {
           await tx.run('ALTER TABLE products ADD COLUMN IF NOT EXISTS stock_by_store JSONB');
-          const skus = [...bySku.keys()];
-          const jsons = skus.map((s) => JSON.stringify(bySku.get(s)));
-          const r = await tx.run(
-            `UPDATE products AS p SET stock_by_store = d.sbs, updated_at = NOW()
-             FROM unnest(?::text[], ?::jsonb[]) AS d(sku, sbs)
-             WHERE p.external_source = 'moysklad' AND p.sku = d.sku`,
-            skus,
-            jsons,
-          );
-          updated = r.changes || 0;
+          // Основное сопоставление — по external_id (UUID из отчёта), как в остатках.
+          if (byId.size) {
+            const ids = [...byId.keys()];
+            const jsons = ids.map((k) => JSON.stringify(byId.get(k)));
+            const r = await tx.run(
+              `UPDATE products AS p SET stock_by_store = d.sbs, updated_at = NOW()
+               FROM unnest(?::text[], ?::jsonb[]) AS d(external_id, sbs)
+               WHERE p.external_source = 'moysklad' AND p.external_id = d.external_id`,
+              ids,
+              jsons,
+            );
+            updatedById = r.changes || 0;
+          }
+          // Резерв — по артикулу, только для строк, куда ещё не записали по id.
+          if (bySku.size) {
+            const skus = [...bySku.keys()];
+            const jsons = skus.map((s) => JSON.stringify(bySku.get(s)));
+            const r = await tx.run(
+              `UPDATE products AS p SET stock_by_store = d.sbs, updated_at = NOW()
+               FROM unnest(?::text[], ?::jsonb[]) AS d(sku, sbs)
+               WHERE p.external_source = 'moysklad' AND p.sku = d.sku AND p.stock_by_store IS NULL`,
+              skus,
+              jsons,
+            );
+            updatedBySku = r.changes || 0;
+          }
         });
       } catch (e) {
         throw BadRequest('Не удалось записать склады: ' + e.message);
       }
     }
+    const updated = updatedById + updatedBySku;
     const nextOffset = offset + fetched;
     const done = fetched < LIMIT || nextOffset >= size;
-    res.json({ ok: true, updated, fetched, nextOffset, total: size, done });
+    console.log(
+      `[stores] offset=${offset} fetched=${fetched} byId=${byId.size} bySku=${bySku.size} ` +
+        `updatedById=${updatedById} updatedBySku=${updatedBySku} size=${size}`,
+    );
+    res.json({ ok: true, updated, updatedById, updatedBySku, fetched, nextOffset, total: size, done });
   }),
 );
 
