@@ -115,5 +115,13 @@ export async function fetchMoyskladStock(token) {
     const id = extractUuid(r.meta?.href);
     if (id) map.set(id, Number(r.stock) || 0);
   }
+  // eslint-disable-next-line no-console
+  console.log(
+    '[stock] rows:', rows.length,
+    'mapped:', map.size,
+    'row0keys:', rows[0] ? Object.keys(rows[0]).join(',') : '-',
+    'row0href:', rows[0]?.meta?.href || '-',
+    'row0stock:', rows[0]?.stock,
+  );
   return map;
 }
