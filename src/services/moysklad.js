@@ -6,7 +6,13 @@ const PAGE_SIZE = 1000;
 
 function authHeader(token) {
   if (!token) throw new Error('MOYSKLAD_TOKEN не задан');
-  return { Authorization: `Bearer ${token}`, Accept: 'application/json;charset=utf-8' };
+  const t = String(token).trim();
+  if (/[^\x00-\xFF]/.test(t)) {
+    throw new Error(
+      'Токен МойСклад содержит недопустимые символы (похоже, вставлен не сам токен). Скопируйте только токен — это строка из латинских букв и цифр.',
+    );
+  }
+  return { Authorization: `Bearer ${t}`, Accept: 'application/json;charset=utf-8' };
 }
 
 // Постранично выкачивает все строки с эндпоинта МойСклад (limit=1000, offset инкрементируется).
