@@ -8,7 +8,7 @@ import { fetchMoyskladProducts, fetchMoyskladStock } from '../services/moysklad.
 
 const router = Router();
 
-const SORT_COLUMNS = ['id', 'name', 'sku', 'cost_price', 'created_at', 'updated_at'];
+const SORT_COLUMNS = ['id', 'name', 'sku', 'cost_price', 'stock', 'created_at', 'updated_at'];
 
 router.use(authenticate);
 
@@ -38,6 +38,8 @@ router.get(
     }
     if (req.query.active === 'true') where.push('p.active = TRUE');
     if (req.query.active === 'false') where.push('p.active = FALSE');
+    if (req.query.stock === 'in') where.push('p.stock > 0');
+    if (req.query.stock === 'out') where.push('(p.stock IS NULL OR p.stock <= 0)');
     const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
 
     const rows = await db.all(
@@ -325,35 +327,7 @@ router.post(
     } catch (e) {
       throw BadRequest(e.message);
     }
-    const { byId, bySku, count, sample } = report;
-
-    // Диагностику пишем в БД (логи Vercel режут длинные сообщения).
-    try {
-      const h1 = await db.get(
-        `SELECT count(*)::int AS c FROM products WHERE external_source='moysklad' AND external_id = ANY(?::text[])`,
-        [...byId.keys()].slice(0, 500),
-      );
-      const h2 = await db.get(
-        `SELECT count(*)::int AS c FROM products WHERE external_source='moysklad' AND sku = ANY(?::text[])`,
-        [...bySku.keys()].slice(0, 500),
-      );
-      const diag = {
-        reportRows: count,
-        mappedById: byId.size,
-        mappedBySku: bySku.size,
-        hitById: h1?.c,
-        hitBySku: h2?.c,
-        href0: sample?.meta?.href || null,
-        rowKeys: sample ? Object.keys(sample) : [],
-        stock0: sample?.stock,
-        idKey0: [...byId.keys()][0] || null,
-        skuKey0: [...bySku.keys()][0] || null,
-      };
-      await db.run('UPDATE shipping_schedule SET notes = ? WHERE id = 1', JSON.stringify(diag).slice(0, 4000));
-    } catch (e) {
-      // eslint-disable-next-line no-console
-      console.log('[stock] diag error:', e.message);
-    }
+    const { byId, bySku, count } = report;
 
     if (count === 0) {
       res.json({ ok: true, updated: 0, total: 0 });

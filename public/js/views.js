@@ -3256,7 +3256,7 @@ export async function renderProducts(main) {
   const canEdit = ['admin', 'manager'].includes(me.role);
   const isAdmin = me.role === 'admin';
 
-  let state = { page: 1, search: '' };
+  let state = { page: 1, search: '', stock: '' };
   let view = localStorage.getItem('products_view') === 'list' ? 'list' : 'grid';
   let lastResult = null;
   const tableArea = el('div');
@@ -3433,10 +3433,26 @@ export async function renderProducts(main) {
     if (lastResult) renderTable(lastResult);
   }
 
+  const stockFilter = el(
+    'select',
+    {
+      class: 'select',
+      onChange: (e) => {
+        state.stock = e.target.value;
+        state.page = 1;
+        reload();
+      },
+    },
+    el('option', { value: '' }, 'Все остатки'),
+    el('option', { value: 'in' }, 'В наличии'),
+    el('option', { value: 'out' }, 'Нет в наличии'),
+  );
+
   const toolbar = el(
     'div',
     { class: 'toolbar' },
     searchInput,
+    stockFilter,
     el('div', { class: 'view-toggle' }, gridBtn, listBtn),
     el('div', { class: 'spacer' }),
     isAdmin
