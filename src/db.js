@@ -317,6 +317,11 @@ ALTER TABLE order_items ADD COLUMN IF NOT EXISTS image_url TEXT;
 ALTER TABLE order_items ADD COLUMN IF NOT EXISTS catalog_price REAL;
 CREATE INDEX IF NOT EXISTS idx_order_items_product ON order_items(product_id);
 
+-- Прайс на уровне заказа: способ оплаты и отклонение цены от прайса (для кассы и воронки).
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS payment_method TEXT;
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS price_deviation REAL;
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS recommended_total REAL;
+
 -- Расписание отгрузок: глобальная единственная запись (id всегда 1).
 -- days = comma-separated weekdays: mon,tue,wed,thu,fri,sat,sun
 -- cutoff_time = HH:MM, после которого заказ уезжает на следующий отгрузочный день.
@@ -442,6 +447,9 @@ export async function ensureInitialized() {
            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
          )`,
       );
+      await pool.query('ALTER TABLE orders ADD COLUMN IF NOT EXISTS payment_method TEXT');
+      await pool.query('ALTER TABLE orders ADD COLUMN IF NOT EXISTS price_deviation REAL');
+      await pool.query('ALTER TABLE orders ADD COLUMN IF NOT EXISTS recommended_total REAL');
       globalThis.__crmInitialized = true;
       return;
     } catch (e) {

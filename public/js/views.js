@@ -694,15 +694,17 @@ const MARKETPLACES = [
   { value: 'Другое', label: 'Другое' },
 ];
 
-function itemsEditor(initialItems = [], { getMarketplace } = {}) {
+function itemsEditor(initialItems = [], { getMarketplace, onChange } = {}) {
   const wrap = el('div', { class: 'items-editor' });
   const tbody = el('tbody');
   const totalCell = el('td', { colspan: '6', style: { textAlign: 'right' } }, 'Итого: 0 ₽');
 
   function recalc() {
+    const list = getItems();
     let total = 0;
-    for (const row of getItems()) total += row.quantity * row.unit_price;
+    for (const row of list) total += row.quantity * row.unit_price;
     totalCell.textContent = `Итого: ${total.toLocaleString('ru-RU')} ₽`;
+    onChange?.(list);
   }
 
   function updatePriceHint(row) {
@@ -827,6 +829,7 @@ function itemsEditor(initialItems = [], { getMarketplace } = {}) {
     row._meta = meta;
     tbody.append(row);
     updatePriceHint(row);
+    recalc();
   }
 
   function getItems() {
@@ -1262,6 +1265,18 @@ async function openProductPicker(marketplace) {
 async function openOrderForm(order, onSaved) {
   const isEdit = !!order;
   const cur = order || {};
+
+  // Правила цен (необязательно): проценты по оплате + пороги по сумме.
+  // Если бэкенд старый/недоступен — форма работает как раньше, без расчёта прайса.
+  let pricing = { payment_methods: [], order_tiers: [] };
+  try {
+    pricing = await api.pricingSettings();
+  } catch {
+    /* правила недоступны */
+  }
+  const paymentMethods = pricing.payment_methods || [];
+  const orderTiers = pricing.order_tiers || [];
+
   const refI = el('input', { type: 'text', value: cur.reference_number || '', placeholder: 'WB-123456' });
   const marketI = el(
     'select',
@@ -1274,10 +1289,111 @@ async function openOrderForm(order, onSaved) {
   const clientI = el('input', { type: 'text', value: cur.client_name || '' });
   const currencyI = el('input', { type: 'text', value: cur.currency || 'RUB', maxlength: '3', style: { width: '80px' } });
   const notesI = el('textarea', {}, cur.notes || '');
+
+  const payI = paymentMethods.length
+    ? el(
+        'select',
+        {},
+        ...paymentMethods.map((m) =>
+          el(
+            'option',
+            { value: m.key, selected: m.key === cur.payment_method ? true : false },
+            `${m.label}${m.percent ? ` (${m.percent > 0 ? '+' : ''}${m.percent}%)` : ''}`,
+          ),
+        ),
+      )
+    : null;
+
+  const pricingPanel = el('div', { class: 'order-pricing-panel' });
+
+  const round2 = (n) => Math.round((n + Number.EPSILON) * 100) / 100;
+  function currentPaymentPct() {
+    if (!payI) return 0;
+    const m = paymentMethods.find((x) => x.key === payI.value);
+    return m ? Number(m.percent) || 0 : 0;
+  }
+  function tierPctFor(subtotal) {
+    let pct = 0;
+    for (const t of orderTiers) {
+      if (subtotal >= Number(t.threshold)) pct = Number(t.percent) || 0;
+    }
+    return pct;
+  }
+  // Рекомендованная цена = цена канала × (1 + % оплаты) × (1 + % по объёму).
+  // Порог по объёму берётся от суммы заказа по прайсу с учётом оплаты.
+  function computePricing(list) {
+    const payPct = currentPaymentPct();
+    let baseForTier = 0;
+    for (const it of list) {
+      const unit = it.catalog_price != null ? it.catalog_price : it.unit_price;
+      baseForTier += unit * (1 + payPct / 100) * it.quantity;
+    }
+    const tierPct = tierPctFor(baseForTier);
+    let recommendedTotal = 0;
+    let actualTotal = 0;
+    let hasRule = false;
+    for (const it of list) {
+      actualTotal += it.unit_price * it.quantity;
+      if (it.catalog_price != null) {
+        hasRule = true;
+        recommendedTotal += round2(it.catalog_price * (1 + payPct / 100) * (1 + tierPct / 100)) * it.quantity;
+      } else {
+        recommendedTotal += it.unit_price * it.quantity;
+      }
+    }
+    return {
+      payPct,
+      tierPct,
+      recommendedTotal: round2(recommendedTotal),
+      actualTotal: round2(actualTotal),
+      deviation: round2(actualTotal - recommendedTotal),
+      hasRule,
+    };
+  }
+  function renderPricingPanel(list) {
+    const p = computePricing(list || items.getItems());
+    clear(pricingPanel);
+    if (!p.hasRule && !orderTiers.length && !paymentMethods.length) return;
+    pricingPanel.append(
+      el('div', { class: 'opp-row' }, 'Ваша сумма: ', el('strong', {}, `${p.actualTotal.toLocaleString('ru-RU')} ₽`)),
+    );
+    if (p.hasRule) {
+      const bits = [];
+      if (p.payPct) bits.push(`оплата ${p.payPct > 0 ? '+' : ''}${p.payPct}%`);
+      if (p.tierPct) bits.push(`объём ${p.tierPct > 0 ? '+' : ''}${p.tierPct}%`);
+      pricingPanel.append(
+        el(
+          'div',
+          { class: 'opp-row' },
+          `По прайсу${bits.length ? ` (${bits.join(', ')})` : ''}: `,
+          el('strong', {}, `${p.recommendedTotal.toLocaleString('ru-RU')} ₽`),
+        ),
+      );
+      const match = Math.abs(p.deviation) < 1;
+      pricingPanel.append(
+        el(
+          'div',
+          { class: `opp-dev ${match ? 'match' : 'diff'}` },
+          match
+            ? '✓ совпадает с прайсом'
+            : `${p.deviation > 0 ? '▲ выше' : '▼ ниже'} прайса на ${Math.abs(p.deviation).toLocaleString('ru-RU')} ₽`,
+        ),
+      );
+    } else if (paymentMethods.length || orderTiers.length) {
+      pricingPanel.append(
+        el('div', { class: 'opp-hint' }, 'Выберите товары из каталога — подставится цена из прайса и посчитается отклонение.'),
+      );
+    }
+  }
+
   const items = itemsEditor(cur.items || [], {
     getMarketplace: () => marketI.value,
+    onChange: renderPricingPanel,
   });
-  marketI.addEventListener('change', () => items.refreshCatalogPrices());
+  marketI.addEventListener('change', () => {
+    items.refreshCatalogPrices().then(() => renderPricingPanel());
+  });
+  if (payI) payI.addEventListener('change', () => renderPricingPanel());
 
   const body = el(
     'div',
@@ -1287,23 +1403,17 @@ async function openOrderForm(order, onSaved) {
       { class: 'form-grid' },
       el('div', { class: 'form-row' }, el('label', {}, 'Номер заказа (с площадки)'), refI),
       el('div', { class: 'form-row' }, el('label', {}, 'Площадка'), marketI),
-      el(
-        'div',
-        { class: 'form-row' },
-        el('label', {}, 'Классификация клиента'),
-        classI,
-      ),
+      el('div', { class: 'form-row' }, el('label', {}, 'Классификация клиента'), classI),
       el('div', { class: 'form-row' }, el('label', {}, 'Клиент'), clientI),
+      payI ? el('div', { class: 'form-row' }, el('label', {}, 'Способ оплаты'), payI) : null,
       el('div', { class: 'form-row' }, el('label', {}, 'Валюта'), currencyI),
       el('div', { class: 'form-row' }, el('label', {}, 'Заметки'), notesI),
     ),
-    el(
-      'div',
-      { class: 'form-row' },
-      el('label', {}, 'Позиции заказа *'),
-      items.node,
-    ),
+    el('div', { class: 'form-row' }, el('label', {}, 'Позиции заказа *'), items.node),
+    pricingPanel,
   );
+
+  renderPricingPanel();
 
   await openModal(isEdit ? `Заказ #${cur.id}` : 'Новый заказ', body, {
     primaryLabel: isEdit ? 'Сохранить' : 'Создать',
@@ -1314,6 +1424,16 @@ async function openOrderForm(order, onSaved) {
         toast('Добавьте хотя бы одну позицию', 'error');
         return false;
       }
+      const p = computePricing(orderItems);
+      if (p.hasRule && Math.abs(p.deviation) >= 1) {
+        const sign = p.deviation > 0 ? 'выше' : 'ниже';
+        const ok = await confirm(
+          `Цена не соответствует прайсу: ${sign} на ${Math.abs(p.deviation).toLocaleString('ru-RU')} ₽ ` +
+            `(ваша ${p.actualTotal.toLocaleString('ru-RU')} ₽, по прайсу ${p.recommendedTotal.toLocaleString('ru-RU')} ₽). ` +
+            'Сохранить с этой ценой?',
+        );
+        if (!ok) return false;
+      }
       const payload = {
         reference_number: refI.value || null,
         marketplace: marketI.value || null,
@@ -1322,6 +1442,9 @@ async function openOrderForm(order, onSaved) {
         currency: currencyI.value || 'RUB',
         notes: notesI.value || null,
         items: orderItems,
+        payment_method: payI ? payI.value || null : cur.payment_method ?? null,
+        price_deviation: p.hasRule ? p.deviation : null,
+        recommended_total: p.hasRule ? p.recommendedTotal : null,
       };
       if (isEdit) {
         await api.update('orders', cur.id, payload);
@@ -1458,6 +1581,13 @@ export async function renderOrders(main) {
                 ? el('div', { class: 'meta' }, '№ ' + r.reference_number)
                 : null,
               el('div', { class: 'meta' }, '👤 ' + (r.manager_name || '—')),
+              r.price_deviation != null && Math.abs(r.price_deviation) >= 1
+                ? el(
+                    'div',
+                    { class: r.price_deviation > 0 ? 'order-card-dev up' : 'order-card-dev down' },
+                    `${r.price_deviation > 0 ? '▲ выше' : '▼ ниже'} прайса на ${Math.abs(r.price_deviation).toLocaleString('ru-RU')} ₽`,
+                  )
+                : null,
             ),
           );
         }
@@ -1837,6 +1967,19 @@ async function showOrderDetails(order, reload) {
       el('div', {}, order.warehouse_user_name || '—'),
       el('div', { class: 'k' }, 'Сумма'),
       el('div', {}, fmtMoney(order.total_amount, order.currency)),
+      order.price_deviation != null && Math.abs(order.price_deviation) >= 1
+        ? el('div', { class: 'k' }, 'Отклонение от прайса')
+        : null,
+      order.price_deviation != null && Math.abs(order.price_deviation) >= 1
+        ? el(
+            'div',
+            { class: order.price_deviation > 0 ? 'dev-up' : 'dev-down' },
+            `${order.price_deviation > 0 ? 'выше' : 'ниже'} на ${Math.abs(order.price_deviation).toLocaleString('ru-RU')} ₽` +
+              (order.recommended_total != null
+                ? ` (по прайсу ${order.recommended_total.toLocaleString('ru-RU')} ₽)`
+                : ''),
+          )
+        : null,
       el('div', { class: 'k' }, 'Создан'),
       el('div', {}, fmtDateTime(order.created_at)),
       order.reserved_at ? el('div', { class: 'k' }, 'Зарезервирован') : null,
@@ -2004,6 +2147,27 @@ export async function renderCashbox(main) {
     const referenceI = el('input', { type: 'text', placeholder: 'Номер транзакции' });
     const orderI = el('input', { type: 'number', min: '1', step: '1', placeholder: 'ID заказа (необязательно)' });
     const notesI = el('textarea', {});
+    const orderDevHint = el('div', { class: 'hint' });
+
+    // При привязке к заказу с отклонением цены — показываем и добавляем пометку в заметки кассы.
+    orderI.addEventListener('change', async () => {
+      orderDevHint.textContent = '';
+      const id = Number(orderI.value);
+      if (!id) return;
+      try {
+        const o = await api.get('orders', id);
+        if (o && o.price_deviation != null && Math.abs(o.price_deviation) >= 1) {
+          const sign = o.price_deviation > 0 ? 'выше' : 'ниже';
+          const note = `Цена ${sign} прайса на ${Math.abs(o.price_deviation).toLocaleString('ru-RU')} ₽`;
+          orderDevHint.textContent = '⚠️ ' + note;
+          if (!notesI.value.includes(note)) {
+            notesI.value = (notesI.value ? notesI.value + '\n' : '') + note;
+          }
+        }
+      } catch {
+        /* заказ не найден / нет доступа — игнорируем */
+      }
+    });
 
     const body = el(
       'div',
@@ -2011,7 +2175,7 @@ export async function renderCashbox(main) {
       el('div', { class: 'form-row' }, el('label', {}, 'Сумма *'), amountI),
       el('div', { class: 'form-row' }, el('label', {}, 'Метод'), methodI),
       el('div', { class: 'form-row' }, el('label', {}, 'Номер транзакции'), referenceI),
-      el('div', { class: 'form-row' }, el('label', {}, 'Привязать к заказу (id)'), orderI),
+      el('div', { class: 'form-row' }, el('label', {}, 'Привязать к заказу (id)'), orderI, orderDevHint),
       el('div', { class: 'form-row' }, el('label', {}, 'Заметки'), notesI),
     );
 

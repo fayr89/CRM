@@ -25,6 +25,13 @@ const itemSchema = z.object({
   catalog_price: z.number().nonnegative().optional().nullable(),
 });
 
+// Метаданные прайса (необязательные): способ оплаты и отклонение цены от прайса.
+const pricingMeta = {
+  payment_method: z.string().optional().nullable(),
+  price_deviation: z.number().optional().nullable(),
+  recommended_total: z.number().optional().nullable(),
+};
+
 const createSchema = z.object({
   reference_number: z.string().optional().nullable(),
   marketplace: z.string().optional().nullable(),
@@ -33,6 +40,7 @@ const createSchema = z.object({
   currency: z.string().length(3).optional().default('RUB'),
   notes: z.string().optional().nullable(),
   items: z.array(itemSchema).min(1, 'В заказе должна быть хотя бы одна позиция'),
+  ...pricingMeta,
 });
 
 const updateSchema = z.object({
@@ -43,7 +51,33 @@ const updateSchema = z.object({
   currency: z.string().length(3).optional(),
   notes: z.string().optional().nullable(),
   items: z.array(itemSchema).min(1).optional(),
+  ...pricingMeta,
 });
+
+// Пишем метаданные прайса отдельным «best-effort» запросом ПОСЛЕ создания/обновления
+// заказа: даже если колонок ещё нет на этом соединении, сам заказ не сломается.
+async function saveOrderPricingMeta(orderId, data) {
+  if (
+    data.payment_method === undefined &&
+    data.price_deviation === undefined &&
+    data.recommended_total === undefined
+  ) {
+    return;
+  }
+  try {
+    await db.run(
+      `UPDATE orders SET payment_method = ?, price_deviation = ?, recommended_total = ?,
+       updated_at = NOW() WHERE id = ?`,
+      data.payment_method ?? null,
+      data.price_deviation ?? null,
+      data.recommended_total ?? null,
+      orderId,
+    );
+  } catch (e) {
+    // eslint-disable-next-line no-console
+    console.error('[orders] не удалось записать метаданные прайса:', e.message);
+  }
+}
 
 router.use(authenticate);
 
@@ -307,6 +341,8 @@ router.post(
       return orderId;
     });
 
+    await saveOrderPricingMeta(newId, data);
+
     const order = await db.get('SELECT * FROM orders WHERE id = ?', newId);
     const items = await db.all(
       'SELECT * FROM order_items WHERE order_id = ? ORDER BY id',
@@ -383,6 +419,8 @@ router.patch(
         await tx.run(`UPDATE orders SET ${updates.join(', ')} WHERE id = ?`, ...params);
       }
     });
+
+    await saveOrderPricingMeta(order.id, data);
 
     const updated = await db.get('SELECT * FROM orders WHERE id = ?', order.id);
     const items = await db.all(

@@ -788,3 +788,19 @@ table.data tbody tr:last-child td { border-bottom: none; }
 .pricing-row .pricing-suffix { font-size: 13px; color: var(--text-muted, #6b7280); }
 .pricing-row input { padding: 6px 8px; border: 1px solid var(--border); border-radius: var(--radius); }
 .pricing-row .remove-btn { margin-left: auto; }
+
+/* Прайс в форме заказа: панель «ваша сумма / по прайсу / отклонение» */
+.order-pricing-panel { margin-top: 10px; padding: 10px 12px; border-radius: var(--radius);
+  background: #f8fafc; border: 1px solid var(--border); font-size: 13px; }
+.order-pricing-panel:empty { display: none; }
+.order-pricing-panel .opp-row { display: flex; justify-content: space-between; }
+.order-pricing-panel .opp-hint { color: var(--text-muted, #6b7280); }
+.order-pricing-panel .opp-dev { margin-top: 4px; font-weight: 600; }
+.order-pricing-panel .opp-dev.match { color: #16a34a; }
+.order-pricing-panel .opp-dev.diff { color: #d97706; }
+/* Отклонение от прайса в воронке/деталях заказа */
+.order-card-dev { font-size: 11px; font-weight: 600; margin-top: 2px; }
+.order-card-dev.up { color: #16a34a; }
+.order-card-dev.down { color: #d97706; }
+.dev-up { color: #16a34a; font-weight: 600; }
+.dev-down { color: #d97706; font-weight: 600; }
