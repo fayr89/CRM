@@ -467,7 +467,7 @@ router.post(
     // Дедуп по (sku, marketplace) — последняя строка побеждает. Иначе ON CONFLICT
     // упадёт на повторе одного и того же ключа в рамках одного INSERT.
     const seen = new Map();
-    for (const r of input) seen.set(`${r.sku} ${r.marketplace}`, r);
+    for (const r of input) seen.set(`${r.sku}\u0000${r.marketplace}`, r);
     const rows = [...seen.values()];
 
     const skus = rows.map((r) => r.sku);

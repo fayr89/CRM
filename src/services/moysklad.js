@@ -15,6 +15,35 @@ function authHeader(token) {
   return { Authorization: `Bearer ${t}`, Accept: 'application/json;charset=utf-8' };
 }
 
+// Запрос к МойСклад с повтором при 429/503. При превышении лимита одновременных
+// запросов МойСклад отдаёт 429 (код 1073) — ждём с растущей паузой и повторяем
+// (ресурсоёмкие отчёты остатков часто пересекаются с другими запросами по токену).
+async function msFetch(url, headers, retries = 4) {
+  for (let attempt = 0; ; attempt += 1) {
+    const res = await fetch(url, { headers, signal: AbortSignal.timeout(60000) });
+    if ((res.status !== 429 && res.status !== 503) || attempt >= retries) return res;
+    const retryAfter = parseInt(res.headers.get('retry-after') || '', 10);
+    const waitMs = Number.isFinite(retryAfter)
+      ? Math.min(10000, retryAfter * 1000)
+      : Math.min(6000, 600 * 2 ** attempt);
+    try {
+      await res.text();
+    } catch {
+      // тело не важно — освобождаем соединение перед повтором
+    }
+    await new Promise((r) => setTimeout(r, waitMs));
+  }
+}
+
+function msError(status, text) {
+  if (status === 429) {
+    return new Error(
+      'МойСклад: превышен лимит одновременных запросов. Подождите несколько секунд и повторите.',
+    );
+  }
+  return new Error(`МойСклад ответил ${status}: ${text.slice(0, 200)}`);
+}
+
 // Постранично выкачивает все строки с эндпоинта МойСклад (limit=1000, offset инкрементируется).
 async function fetchAll(endpoint, token) {
   const headers = authHeader(token);
@@ -23,10 +52,10 @@ async function fetchAll(endpoint, token) {
   for (;;) {
     const sep = endpoint.includes('?') ? '&' : '?';
     const url = `${BASE}${endpoint}${sep}limit=${PAGE_SIZE}&offset=${offset}`;
-    const res = await fetch(url, { headers, signal: AbortSignal.timeout(60000) });
+    const res = await msFetch(url, headers);
     if (!res.ok) {
       const text = await res.text();
-      throw new Error(`МойСклад ответил ${res.status}: ${text.slice(0, 200)}`);
+      throw msError(res.status, text);
     }
     const data = await res.json();
     const rows = data.rows || [];
@@ -133,10 +162,10 @@ export async function fetchMoyskladStock(token) {
 export async function fetchMoyskladStockByStorePage(token, offset = 0, limit = 500) {
   const headers = authHeader(token);
   const url = `${BASE}/report/stock/bystore?limit=${limit}&offset=${offset}`;
-  const res = await fetch(url, { headers, signal: AbortSignal.timeout(60000) });
+  const res = await msFetch(url, headers);
   if (!res.ok) {
     const text = await res.text();
-    throw new Error(`МойСклад ответил ${res.status}: ${text.slice(0, 200)}`);
+    throw msError(res.status, text);
   }
   const data = await res.json();
   const rows = data.rows || [];
