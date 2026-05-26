@@ -420,7 +420,7 @@ router.post(
     } catch (e) {
       throw BadRequest(e.message);
     }
-    const { byId, bySku, size, fetched } = page;
+    const { byId, bySku, size, fetched, sample } = page;
     let updatedById = 0;
     let updatedBySku = 0;
     if (byId.size || bySku.size) {
@@ -465,7 +465,17 @@ router.post(
       `[stores] offset=${offset} fetched=${fetched} byId=${byId.size} bySku=${bySku.size} ` +
         `updatedById=${updatedById} updatedBySku=${updatedBySku} size=${size}`,
     );
-    res.json({ ok: true, updated, updatedById, updatedBySku, fetched, nextOffset, total: size, done });
+    res.json({
+      ok: true,
+      updated,
+      updatedById,
+      updatedBySku,
+      fetched,
+      nextOffset,
+      total: size,
+      done,
+      sample: offset === 0 ? sample : undefined,
+    });
   }),
 );
 

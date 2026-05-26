@@ -180,5 +180,17 @@ export async function fetchMoyskladStockByStorePage(token, offset = 0, limit = 5
     const sku = r.code || r.article;
     if (sku) bySku.set(String(sku), stores);
   }
-  return { byId, bySku, size: data.meta?.size ?? offset + rows.length, fetched: rows.length };
+  const fs = (rows[0]?.stockByStore || [])[0] || null;
+  const sample = rows[0]
+    ? {
+        code: rows[0].code ?? null,
+        article: rows[0].article ?? null,
+        uuid: extractUuid(rows[0].meta?.href),
+        storeCount: (rows[0].stockByStore || []).length,
+        storeKeys: fs ? Object.keys(fs) : [],
+        storeName: fs ? (fs.name ?? fs.store?.name ?? null) : null,
+        storeStock: fs ? (fs.stock ?? null) : null,
+      }
+    : null;
+  return { byId, bySku, sample, size: data.meta?.size ?? offset + rows.length, fetched: rows.length };
 }

@@ -4032,19 +4032,33 @@ async function openMoyskladStores(onDone) {
       statusEl.innerHTML = '⏳ Запрашиваю склады из МойСклад…';
       let offset = 0;
       let totalUpdated = 0;
+      let updById = 0;
+      let updSku = 0;
+      let diag = null;
       try {
         for (let i = 0; i < 1000; i += 1) {
           const r = await api.refreshMoyskladStores(token, offset);
           totalUpdated += r.updated || 0;
+          updById += r.updatedById || 0;
+          updSku += r.updatedBySku || 0;
+          if (r.sample && !diag) diag = r.sample;
           offset = r.nextOffset;
           const seen = r.total ? Math.min(offset, r.total) : offset;
           statusEl.innerHTML = `⏳ Обработано ${seen}${r.total ? ' из ' + r.total : ''}…`;
           if (r.done) break;
         }
-        statusEl.innerHTML = `✅ Готово: склады заполнены у ${totalUpdated} позиций`;
+        let msg = `✅ Готово: склады у <strong>${totalUpdated}</strong> позиций (по id: ${updById}, по артикулу: ${updSku}).`;
+        if (diag) {
+          msg +=
+            `<br><small style="color:#64748b">Диагностика 1-й строки отчёта: ` +
+            `артикул=${diag.article ?? diag.code ?? '—'}, uuid=${diag.uuid ? 'есть' : 'нет'}, ` +
+            `складов в строке=${diag.storeCount}, поля склада=[${(diag.storeKeys || []).join(', ')}], ` +
+            `имя склада=${diag.storeName ?? '—'}, кол-во=${diag.storeStock ?? '—'}</small>`;
+        }
+        statusEl.innerHTML = msg;
         toast('Склады обновлены', 'success');
         await onDone?.();
-        return new Promise((resolve) => setTimeout(() => resolve(true), 1500));
+        return false;
       } catch (e) {
         statusEl.innerHTML = `❌ ${e.message}`;
         return false;
