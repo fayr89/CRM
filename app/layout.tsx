@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import { Inter } from "next/font/google";
 import "./globals.css";
 import { Toaster } from "sonner";
+import { AuthProvider } from "@/lib/auth";
 
 const inter = Inter({
   subsets: ["latin", "cyrillic"],
@@ -27,7 +28,7 @@ export default function RootLayout({
   return (
     <html lang="ru" className="bg-background">
       <body className={`${inter.variable} font-sans antialiased`}>
-        {children}
+        <AuthProvider>{children}</AuthProvider>
         <Toaster position="top-right" richColors />
       </body>
     </html>

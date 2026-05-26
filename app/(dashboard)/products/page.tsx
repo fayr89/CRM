@@ -1,8 +1,8 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect, useCallback } from "react";
 import Image from "next/image";
-import { Package, Plus, Download, Search, ImageOff, Pencil, X } from "lucide-react";
+import { Package, Plus, Download, Search, ImageOff } from "lucide-react";
 import { PageHeader } from "@/components/common/page-header";
 import { HelpBanner } from "@/components/common/help-banner";
 import { EmptyState } from "@/components/common/empty-state";
@@ -11,22 +11,90 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { mockProducts, formatCurrency } from "@/lib/mock-data";
+import { formatCurrency } from "@/lib/mock-data";
 import type { Product, Marketplace } from "@/lib/types";
-import { toast } from "sonner";
+import { api } from "@/lib/api";
+import { useAuth } from "@/lib/auth";
 import { cn } from "@/lib/utils";
+import { toast } from "sonner";
 
 const MARKETPLACES: Marketplace[] = ["Wildberries", "Ozon", "Яндекс.Маркет", "Avito", "Другое"];
 
+interface RawProduct {
+  id: number;
+  sku: string | null;
+  name: string;
+  image_url: string | null;
+  cost_price: number | string;
+  unit: string | null;
+  description: string | null;
+  external_source: string | null;
+  active: boolean;
+  price_count?: number;
+  prices?: { marketplace: string; price: number | string }[];
+}
+
+function mapProduct(r: RawProduct): Product {
+  return {
+    id: r.id,
+    sku: r.sku ?? undefined,
+    name: r.name,
+    imageUrl: r.image_url ?? undefined,
+    costPrice: Number(r.cost_price ?? 0),
+    unit: r.unit ?? "шт",
+    description: r.description ?? undefined,
+    externalSource: r.external_source === "moysklad" ? "moysklad" : undefined,
+    active: !!r.active,
+    priceCount: r.price_count ?? (r.prices ? r.prices.length : 0),
+    prices: r.prices?.map((p) => ({ marketplace: p.marketplace, price: Number(p.price) })),
+  };
+}
+
+async function fetchAllProducts(): Promise<Product[]> {
+  const limit = 200;
+  const acc: Product[] = [];
+  for (let page = 1; page <= 50; page += 1) {
+    const res = await api.get<{ data: RawProduct[]; pagination?: { total?: number } }>(
+      `/api/products?limit=${limit}&page=${page}`,
+    );
+    acc.push(...res.data.map(mapProduct));
+    const total = res.pagination?.total ?? acc.length;
+    if (res.data.length === 0 || acc.length >= total) break;
+  }
+  return acc;
+}
+
 export default function ProductsPage() {
-  const [products, setProducts] = useState<Product[]>(mockProducts);
+  const { user } = useAuth();
+  const role = user?.role;
+  const canEdit = role === "admin" || role === "manager";
+  const canImport = role === "admin";
+
+  const [products, setProducts] = useState<Product[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [showHelp, setShowHelp] = useState(true);
   const [editing, setEditing] = useState<Product | null>(null);
   const [creating, setCreating] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      setProducts(await fetchAllProducts());
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Не удалось загрузить товары");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    load();
+  }, [load]);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -36,11 +104,50 @@ export default function ProductsPage() {
     );
   }, [products, search]);
 
-  const upsert = (p: Product) => {
-    if (products.find((x) => x.id === p.id)) {
-      setProducts((prev) => prev.map((x) => (x.id === p.id ? p : x)));
-    } else {
-      setProducts((prev) => [...prev, { ...p, id: Math.max(0, ...prev.map((x) => x.id)) + 1 }]);
+  const openEditor = async (p: Product) => {
+    if (!canEdit) return;
+    try {
+      const full = await api.get<RawProduct>(`/api/products/${p.id}`);
+      setEditing(mapProduct(full));
+    } catch {
+      setEditing(p);
+    }
+  };
+
+  const handleSave = async (form: Product) => {
+    const payload = {
+      sku: form.sku || null,
+      name: form.name,
+      image_url: form.imageUrl || null,
+      cost_price: Number(form.costPrice) || 0,
+      unit: form.unit || "шт",
+      description: form.description || null,
+      active: form.active,
+    };
+    const isEdit = !!editing;
+    try {
+      let id = form.id;
+      if (isEdit) {
+        await api.patch(`/api/products/${id}`, payload);
+      } else {
+        const created = await api.post<RawProduct>("/api/products", payload);
+        id = created.id;
+      }
+      const original = editing?.prices ?? [];
+      for (const m of MARKETPLACES) {
+        const np = (form.prices ?? []).find((p) => p.marketplace === m)?.price ?? 0;
+        if (np > 0) {
+          await api.put(`/api/products/${id}/prices`, { marketplace: m, price: np });
+        } else if (original.find((p) => p.marketplace === m)) {
+          await api.del(`/api/products/${id}/prices/${encodeURIComponent(m)}`);
+        }
+      }
+      toast.success(isEdit ? "Товар обновлён" : "Товар создан");
+      setEditing(null);
+      setCreating(false);
+      await load();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Не удалось сохранить");
     }
   };
 
@@ -69,18 +176,33 @@ export default function ProductsPage() {
           />
         </div>
         <div className="flex-1" />
-        <Button variant="outline" onClick={() => setImportOpen(true)}>
-          <Download className="mr-2 h-4 w-4" />
-          Импорт из МойСклад
-        </Button>
-        <Button onClick={() => setCreating(true)}>
-          <Plus className="mr-2 h-4 w-4" />
-          Новый товар
-        </Button>
+        {canImport && (
+          <Button variant="outline" onClick={() => setImportOpen(true)}>
+            <Download className="mr-2 h-4 w-4" />
+            Импорт из МойСклад
+          </Button>
+        )}
+        {canEdit && (
+          <Button onClick={() => setCreating(true)}>
+            <Plus className="mr-2 h-4 w-4" />
+            Новый товар
+          </Button>
+        )}
       </div>
 
-      {/* Grid */}
-      {filtered.length === 0 ? (
+      {/* Content */}
+      {loading ? (
+        <div className="grid place-items-center py-20">
+          <span className="h-6 w-6 animate-spin rounded-full border-2 border-[#2563eb]/30 border-t-[#2563eb]" />
+        </div>
+      ) : error ? (
+        <div className="rounded-md bg-[#fee2e2] p-4 text-sm text-[#991b1b]">
+          {error}
+          <button onClick={load} className="ml-2 font-semibold underline">
+            Повторить
+          </button>
+        </div>
+      ) : filtered.length === 0 ? (
         <EmptyState
           icon={Package}
           title={search ? "Ничего не найдено" : "Каталог пуст"}
@@ -96,7 +218,8 @@ export default function ProductsPage() {
             <ProductCard
               key={p.id}
               product={p}
-              onClick={() => setEditing(p)}
+              clickable={canEdit}
+              onClick={() => openEditor(p)}
             />
           ))}
         </div>
@@ -110,25 +233,31 @@ export default function ProductsPage() {
             setEditing(null);
             setCreating(false);
           }}
-          onSave={(p) => {
-            upsert(p);
-            setEditing(null);
-            setCreating(false);
-            toast.success(editing ? "Товар обновлён" : "Товар создан");
-          }}
+          onSave={handleSave}
         />
       )}
 
-      <MoyskladImportModal open={importOpen} onOpenChange={setImportOpen} />
+      <MoyskladImportModal open={importOpen} onOpenChange={setImportOpen} onImported={load} />
     </div>
   );
 }
 
-function ProductCard({ product, onClick }: { product: Product; onClick: () => void }) {
+function ProductCard({
+  product,
+  clickable,
+  onClick,
+}: {
+  product: Product;
+  clickable: boolean;
+  onClick: () => void;
+}) {
   return (
     <div
-      onClick={onClick}
-      className="group relative flex cursor-pointer flex-col rounded-lg border border-[#e3e6eb] bg-white p-2.5 shadow-sm transition-all hover:border-[#2563eb] hover:shadow-md active:scale-[0.98] sm:p-3"
+      onClick={clickable ? onClick : undefined}
+      className={cn(
+        "group relative flex flex-col rounded-lg border border-[#e3e6eb] bg-white p-2.5 shadow-sm transition-all sm:p-3",
+        clickable && "cursor-pointer hover:border-[#2563eb] hover:shadow-md active:scale-[0.98]",
+      )}
     >
       {!product.active && (
         <span className="absolute top-2 right-2 z-10 rounded-full bg-black/60 px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide text-white">
@@ -167,7 +296,9 @@ function ProductCard({ product, onClick }: { product: Product; onClick: () => vo
         </div>
         <div className="text-right">
           {(product.priceCount ?? 0) > 0 ? (
-            <span className="font-bold text-[#2563eb]">{product.priceCount} прайс{product.priceCount === 1 ? "" : product.priceCount! > 4 ? "ов" : "а"}</span>
+            <span className="font-bold text-[#2563eb]">
+              {product.priceCount} прайс{product.priceCount === 1 ? "" : product.priceCount! > 4 ? "ов" : "а"}
+            </span>
           ) : (
             <span className="font-bold text-[#d97706]">нет прайсов</span>
           )}
@@ -184,9 +315,10 @@ function ProductFormModal({
 }: {
   product: Product | null;
   onClose: () => void;
-  onSave: (p: Product) => void;
+  onSave: (p: Product) => void | Promise<void>;
 }) {
   const isEdit = !!product;
+  const [saving, setSaving] = useState(false);
   const [form, setForm] = useState<Product>(
     product ?? {
       id: 0,
@@ -206,6 +338,19 @@ function ProductFormModal({
     const prices = (form.prices ?? []).filter((p) => p.marketplace !== marketplace);
     if (price > 0) prices.push({ marketplace, price });
     setForm({ ...form, prices, priceCount: prices.length });
+  };
+
+  const submit = async () => {
+    if (!form.name.trim()) {
+      toast.error("Укажите название");
+      return;
+    }
+    setSaving(true);
+    try {
+      await onSave(form);
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
@@ -298,17 +443,9 @@ function ProductFormModal({
         </div>
 
         <DialogFooter>
-          <Button variant="outline" onClick={onClose}>Отмена</Button>
-          <Button
-            onClick={() => {
-              if (!form.name.trim()) {
-                toast.error("Укажите название");
-                return;
-              }
-              onSave(form);
-            }}
-          >
-            {isEdit ? "Сохранить" : "Создать"}
+          <Button variant="outline" onClick={onClose} disabled={saving}>Отмена</Button>
+          <Button onClick={submit} disabled={saving}>
+            {saving ? "Сохраняем…" : isEdit ? "Сохранить" : "Создать"}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -319,26 +456,40 @@ function ProductFormModal({
 function MoyskladImportModal({
   open,
   onOpenChange,
+  onImported,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  onImported: () => void | Promise<void>;
 }) {
   const [token, setToken] = useState("");
   const [importing, setImporting] = useState(false);
   const [result, setResult] = useState<string | null>(null);
 
-  const handleImport = () => {
+  const handleImport = async () => {
     if (!token.trim()) {
       toast.error("Введите токен МойСклад");
       return;
     }
     setImporting(true);
     setResult(null);
-    setTimeout(() => {
-      setImporting(false);
-      setResult("✓ Импортировано: 47 товаров (12 обновлено, 35 новых)");
+    try {
+      const res = await api.post<{ created: number; updated: number; skipped: number; total: number }>(
+        "/api/products/import/moysklad",
+        { token: token.trim() },
+      );
+      setResult(
+        `✓ Готово: ${res.created} новых, ${res.updated} обновлено` +
+          (res.skipped ? `, ${res.skipped} пропущено` : "") +
+          ` (всего получено ${res.total})`,
+      );
       toast.success("Импорт завершён");
-    }, 1500);
+      await onImported();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Ошибка импорта");
+    } finally {
+      setImporting(false);
+    }
   };
 
   return (
@@ -369,7 +520,9 @@ function MoyskladImportModal({
           )}
         </div>
         <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)}>Закрыть</Button>
+          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={importing}>
+            Закрыть
+          </Button>
           <Button onClick={handleImport} disabled={importing}>
             {importing ? "Импортируем…" : "Начать импорт"}
           </Button>

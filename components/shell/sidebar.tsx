@@ -5,7 +5,8 @@ import Image from "next/image";
 import { usePathname } from "next/navigation";
 import { cn } from "@/lib/utils";
 import { Avatar } from "@/components/common/avatar";
-import { mockCurrentUser, mockNotifications, roleLabels } from "@/lib/mock-data";
+import { mockNotifications, roleLabels } from "@/lib/mock-data";
+import { useAuth } from "@/lib/auth";
 import { 
   LayoutDashboard, 
   TrendingUp, 
@@ -72,7 +73,7 @@ export function Sidebar({
   onMobileOpenChange,
 }: SidebarProps) {
   const pathname = usePathname();
-  const user = mockCurrentUser;
+  const { user, logout } = useAuth();
   const unreadCount = mockNotifications.filter(n => !n.readAt).length;
   const [internalMobileOpen, setInternalMobileOpen] = useState(false);
   const mobileOpen = externalMobileOpen ?? internalMobileOpen;
@@ -80,6 +81,8 @@ export function Sidebar({
     if (onMobileOpenChange) onMobileOpenChange(v);
     else setInternalMobileOpen(v);
   };
+
+  if (!user) return null;
 
   const canAccess = (item: NavItem) => {
     if (!item.roles) return true;
@@ -207,13 +210,16 @@ export function Sidebar({
             </p>
           </div>
         </div>
-        <Link
-          href="/login"
+        <button
+          onClick={() => {
+            setMobileOpen(false);
+            logout();
+          }}
           className="mt-3 w-full flex items-center justify-center gap-2 px-3 py-2 rounded-md border border-[#374151] text-sm text-[#d1d5db] hover:bg-[#1f2937] transition-colors"
         >
           <LogOut className="w-4 h-4" />
           Выйти
-        </Link>
+        </button>
       </div>
     </>
   );

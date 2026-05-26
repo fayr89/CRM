@@ -4,9 +4,18 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Eye, EyeOff, LogIn } from "lucide-react";
 import Image from "next/image";
+import { api } from "@/lib/api";
+import { useAuth } from "@/lib/auth";
+import type { Role } from "@/lib/types";
+
+interface LoginResponse {
+  token: string;
+  user: { id: number; email: string; name: string; role: Role };
+}
 
 export default function LoginPage() {
   const router = useRouter();
+  const { login } = useAuth();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
@@ -16,18 +25,22 @@ export default function LoginPage() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
-    setLoading(true);
 
-    // Mock login - in real app would call API
-    await new Promise((r) => setTimeout(r, 800));
-
-    if (email === "demo@example.com" && password === "demo123") {
-      router.push("/dashboard");
-    } else if (email && password) {
-      // For demo, accept any email/password
-      router.push("/dashboard");
-    } else {
+    if (!email || !password) {
       setError("Введите email и пароль");
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const res = await api.post<LoginResponse>("/api/auth/login", {
+        email,
+        password,
+      });
+      login(res.token, { ...res.user, active: true });
+      router.push("/dashboard");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Не удалось войти");
       setLoading(false);
     }
   };
