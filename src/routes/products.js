@@ -321,22 +321,25 @@ router.post(
     if (!token) {
       throw BadRequest('Передайте токен МойСклад в теле запроса {token: "..."}');
     }
+    // Оба отчёта тянем параллельно, чтобы уложиться в лимит времени функции.
+    // Разбивка по складам необязательна: её сбой не должен ломать общий остаток.
     let report;
+    let storeBySku = new Map();
     try {
-      report = await fetchMoyskladStock(token);
+      const [r, bs] = await Promise.all([
+        fetchMoyskladStock(token),
+        fetchMoyskladStockByStore(token).catch((e) => {
+          // eslint-disable-next-line no-console
+          console.log('[stock] bystore error:', e.message);
+          return { bySku: new Map() };
+        }),
+      ]);
+      report = r;
+      storeBySku = bs.bySku;
     } catch (e) {
       throw BadRequest(e.message);
     }
     const { byId, bySku, count } = report;
-
-    // Доп. выгрузка остатков по складам — необязательная, не ломает общий остаток.
-    let storeBySku = new Map();
-    try {
-      storeBySku = (await fetchMoyskladStockByStore(token)).bySku;
-    } catch (e) {
-      // eslint-disable-next-line no-console
-      console.log('[stock] bystore error:', e.message);
-    }
 
     if (count === 0 && storeBySku.size === 0) {
       res.json({ ok: true, updated: 0, total: 0 });
