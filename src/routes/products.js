@@ -326,20 +326,26 @@ router.post(
       throw BadRequest(e.message);
     }
     const entries = [...stockMap.entries()];
+    if (entries.length === 0) {
+      res.json({ ok: true, updated: 0, total: 0 });
+      return;
+    }
+    const ids = entries.map(([ext]) => ext);
+    const vals = entries.map(([, s]) => Number(s) || 0);
     let updated = 0;
-    const CHUNK = 500;
-    for (let i = 0; i < entries.length; i += CHUNK) {
-      const chunk = entries.slice(i, i + CHUNK);
-      const values = chunk.map(() => '(?::text, ?::real)').join(', ');
-      const params = [];
-      for (const [ext, stock] of chunk) params.push(ext, stock);
+    try {
+      // Один запрос на все позиции: распаковываем два массива в пары (id, остаток).
       const r = await db.run(
-        `UPDATE products AS p SET stock = c.stock, updated_at = NOW()
-         FROM (VALUES ${values}) AS c(external_id, stock)
-         WHERE p.external_source = 'moysklad' AND p.external_id = c.external_id`,
-        ...params,
+        `UPDATE products AS p SET stock = d.stock, updated_at = NOW()
+         FROM unnest(?::text[], ?::real[]) AS d(external_id, stock)
+         WHERE p.external_source = 'moysklad' AND p.external_id = d.external_id`,
+        ids,
+        vals,
       );
-      updated += r.changes || 0;
+      updated = r.changes || 0;
+    } catch (e) {
+      // Показываем реальную причину, а не «Internal server error».
+      throw BadRequest('Не удалось записать остатки: ' + e.message);
     }
     res.json({ ok: true, updated, total: entries.length });
   }),
