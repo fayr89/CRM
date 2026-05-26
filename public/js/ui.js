@@ -320,28 +320,33 @@ export function buildForm(fields, initial = {}) {
 
 export function paginator(state, onChange) {
   if (!state || state.total === 0) return el('span');
+  const totalPages = state.total_pages || 1;
+  const page = state.page;
+  const jump = el('input', {
+    type: 'number',
+    min: 1,
+    max: totalPages,
+    value: page,
+    class: 'page-jump',
+    onChange: (e) => {
+      let p = parseInt(e.target.value, 10);
+      if (Number.isNaN(p)) {
+        e.target.value = page;
+        return;
+      }
+      p = Math.min(totalPages, Math.max(1, p));
+      if (p !== page) onChange(p);
+      else e.target.value = page;
+    },
+  });
   return el(
     'div',
     { class: 'pagination' },
     el('span', {}, `Всего: ${state.total}`),
-    el(
-      'button',
-      {
-        class: 'btn btn-sm',
-        disabled: state.page <= 1 ? true : false,
-        onClick: () => onChange(state.page - 1),
-      },
-      '‹',
-    ),
-    el('span', {}, `${state.page} / ${state.total_pages}`),
-    el(
-      'button',
-      {
-        class: 'btn btn-sm',
-        disabled: state.page >= state.total_pages ? true : false,
-        onClick: () => onChange(state.page + 1),
-      },
-      '›',
-    ),
+    el('button', { class: 'btn btn-sm', disabled: page <= 1, title: 'Первая', onClick: () => onChange(1) }, '«'),
+    el('button', { class: 'btn btn-sm', disabled: page <= 1, onClick: () => onChange(page - 1) }, '‹'),
+    el('span', { class: 'page-info' }, 'стр. ', jump, ` / ${totalPages}`),
+    el('button', { class: 'btn btn-sm', disabled: page >= totalPages, onClick: () => onChange(page + 1) }, '›'),
+    el('button', { class: 'btn btn-sm', disabled: page >= totalPages, title: 'Последняя', onClick: () => onChange(totalPages) }, '»'),
   );
 }
