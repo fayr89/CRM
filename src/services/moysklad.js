@@ -172,13 +172,15 @@ export async function fetchMoyskladStockByStorePage(token, offset = 0, limit = 5
   const byId = new Map();
   const bySku = new Map();
   for (const r of rows) {
-    const stores = (r.stockByStore || [])
-      .map((s) => ({ store: s.name || '—', stock: Number(s.stock) || 0 }))
-      .filter((s) => s.stock !== 0);
+    // Сохраняем все склады, включая с нулевыми остатками — для полной информации
+    const stores = (r.stockByStore || []).map((s) => ({
+      store: s.name || '—',
+      stock: Number(s.stock) || 0,
+    }));
     const id = extractUuid(r.meta?.href);
-    if (id) byId.set(id, stores);
+    if (id && stores.length) byId.set(id, stores);
     const sku = r.code || r.article;
-    if (sku) bySku.set(String(sku), stores);
+    if (sku && stores.length) bySku.set(String(sku), stores);
   }
   const fs = (rows[0]?.stockByStore || [])[0] || null;
   const sample = rows[0]
