@@ -257,46 +257,53 @@ router.post(
     let created = 0;
     let updated = 0;
     const skipped = [];
-    for (const p of products) {
+
+    const COLS =
+      '(sku, name, image_url, cost_price, unit, description, external_source, external_id, active)';
+    const UPSERT_TAIL = `ON CONFLICT (external_source, external_id) DO UPDATE SET
+        sku = COALESCE(EXCLUDED.sku, products.sku),
+        name = EXCLUDED.name,
+        image_url = COALESCE(EXCLUDED.image_url, products.image_url),
+        cost_price = EXCLUDED.cost_price,
+        unit = EXCLUDED.unit,
+        description = EXCLUDED.description,
+        updated_at = NOW()`;
+
+    const upsertChunk = (chunk) => {
+      const rows = chunk.map(() => "(?, ?, ?, ?, ?, ?, 'moysklad', ?, TRUE)").join(', ');
+      const params = [];
+      for (const p of chunk) {
+        params.push(p.sku, p.name, p.imageUrl, p.costPrice, p.unit, p.description, p.externalId);
+      }
+      return db.run(`INSERT INTO products ${COLS} VALUES ${rows} ${UPSERT_TAIL}`, ...params);
+    };
+
+    const countChunk = (chunk) => {
+      for (const p of chunk) {
+        if (idByExternal.has(p.externalId)) updated += 1;
+        else created += 1;
+      }
+    };
+
+    // Пишем пачками (сотни строк одним запросом) — тысячи отдельных запросов
+    // не укладываются в лимит времени функции (60с на Hobby).
+    const CHUNK = 400;
+    for (let i = 0; i < products.length; i += CHUNK) {
+      const chunk = products.slice(i, i + CHUNK);
       try {
-        const existingId = idByExternal.get(p.externalId);
-        if (existingId) {
-          await db.run(
-            `UPDATE products SET
-              sku = COALESCE(?, sku),
-              name = ?,
-              image_url = COALESCE(?, image_url),
-              cost_price = ?,
-              unit = ?,
-              description = ?,
-              updated_at = NOW()
-             WHERE id = ?`,
-            p.sku,
-            p.name,
-            p.imageUrl,
-            p.costPrice,
-            p.unit,
-            p.description,
-            existingId,
-          );
-          updated += 1;
-        } else {
-          await db.run(
-            `INSERT INTO products (sku, name, image_url, cost_price, unit, description,
-                                   external_source, external_id, active)
-             VALUES (?, ?, ?, ?, ?, ?, 'moysklad', ?, TRUE)`,
-            p.sku,
-            p.name,
-            p.imageUrl,
-            p.costPrice,
-            p.unit,
-            p.description,
-            p.externalId,
-          );
-          created += 1;
+        await upsertChunk(chunk);
+        countChunk(chunk);
+      } catch {
+        // Пачка упала (например, дубликат SKU) — повторяем построчно, чтобы
+        // изолировать проблемные позиции и не потерять остальные.
+        for (const p of chunk) {
+          try {
+            await upsertChunk([p]);
+            countChunk([p]);
+          } catch (err) {
+            skipped.push({ name: p.name, sku: p.sku, error: err.message });
+          }
         }
-      } catch (err) {
-        skipped.push({ name: p.name, sku: p.sku, error: err.message });
       }
     }
     res.json({ ok: true, created, updated, skipped: skipped.length, skipped_details: skipped, total: products.length });
