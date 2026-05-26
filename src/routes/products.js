@@ -247,16 +247,20 @@ router.post(
     } catch (e) {
       throw BadRequest(e.message);
     }
+    // Предзагружаем уже импортированные товары одним запросом, чтобы не делать
+    // отдельный SELECT на каждую позицию (иначе большой каталог упирается в таймаут).
+    const existingRows = await db.all(
+      `SELECT id, external_id FROM products WHERE external_source = 'moysklad'`,
+    );
+    const idByExternal = new Map(existingRows.map((r) => [r.external_id, r.id]));
+
     let created = 0;
     let updated = 0;
     const skipped = [];
     for (const p of products) {
       try {
-        const existing = await db.get(
-          `SELECT id FROM products WHERE external_source = 'moysklad' AND external_id = ?`,
-          p.externalId,
-        );
-        if (existing) {
+        const existingId = idByExternal.get(p.externalId);
+        if (existingId) {
           await db.run(
             `UPDATE products SET
               sku = COALESCE(?, sku),
@@ -273,7 +277,7 @@ router.post(
             p.costPrice,
             p.unit,
             p.description,
-            existing.id,
+            existingId,
           );
           updated += 1;
         } else {
