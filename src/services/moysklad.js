@@ -105,3 +105,15 @@ export async function fetchMoyskladProducts(token) {
 
   return [...products, ...variants];
 }
+
+// Текущие остатки по всем складам: Map(externalId → количество).
+// Берём из отчёта /report/stock/all, привязка по UUID из meta.href.
+export async function fetchMoyskladStock(token) {
+  const rows = await fetchAll('/report/stock/all', token);
+  const map = new Map();
+  for (const r of rows) {
+    const id = extractUuid(r.meta?.href);
+    if (id) map.set(id, Number(r.stock) || 0);
+  }
+  return map;
+}

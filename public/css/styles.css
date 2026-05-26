@@ -774,3 +774,4 @@ table.data tbody tr:last-child td { border-bottom: none; }
 .data tr.row-clickable { cursor: pointer; }
 .data tr.row-clickable:hover { background: #f3f4f6; }
 .data td .muted { opacity: 0.55; }
+.product-card-stock { font-size: 12px; color: var(--text-muted, #6b7280); margin-top: 2px; }

@@ -118,6 +118,8 @@ export const api = {
     request('DELETE', `/api/products/${id}/prices/${encodeURIComponent(marketplace)}`),
   importMoysklad: (token) =>
     request('POST', '/api/products/import/moysklad', { body: token ? { token } : {} }),
+  refreshMoyskladStock: (token) =>
+    request('POST', '/api/products/import/moysklad-stock', { body: token ? { token } : {} }),
 
   // Расписание отгрузок
   warehouseSchedule: () => request('GET', '/api/warehouse/schedule'),

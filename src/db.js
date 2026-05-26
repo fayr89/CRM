@@ -285,6 +285,7 @@ CREATE TABLE IF NOT EXISTS products (
   name TEXT NOT NULL,
   image_url TEXT,
   cost_price REAL NOT NULL DEFAULT 0,
+  stock REAL,
   unit TEXT DEFAULT 'шт',
   description TEXT,
   external_source TEXT,

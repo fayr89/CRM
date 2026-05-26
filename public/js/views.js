@@ -3329,6 +3329,12 @@ export async function renderProducts(main) {
                 : el('span', { class: 'no-prices' }, 'нет прайсов'),
             ),
           ),
+          el(
+            'div',
+            { class: 'product-card-stock' },
+            'Остаток: ',
+            el('strong', {}, p.stock != null ? String(p.stock) : '—'),
+          ),
           !p.active ? el('div', { class: 'product-inactive-badge' }, 'Архив') : null,
         ),
       );
@@ -3372,6 +3378,7 @@ export async function renderProducts(main) {
             el('th', {}, 'Название'),
             el('th', {}, 'Артикул'),
             el('th', {}, 'Себестоимость'),
+            el('th', {}, 'Остаток'),
             el('th', {}, 'Прайсы'),
             el('th', {}, 'Статус'),
           ),
@@ -3401,6 +3408,7 @@ export async function renderProducts(main) {
               ),
               el('td', {}, p.sku ? el('code', {}, p.sku) : '—'),
               el('td', {}, fmtMoney(p.cost_price, 'RUB')),
+              el('td', {}, p.stock != null ? String(p.stock) : '—'),
               el(
                 'td',
                 {},
@@ -3431,6 +3439,19 @@ export async function renderProducts(main) {
     searchInput,
     el('div', { class: 'view-toggle' }, gridBtn, listBtn),
     el('div', { class: 'spacer' }),
+    isAdmin
+      ? el(
+          'button',
+          {
+            class: 'btn',
+            onClick: () => openMoyskladStock(() => {
+              state.page = 1;
+              return reload();
+            }),
+          },
+          '🔄 Остатки',
+        )
+      : null,
     isAdmin
       ? el(
           'button',
@@ -3727,6 +3748,34 @@ async function openMoyskladImport(onDone) {
         toast('Импорт завершён', 'success');
         await onDone?.();
         return new Promise((resolve) => setTimeout(() => resolve(true), 1500));
+      } catch (e) {
+        statusEl.innerHTML = `❌ ${e.message}`;
+        return false;
+      }
+    },
+  });
+}
+
+async function openMoyskladStock(onDone) {
+  const tokenI = el('input', { type: 'password', placeholder: 'Bearer-токен МойСклад' });
+  const statusEl = el('div', { class: 'import-status' });
+  const body = el(
+    'div',
+    {},
+    el('p', {}, 'Быстро обновит только остатки у уже импортированных товаров — без повторной выгрузки каталога. Нужен тот же токен МойСклад.'),
+    el('div', { class: 'form-row' }, el('label', {}, 'Токен'), tokenI),
+    statusEl,
+  );
+  await openModal('Обновить остатки из МойСклад', body, {
+    primaryLabel: 'Обновить остатки',
+    onSubmit: async () => {
+      statusEl.textContent = '⏳ Обновляю остатки…';
+      try {
+        const r = await api.refreshMoyskladStock(tokenI.value.trim() || undefined);
+        statusEl.innerHTML = `✅ Обновлено остатков: ${r.updated} из ${r.total}`;
+        toast('Остатки обновлены', 'success');
+        await onDone?.();
+        return new Promise((resolve) => setTimeout(() => resolve(true), 1200));
       } catch (e) {
         statusEl.innerHTML = `❌ ${e.message}`;
         return false;

@@ -4,7 +4,7 @@ import { authenticate, requireRole } from '../auth.js';
 import { db } from '../db.js';
 import { BadRequest, NotFound, asyncHandler } from '../errors.js';
 import { parsePagination, parseSort, paginated } from '../query.js';
-import { fetchMoyskladProducts } from '../services/moysklad.js';
+import { fetchMoyskladProducts, fetchMoyskladStock } from '../services/moysklad.js';
 
 const router = Router();
 
@@ -307,6 +307,41 @@ router.post(
       }
     }
     res.json({ ok: true, created, updated, skipped: skipped.length, skipped_details: skipped, total: products.length });
+  }),
+);
+
+// Быстрое обновление только остатков (без выгрузки самого каталога).
+router.post(
+  '/import/moysklad-stock',
+  requireRole('admin'),
+  asyncHandler(async (req, res) => {
+    const token = req.body?.token || process.env.MOYSKLAD_TOKEN;
+    if (!token) {
+      throw BadRequest('Передайте токен МойСклад в теле запроса {token: "..."}');
+    }
+    let stockMap;
+    try {
+      stockMap = await fetchMoyskladStock(token);
+    } catch (e) {
+      throw BadRequest(e.message);
+    }
+    const entries = [...stockMap.entries()];
+    let updated = 0;
+    const CHUNK = 500;
+    for (let i = 0; i < entries.length; i += CHUNK) {
+      const chunk = entries.slice(i, i + CHUNK);
+      const values = chunk.map(() => '(?::text, ?::real)').join(', ');
+      const params = [];
+      for (const [ext, stock] of chunk) params.push(ext, stock);
+      const r = await db.run(
+        `UPDATE products AS p SET stock = c.stock, updated_at = NOW()
+         FROM (VALUES ${values}) AS c(external_id, stock)
+         WHERE p.external_source = 'moysklad' AND p.external_id = c.external_id`,
+        ...params,
+      );
+      updated += r.changes || 0;
+    }
+    res.json({ ok: true, updated, total: entries.length });
   }),
 );
 
