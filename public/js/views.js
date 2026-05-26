@@ -4014,6 +4014,7 @@ async function openMoyskladStock(onDone) {
 async function openMoyskladStores(onDone) {
   const tokenI = el('input', { type: 'password', placeholder: 'Bearer-токен МойСклад' });
   const statusEl = el('div', { class: 'import-status' });
+  let isLoading = false;
   const body = el(
     'div',
     {},
@@ -4029,6 +4030,7 @@ async function openMoyskladStores(onDone) {
         statusEl.innerHTML = '❌ Введите токен';
         return false;
       }
+      isLoading = true;
       statusEl.innerHTML = '⏳ Запрашиваю склады из МойСклад…';
       let offset = 0;
       let totalUpdated = 0;
@@ -4063,6 +4065,7 @@ async function openMoyskladStores(onDone) {
           msg += `<br><small style="color:#64748b">Примеры товаров: ${samplesHtml}</small>`;
         }
         statusEl.innerHTML = msg;
+        isLoading = false;
         toast('Склады обновлены', 'success');
         await onDone?.();
         return false;
