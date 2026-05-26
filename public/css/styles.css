@@ -804,3 +804,94 @@ table.data tbody tr:last-child td { border-bottom: none; }
 .order-card-dev.down { color: #d97706; }
 .dev-up { color: #16a34a; font-weight: 600; }
 .dev-down { color: #d97706; font-weight: 600; }
+
+/* ===== МОБИЛЬНЫЙ АДАПТИВНЫЙ ДИЗАЙН ===== */
+@media (max-width: 768px) {
+  /* Layout */
+  .shell { flex-direction: column; height: auto; }
+  .sidebar {
+    width: 100%; padding: 8px 0; background: #111827;
+    display: flex; flex-direction: row; align-items: center;
+    justify-content: space-between; height: auto;
+  }
+  .sidebar-brand { padding: 8px 12px; margin-bottom: 0; border-bottom: none; border-right: 1px solid #1f2937; flex: 1; }
+  .sidebar-nav { display: flex; flex: 0 0 auto; overflow-x: auto; gap: 0; padding: 0; }
+  .sidebar-nav a {
+    padding: 8px 12px; min-width: max-content; border-left: none;
+    border-bottom: 3px solid transparent; font-size: 12px;
+  }
+  .sidebar-nav a.active { background: transparent; border-left: none; border-bottom-color: var(--primary); }
+  .sidebar-user { padding: 0; border: none; display: none; }
+
+  /* Main content */
+  .main { width: 100%; height: auto; overflow: visible; flex: 1; }
+  .header { position: sticky; top: 0; z-index: 10; }
+  .page { padding: 12px; min-height: 100vh; }
+  .page-header { gap: 8px; margin-bottom: 12px; }
+  .page-title { font-size: 18px; margin-bottom: 4px; }
+
+  /* Forms & Inputs */
+  input, select, textarea { font-size: 16px; padding: 10px; }
+  button, .btn { padding: 10px 14px; font-size: 14px; min-height: 44px; }
+  .form-row { flex-direction: column; gap: 8px; }
+  .form-row label { font-size: 12px; }
+
+  /* Tables */
+  .table { font-size: 12px; }
+  table { width: 100%; }
+  th, td { padding: 8px 6px; }
+
+  /* Cards & Modals */
+  .card { padding: 12px; margin-bottom: 12px; border-radius: 6px; }
+  .modal { max-width: 100% !important; width: 90% !important; max-height: 90vh; border-radius: 12px; }
+  .modal-footer { gap: 8px; padding: 12px; }
+  .modal-footer button { flex: 1; }
+
+  /* Grid layouts */
+  .grid { grid-template-columns: 1fr !important; gap: 12px; }
+  .grid-2 { grid-template-columns: 1fr !important; }
+  .grid-3 { grid-template-columns: 1fr !important; }
+  .grid-4 { grid-template-columns: 1fr !important; }
+
+  /* Catalog/Products */
+  .products-grid { grid-template-columns: 1fr; gap: 8px; }
+  .product-item { padding: 8px; }
+  .product-card { padding: 12px; }
+  .product-image { height: 120px; }
+
+  /* Dialogs */
+  .filter-dialog { max-width: 100%; width: 100%; }
+
+  /* Flexbox stacks */
+  .flex { flex-direction: column; }
+  .flex-row { flex-direction: column; }
+
+  /* Hide desktop elements */
+  .desktop-only { display: none !important; }
+
+  /* Touch-friendly spacing */
+  button, .btn, input, select { min-height: 44px; }
+  a.btn, a.link { min-height: 44px; display: inline-flex; align-items: center; }
+
+  /* Pagination */
+  .pagination { gap: 4px; font-size: 12px; }
+  .pagination input { width: 50px; padding: 6px; }
+
+  /* Lists */
+  .list-item { padding: 12px 8px; }
+}
+
+@media (max-width: 480px) {
+  /* Extra small devices */
+  .page { padding: 8px; }
+  .sidebar { flex-wrap: wrap; }
+  .sidebar-nav a { padding: 6px 10px; font-size: 11px; }
+  button, .btn { padding: 8px 12px; font-size: 13px; }
+  input, select { font-size: 16px; padding: 8px; }
+  .modal { width: 95% !important; }
+  .card { padding: 8px; margin-bottom: 8px; }
+  .page-title { font-size: 16px; }
+  table { font-size: 11px; }
+  th, td { padding: 6px 4px; }
+  .product-image { height: 100px; }
+}
