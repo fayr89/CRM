@@ -413,7 +413,7 @@ router.post(
       throw BadRequest('Передайте токен МойСклад в теле запроса {token: "..."}');
     }
     const offset = Math.max(0, parseInt(req.body?.offset, 10) || 0);
-    const LIMIT = 500;
+    const LIMIT = 1000;
     let page;
     try {
       page = await fetchMoyskladStockByStorePage(token, offset, LIMIT);
