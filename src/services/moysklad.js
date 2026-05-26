@@ -121,3 +121,22 @@ export async function fetchMoyskladStock(token) {
   }
   return { byId, bySku, count: rows.length, sample: rows[0] || null };
 }
+
+// Разбивка остатков по складам: Map(sku → [{ store, stock }]).
+// Из отчёта /report/stock/bystore (у каждой строки массив stockByStore).
+export async function fetchMoyskladStockByStore(token) {
+  const rows = await fetchAll('/report/stock/bystore', token);
+  const bySku = new Map();
+  const byId = new Map();
+  for (const r of rows) {
+    const stores = (r.stockByStore || [])
+      .map((s) => ({ store: s.name || '—', stock: Number(s.stock) || 0 }))
+      .filter((s) => s.stock !== 0);
+    const entry = stores;
+    const sku = r.code || r.article;
+    if (sku) bySku.set(String(sku), entry);
+    const id = extractUuid(r.meta?.href);
+    if (id) byId.set(id, entry);
+  }
+  return { byId, bySku, count: rows.length };
+}

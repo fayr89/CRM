@@ -3335,6 +3335,13 @@ export async function renderProducts(main) {
             'Остаток: ',
             el('strong', {}, p.stock != null ? String(p.stock) : '—'),
           ),
+          Array.isArray(p.stock_by_store) && p.stock_by_store.length
+            ? el(
+                'div',
+                { class: 'product-card-stores' },
+                p.stock_by_store.map((s) => `${s.store}: ${s.stock}`).join(', '),
+              )
+            : null,
           !p.active ? el('div', { class: 'product-inactive-badge' }, 'Архив') : null,
         ),
       );
@@ -3379,6 +3386,7 @@ export async function renderProducts(main) {
             el('th', {}, 'Артикул'),
             el('th', {}, 'Себестоимость'),
             el('th', {}, 'Остаток'),
+            el('th', {}, 'Склады'),
             el('th', {}, 'Прайсы'),
             el('th', {}, 'Статус'),
           ),
@@ -3409,6 +3417,13 @@ export async function renderProducts(main) {
               el('td', {}, p.sku ? el('code', {}, p.sku) : '—'),
               el('td', {}, fmtMoney(p.cost_price, 'RUB')),
               el('td', {}, p.stock != null ? String(p.stock) : '—'),
+              el(
+                'td',
+                { class: 'stores-cell' },
+                Array.isArray(p.stock_by_store) && p.stock_by_store.length
+                  ? p.stock_by_store.map((s) => `${s.store}: ${s.stock}`).join(', ')
+                  : '—',
+              ),
               el(
                 'td',
                 {},

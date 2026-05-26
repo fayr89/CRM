@@ -423,6 +423,7 @@ export async function ensureInitialized() {
       }
       // Лёгкие миграции для уже существующей БД (заодно освежают схему на этом соединении).
       await pool.query('ALTER TABLE products ADD COLUMN IF NOT EXISTS stock REAL');
+      await pool.query('ALTER TABLE products ADD COLUMN IF NOT EXISTS stock_by_store JSONB');
       globalThis.__crmInitialized = true;
       return;
     } catch (e) {
