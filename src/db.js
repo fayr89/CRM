@@ -407,16 +407,31 @@ export const db = {
 
 export async function ensureInitialized() {
   if (globalThis.__crmInitialized) return;
-  const pool = getPool();
-  // Схема уже создана после первого деплоя, поэтому не гоняем весь DDL на каждом
-  // холодном старте serverless-функции (это медленно и лишний раз рискует упасть
-  // на пулере). Прогоняем тяжёлую схему только если базовой таблицы ещё нет.
-  const probe = await pool.query("SELECT to_regclass('public.users') AS t");
-  if (!probe.rows[0]?.t) {
-    await pool.query(SCHEMA);
-    await ensureDefaultAdmin();
+  let lastErr;
+  // Холодный старт serverless-функции иногда срывает первый коннект к пулеру
+  // Supabase. Повторяем со свежим пулом, чтобы разовый сбой не ронял запрос.
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    try {
+      const pool = getPool();
+      // Схема уже создана после первого деплоя — не гоняем весь DDL на каждом
+      // холодном старте. Тяжёлую схему запускаем только если базовой таблицы нет.
+      const probe = await pool.query("SELECT to_regclass('public.users') AS t");
+      if (!probe.rows[0]?.t) {
+        await pool.query(SCHEMA);
+        await ensureDefaultAdmin();
+      }
+      globalThis.__crmInitialized = true;
+      return;
+    } catch (e) {
+      lastErr = e;
+      // eslint-disable-next-line no-console
+      console.error(`[db-init] attempt ${attempt}/3 failed:`, e?.code, e?.message);
+      try { await globalThis.__crmPool?.end(); } catch { /* ignore */ }
+      globalThis.__crmPool = null;
+      if (attempt < 3) await new Promise((r) => setTimeout(r, 400 * attempt));
+    }
   }
-  globalThis.__crmInitialized = true;
+  throw lastErr;
 }
 
 async function ensureDefaultAdmin() {
