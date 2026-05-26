@@ -321,27 +321,15 @@ router.post(
     if (!token) {
       throw BadRequest('Передайте токен МойСклад в теле запроса {token: "..."}');
     }
-    // Оба отчёта тянем параллельно, чтобы уложиться в лимит времени функции.
-    // Разбивка по складам необязательна: её сбой не должен ломать общий остаток.
     let report;
-    let storeBySku = new Map();
     try {
-      const [r, bs] = await Promise.all([
-        fetchMoyskladStock(token),
-        fetchMoyskladStockByStore(token).catch((e) => {
-          // eslint-disable-next-line no-console
-          console.log('[stock] bystore error:', e.message);
-          return { bySku: new Map() };
-        }),
-      ]);
-      report = r;
-      storeBySku = bs.bySku;
+      report = await fetchMoyskladStock(token);
     } catch (e) {
       throw BadRequest(e.message);
     }
     const { byId, bySku, count } = report;
 
-    if (count === 0 && storeBySku.size === 0) {
+    if (count === 0) {
       res.json({ ok: true, updated: 0, total: 0 });
       return;
     }
@@ -352,7 +340,6 @@ router.post(
         // На пулере соединение могло «застрять» на старой схеме без колонки stock —
         // в той же транзакции гарантируем её, затем обновляем остатки.
         await tx.run('ALTER TABLE products ADD COLUMN IF NOT EXISTS stock REAL');
-        await tx.run('ALTER TABLE products ADD COLUMN IF NOT EXISTS stock_by_store JSONB');
         if (byId.size) {
           const r = await tx.run(
             `UPDATE products AS p SET stock = d.stock, updated_at = NOW()
@@ -373,18 +360,6 @@ router.post(
             [...bySku.values()],
           );
           updated += r.changes || 0;
-        }
-        if (storeBySku.size) {
-          // Разбивка по складам — по артикулу.
-          const skus = [...storeBySku.keys()];
-          const jsons = skus.map((s) => JSON.stringify(storeBySku.get(s)));
-          await tx.run(
-            `UPDATE products AS p SET stock_by_store = d.sbs, updated_at = NOW()
-             FROM unnest(?::text[], ?::jsonb[]) AS d(sku, sbs)
-             WHERE p.external_source = 'moysklad' AND p.sku = d.sku`,
-            skus,
-            jsons,
-          );
         }
       });
     } catch (e) {
