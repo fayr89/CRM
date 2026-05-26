@@ -762,3 +762,15 @@ table.data tbody tr:last-child td { border-bottom: none; }
   color: var(--primary);
 }
 .shipping-day input { margin: 0; cursor: pointer; }
+
+/* Каталог: переключатель «Плитки / Список» (#2) */
+.view-toggle { display: inline-flex; gap: 4px; }
+.btn-view { padding: 6px 10px; line-height: 1; }
+.btn-view.active {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: #fff;
+}
+.data tr.row-clickable { cursor: pointer; }
+.data tr.row-clickable:hover { background: #f3f4f6; }
+.data td .muted { opacity: 0.55; }

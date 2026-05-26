@@ -3257,6 +3257,8 @@ export async function renderProducts(main) {
   const isAdmin = me.role === 'admin';
 
   let state = { page: 1, search: '' };
+  let view = localStorage.getItem('products_view') === 'list' ? 'list' : 'grid';
+  let lastResult = null;
   const tableArea = el('div');
 
   async function reload() {
@@ -3272,6 +3274,7 @@ export async function renderProducts(main) {
   }
 
   function renderTable(result) {
+    lastResult = result;
     clear(tableArea);
     const rows = result.data || [];
     if (rows.length === 0) {
@@ -3330,7 +3333,7 @@ export async function renderProducts(main) {
         ),
       );
     }
-    tableArea.append(grid);
+    tableArea.append(view === 'list' ? renderProductsList(rows) : grid);
     tableArea.append(
       paginator(result.pagination, (p) => {
         state.page = p;
@@ -3352,10 +3355,81 @@ export async function renderProducts(main) {
     },
   });
 
+  function renderProductsList(rows) {
+    return el(
+      'div',
+      { class: 'table-wrap' },
+      el(
+        'table',
+        { class: 'data' },
+        el(
+          'thead',
+          {},
+          el(
+            'tr',
+            {},
+            el('th', { style: { width: '44px' } }, ''),
+            el('th', {}, 'Название'),
+            el('th', {}, 'Артикул'),
+            el('th', {}, 'Себестоимость'),
+            el('th', {}, 'Прайсы'),
+            el('th', {}, 'Статус'),
+          ),
+        ),
+        el(
+          'tbody',
+          {},
+          ...rows.map((p) =>
+            el(
+              'tr',
+              {
+                class: canEdit ? 'row-clickable' : '',
+                onClick: () => canEdit && openProductForm(p, reload),
+              },
+              el(
+                'td',
+                {},
+                p.image_url
+                  ? el('img', { src: p.image_url, class: 'item-thumb', alt: '' })
+                  : el('div', { class: 'item-thumb item-thumb-empty' }, '📦'),
+              ),
+              el(
+                'td',
+                {},
+                el('strong', {}, p.name),
+                p.external_source ? el('span', { class: 'badge ms-badge' }, p.external_source) : null,
+              ),
+              el('td', {}, p.sku ? el('code', {}, p.sku) : '—'),
+              el('td', {}, fmtMoney(p.cost_price, 'RUB')),
+              el(
+                'td',
+                {},
+                p.price_count > 0 ? String(p.price_count) : el('span', { class: 'no-prices' }, 'нет'),
+              ),
+              el('td', {}, p.active ? 'Активен' : el('span', { class: 'muted' }, 'Архив')),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  const gridBtn = el('button', { class: `btn btn-view${view === 'grid' ? ' active' : ''}`, title: 'Плитки', onClick: () => setView('grid') }, '▦');
+  const listBtn = el('button', { class: `btn btn-view${view === 'list' ? ' active' : ''}`, title: 'Список', onClick: () => setView('list') }, '☰');
+  function setView(v) {
+    if (view === v) return;
+    view = v;
+    localStorage.setItem('products_view', v);
+    gridBtn.classList.toggle('active', v === 'grid');
+    listBtn.classList.toggle('active', v === 'list');
+    if (lastResult) renderTable(lastResult);
+  }
+
   const toolbar = el(
     'div',
     { class: 'toolbar' },
     searchInput,
+    el('div', { class: 'view-toggle' }, gridBtn, listBtn),
     el('div', { class: 'spacer' }),
     isAdmin
       ? el(
