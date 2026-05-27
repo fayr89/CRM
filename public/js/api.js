@@ -131,6 +131,9 @@ export const api = {
   setMarketplaces: (marketplaces) =>
     request('PUT', '/api/products/marketplaces', { body: { marketplaces } }),
   suppliersList: () => request('GET', '/api/products/suppliers/list'),
+  deliveryMethodsList: () => request('GET', '/api/products/delivery-methods/list'),
+  setDeliveryMethods: (delivery_methods) =>
+    request('PUT', '/api/products/delivery-methods', { body: { delivery_methods } }),
 
   // Расписание отгрузок
   warehouseSchedule: () => request('GET', '/api/warehouse/schedule'),

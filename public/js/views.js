@@ -729,6 +729,22 @@ export async function loadMarketplaces() {
   }
 }
 
+// Способы доставки — управляются админом, грузятся с сервера (мутируется, ссылка сохраняется).
+const DELIVERY_METHODS = ['Авито доставка', 'Почта', 'ЯМаркет', 'СДЭК', 'Dpd', '5post'];
+
+export async function loadDeliveryMethods() {
+  try {
+    const r = await api.deliveryMethodsList();
+    const list = r.delivery_methods || [];
+    if (list.length) {
+      DELIVERY_METHODS.length = 0;
+      DELIVERY_METHODS.push(...list);
+    }
+  } catch {
+    // оставляем дефолты
+  }
+}
+
 function itemsEditor(initialItems = [], { getMarketplace, onChange } = {}) {
   const wrap = el('div', { class: 'items-editor' });
   const tbody = el('tbody');
@@ -1326,7 +1342,6 @@ async function openOrderForm(order, onSaved) {
   const currencyI = el('input', { type: 'text', value: cur.currency || 'RUB', maxlength: '3', style: { width: '80px' } });
   const notesI = el('textarea', {}, cur.notes || '');
   const qrI = el('input', { type: 'text', value: cur.shipment_qr || '', placeholder: 'QR код отгрузки (обязателен для Avito + Авито доставка)' });
-  const DELIVERY_METHODS = ['Авито доставка', 'Почта', 'ЯМаркет', 'СДЭК', 'Dpd', '5post'];
   const deliveryI = el(
     'select',
     {},
@@ -1438,16 +1453,9 @@ async function openOrderForm(order, onSaved) {
   marketI.addEventListener('change', () => {
     items.refreshCatalogPrices().then(() => renderPricingPanel());
   });
-  const updateDeliveryVisibility = () => {
-    deliveryRow.style.display = payI && payI.value === 'avito_delivery' ? '' : 'none';
-  };
   if (payI) {
-    payI.addEventListener('change', () => {
-      renderPricingPanel();
-      updateDeliveryVisibility();
-    });
+    payI.addEventListener('change', () => renderPricingPanel());
   }
-  updateDeliveryVisibility();
 
   const body = el(
     'div',
@@ -2917,18 +2925,93 @@ export async function renderIntegrations(main) {
   );
 
   const marketplacesArea = el('div', { class: 'integration-section' });
+  const deliveryArea = el('div', { class: 'integration-section' });
   const warehousesArea = el('div', { class: 'integration-section' });
   const tokensArea = el('div', { class: 'integration-section' });
   const webhooksArea = el('div', { class: 'integration-section' });
   const docsArea = el('div', { class: 'integration-section' });
 
-  main.append(marketplacesArea, warehousesArea, tokensArea, webhooksArea, docsArea);
+  main.append(marketplacesArea, deliveryArea, warehousesArea, tokensArea, webhooksArea, docsArea);
 
   await renderMarketplacesSection(marketplacesArea);
+  await renderDeliveryMethodsSection(deliveryArea);
   await renderWarehousesSection(warehousesArea);
   await renderTokensSection(tokensArea);
   await renderWebhooksSection(webhooksArea);
   renderDocsSection(docsArea);
+}
+
+// Управление способами доставки (для формы заказа). Админ добавляет/удаляет.
+async function renderDeliveryMethodsSection(area) {
+  clear(area);
+  const me = JSON.parse(localStorage.getItem('crm_user') || '{}');
+  const isAdmin = me.role === 'admin';
+  area.append(el('div', { class: 'section-header' }, el('h2', {}, '🚚 Способы доставки')));
+
+  if (!isAdmin) {
+    area.append(el('p', { class: 'muted' }, 'Управлять способами доставки может только администратор.'));
+    return;
+  }
+
+  let current = [];
+  try {
+    const r = await api.deliveryMethodsList();
+    current = r.delivery_methods || [];
+  } catch (e) {
+    area.append(el('div', { class: 'empty' }, `Не удалось загрузить: ${e.message}`));
+    return;
+  }
+
+  area.append(el('p', { class: 'page-subtitle' }, 'Эти способы доступны в поле «Способ отправки» при создании заказа.'));
+
+  const listEl = el('div', { class: 'marketplace-list' });
+  const render = () => {
+    clear(listEl);
+    current.forEach((m, i) => {
+      listEl.append(
+        el(
+          'div',
+          { class: 'marketplace-row' },
+          el('span', {}, m),
+          el('button', {
+            class: 'btn btn-sm btn-danger',
+            onClick: () => { current.splice(i, 1); render(); },
+          }, 'Удалить'),
+        ),
+      );
+    });
+  };
+  render();
+
+  const addInput = el('input', { type: 'text', placeholder: 'Название способа доставки' });
+  const addBtn = el('button', {
+    class: 'btn',
+    onClick: () => {
+      const v = addInput.value.trim();
+      if (v && !current.includes(v)) { current.push(v); addInput.value = ''; render(); }
+    },
+  }, 'Добавить');
+  const status = el('span', { class: 'save-status' });
+  const saveBtn = el('button', {
+    class: 'btn btn-primary',
+    onClick: async () => {
+      status.textContent = 'Сохраняю…';
+      try {
+        await api.setDeliveryMethods(current);
+        await loadDeliveryMethods();
+        status.textContent = '✅ Сохранено';
+        toast('Способы доставки сохранены', 'success');
+      } catch (e) {
+        status.textContent = `❌ ${e.message}`;
+      }
+    },
+  }, 'Сохранить');
+
+  area.append(
+    listEl,
+    el('div', { class: 'marketplace-add' }, addInput, addBtn),
+    el('div', { class: 'warehouse-toggle-actions' }, saveBtn, status),
+  );
 }
 
 // Управление списком площадок (маркетплейсов). Админ добавляет/удаляет.

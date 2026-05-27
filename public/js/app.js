@@ -1,6 +1,7 @@
 import { api, clearSession, getStoredUser, getToken, setSession } from './api.js';
 import { clear, el, fmtDateTime, toast, tr } from './ui.js';
 import {
+  loadDeliveryMethods,
   loadMarketplaces,
   openGlobalSearch,
   renderAcceptInvite,
@@ -488,10 +489,9 @@ window.addEventListener('hashchange', renderApp);
 
 renderApp();
 
-// Загружаем актуальный список площадок (один раз при старте, если авторизованы).
+// Загружаем актуальные площадки и способы доставки (один раз при старте, если авторизованы).
 if (getToken()) {
-  loadMarketplaces().then(() => {
-    // если открыта страница, использующая площадки, перерисуем её
+  Promise.all([loadMarketplaces(), loadDeliveryMethods()]).then(() => {
     const { path } = parseHash();
     if (['#/orders', '#/products'].includes(path)) renderApp();
   });

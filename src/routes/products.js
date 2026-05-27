@@ -659,6 +659,51 @@ router.put(
   }),
 );
 
+const DEFAULT_DELIVERY_METHODS = ['Авито доставка', 'Почта', 'ЯМаркет', 'СДЭК', 'Dpd', '5post'];
+
+// Способы доставки (для формы заказа). Хранятся в app_settings, админ редактирует.
+router.get(
+  '/delivery-methods/list',
+  asyncHandler(async (_req, res) => {
+    const setting = await db
+      .get(`SELECT value FROM app_settings WHERE key = 'delivery_methods'`)
+      .catch(() => null);
+    const delivery_methods = Array.isArray(setting?.value) && setting.value.length
+      ? setting.value
+      : DEFAULT_DELIVERY_METHODS;
+    res.json({ delivery_methods });
+  }),
+);
+
+const deliveryMethodsSchema = z.object({
+  delivery_methods: z.array(z.string().min(1).max(100)).max(100),
+});
+
+router.put(
+  '/delivery-methods',
+  requireRole('admin'),
+  asyncHandler(async (req, res) => {
+    const { delivery_methods } = deliveryMethodsSchema.parse(req.body);
+    const clean = [...new Set(delivery_methods.map((m) => m.trim()).filter(Boolean))];
+    await db.withTransaction(async (tx) => {
+      await tx.run(
+        `CREATE TABLE IF NOT EXISTS app_settings (
+           key TEXT PRIMARY KEY, value JSONB NOT NULL,
+           updated_by INTEGER, updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`,
+      );
+      await tx.run(
+        `INSERT INTO app_settings (key, value, updated_by, updated_at)
+         VALUES ('delivery_methods', ?::jsonb, ?, NOW())
+         ON CONFLICT (key) DO UPDATE SET
+           value = EXCLUDED.value, updated_by = EXCLUDED.updated_by, updated_at = NOW()`,
+        JSON.stringify(clean),
+        req.user.id,
+      );
+    });
+    res.json({ delivery_methods: clean });
+  }),
+);
+
 const hiddenSchema = z.object({
   hidden: z.array(z.string()).max(500),
 });
