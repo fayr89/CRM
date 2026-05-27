@@ -70,7 +70,7 @@ export function createApp({ serveStatic = true } = {}) {
   });
 
   // TEMP-диагностика прайсов (без авторизации, только агрегаты) — удалить после отладки.
-  app.get('/health/prices', async (_req, res) => {
+  app.get('/api/_debug/prices', async (_req, res) => {
     try {
       const total = await db.get('SELECT COUNT(*)::int AS n FROM product_prices');
       const nullWh = await db.get('SELECT COUNT(*)::int AS n FROM product_prices WHERE warehouse IS NULL');
