@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { hashPassword, signToken, verifyPassword, authenticate } from '../auth.js';
 import { db } from '../db.js';
-import { BadRequest, Unauthorized, asyncHandler } from '../errors.js';
+import { BadRequest, Forbidden, Unauthorized, asyncHandler } from '../errors.js';
 
 const router = Router();
 
@@ -57,7 +57,7 @@ router.post(
 
     const { email, password } = loginSchema.parse(req.body);
     const user = await db.get(
-      'SELECT id, email, name, role, password_hash, active FROM users WHERE email = ?',
+      'SELECT id, email, name, role, password_hash, active, access_blocks FROM users WHERE email = ?',
       email,
     );
     if (!user || !user.active || !verifyPassword(password, user.password_hash)) {
@@ -69,7 +69,35 @@ router.post(
     const token = signToken(user);
     res.json({
       token,
-      user: { id: user.id, email: user.email, name: user.name, role: user.role },
+      user: {
+        id: user.id, email: user.email, name: user.name,
+        role: user.role, access_blocks: user.access_blocks,
+      },
+    });
+  }),
+);
+
+// Быстрый вход админа под любой ролью (имперсонация). role='admin' — вернуться к себе.
+const IMPERSONATE_ROLES = ['manager', 'rop', 'warehouse', 'aus', 'sales', 'admin'];
+router.post(
+  '/impersonate',
+  authenticate,
+  asyncHandler(async (req, res) => {
+    const isAdmin = req.user.role === 'admin' || req.user.realRole === 'admin';
+    if (!isAdmin) throw Forbidden('Только администратор может менять роль для просмотра');
+    const role = String(req.body?.role || '');
+    if (!IMPERSONATE_ROLES.includes(role)) throw BadRequest('Недопустимая роль');
+    const base = { id: req.user.id, email: req.user.email, role: 'admin' };
+    const token = role === 'admin' ? signToken(base) : signToken(base, role);
+    res.json({
+      token,
+      user: {
+        id: req.user.id,
+        email: req.user.email,
+        name: req.user.name,
+        role,
+        impersonating: role !== 'admin',
+      },
     });
   }),
 );

@@ -1,6 +1,7 @@
 import { api, clearSession, getStoredUser, getToken, setSession } from './api.js';
 import { clear, el, fmtDateTime, toast, tr } from './ui.js';
 import {
+  loadMarketplaces,
   openGlobalSearch,
   renderAcceptInvite,
   renderAnalytics,
@@ -17,24 +18,59 @@ import {
 
 const root = document.getElementById('app');
 
-const CRM_ROLES = ['admin', 'manager', 'sales'];
-const NAV = [
-  { hash: '#/dashboard', label: 'Дашборд' },
-  { hash: '#/pipeline', label: 'Воронка', roles: CRM_ROLES },
-  { hash: '#/deals', label: 'Сделки', roles: CRM_ROLES },
-  { hash: '#/leads', label: 'Лиды', roles: CRM_ROLES },
-  { hash: '#/contacts', label: 'Контакты', roles: CRM_ROLES },
-  { hash: '#/companies', label: 'Компании', roles: CRM_ROLES },
-  { hash: '#/activities', label: 'Задачи', roles: CRM_ROLES },
-  { hash: '#/orders', label: 'Прямые продажи' },
-  { hash: '#/shipping', label: 'Отгрузки' },
-  { hash: '#/products', label: 'Каталог', roles: CRM_ROLES },
-  { hash: '#/cashbox', label: 'Касса', roles: CRM_ROLES },
-  { hash: '#/analytics', label: 'Аналитика', roles: ['admin', 'manager'] },
-  { hash: '#/users', label: 'Пользователи', roles: ['admin', 'manager'] },
-  { hash: '#/invitations', label: 'Приглашения', roles: ['admin', 'manager'] },
-  { hash: '#/integrations', label: 'Интеграции', roles: ['admin'] },
+// Роли, которые работают с блоками продаж
+const SALES_ROLES = ['admin', 'rop', 'manager', 'sales'];
+
+// Меню разбито на блоки. item.roles — кто видит, item.block — требуется блок
+// доступа ('sales'/'direct') для менеджера/продажника (admin/rop видят без блока).
+const NAV_GROUPS = [
+  { items: [{ hash: '#/dashboard', label: 'Дашборд' }] },
+  {
+    title: 'Продажи',
+    items: [
+      { hash: '#/pipeline', label: 'Воронка', roles: SALES_ROLES, block: 'sales' },
+      { hash: '#/deals', label: 'Сделки', roles: SALES_ROLES, block: 'sales' },
+      { hash: '#/leads', label: 'Лиды', roles: SALES_ROLES, block: 'sales' },
+      { hash: '#/contacts', label: 'Контакты', roles: SALES_ROLES, block: 'sales' },
+      { hash: '#/companies', label: 'Компании', roles: SALES_ROLES, block: 'sales' },
+      { hash: '#/activities', label: 'Задачи', roles: SALES_ROLES, block: 'sales' },
+    ],
+  },
+  {
+    title: 'Прямые продажи',
+    items: [
+      { hash: '#/orders', label: 'Прямые продажи', roles: SALES_ROLES, block: 'direct' },
+      { hash: '#/products', label: 'Каталог', roles: ['admin', 'rop', 'manager', 'sales', 'aus', 'warehouse'], block: 'direct' },
+      { hash: '#/cashbox', label: 'Касса', roles: SALES_ROLES, block: 'direct' },
+    ],
+  },
+  {
+    title: 'Склад',
+    items: [{ hash: '#/shipping', label: 'Отгрузки', roles: ['admin', 'warehouse'] }],
+  },
+  {
+    title: 'Управление',
+    items: [
+      { hash: '#/analytics', label: 'Аналитика', roles: ['admin', 'rop'] },
+      { hash: '#/users', label: 'Пользователи', roles: ['admin', 'rop'] },
+      { hash: '#/invitations', label: 'Приглашения', roles: ['admin', 'rop'] },
+      { hash: '#/integrations', label: 'Интеграции', roles: ['admin', 'aus'] },
+    ],
+  },
 ];
+
+// Видим ли пункт меню для пользователя: по роли и (для менеджера) по блоку доступа.
+function navItemVisible(user, item) {
+  if (!item.roles) return true; // Дашборд — всем
+  if (!item.roles.includes(user.role)) return false;
+  if (item.block && (user.role === 'manager' || user.role === 'sales')) {
+    const blocks = user.access_blocks
+      ? user.access_blocks.split(',').map((b) => b.trim()).filter(Boolean)
+      : ['sales', 'direct'];
+    return blocks.includes(item.block);
+  }
+  return true;
+}
 
 // Парсим query-параметры из hash вида #/route?a=1&b=2
 function parseHash() {
@@ -90,14 +126,65 @@ function renderLogin() {
   );
 }
 
+// Переключение роли для просмотра (только админ). Возвращает null для остальных.
+function buildRoleSwitcher(user) {
+  const isAdmin = user.role === 'admin' || user.impersonating;
+  if (!isAdmin) return null;
+
+  const switchRole = async (role) => {
+    try {
+      const r = await api.impersonate(role);
+      setSession(r.token, r.user);
+      location.hash = '#/dashboard';
+      renderApp();
+    } catch (e) {
+      toast(e.message || 'Ошибка', 'error');
+    }
+  };
+
+  if (user.impersonating) {
+    return el(
+      'div',
+      { class: 'role-switcher' },
+      el('div', { class: 'role-impersonating' }, `👁 Просмотр как ${tr('role', user.role) || user.role}`),
+      el('button', { class: 'role-back-btn', onClick: () => switchRole('admin') }, '← Вернуться к админу'),
+    );
+  }
+
+  const select = el(
+    'select',
+    { class: 'role-switch-select' },
+    el('option', { value: '' }, 'Смотреть как роль…'),
+    el('option', { value: 'manager' }, 'Менеджер'),
+    el('option', { value: 'rop' }, 'РОП'),
+    el('option', { value: 'warehouse' }, 'Склад'),
+    el('option', { value: 'aus' }, 'АУС'),
+  );
+  select.addEventListener('change', () => {
+    if (select.value) switchRole(select.value);
+  });
+  return el('div', { class: 'role-switcher' }, select);
+}
+
 function renderShell() {
   clear(root);
   const main = el('main', { class: 'main' });
 
   const user = getStoredUser() || { name: '?', email: '', role: '' };
-  const userRole = user.role || 'sales';
-  const visibleNav = NAV.filter((n) => !n.roles || n.roles.includes(userRole));
   const { path } = parseHash();
+
+  // Строим навигацию по группам: показываем только видимые пункты и непустые группы.
+  const navChildren = [];
+  for (const group of NAV_GROUPS) {
+    const items = group.items.filter((it) => navItemVisible(user, it));
+    if (!items.length) continue;
+    if (group.title) navChildren.push(el('div', { class: 'sidebar-group-title' }, group.title));
+    for (const it of items) {
+      navChildren.push(
+        el('a', { href: it.hash, class: path.startsWith(it.hash) ? 'active' : '' }, it.label),
+      );
+    }
+  }
 
   const searchBtn = el(
     'button',
@@ -132,19 +219,14 @@ function renderShell() {
     el('div', { class: 'sidebar-brand' }, 'CRM'),
     searchBtn,
     bellBtn,
-    el(
-      'nav',
-      { class: 'sidebar-nav' },
-      ...visibleNav.map((n) =>
-        el('a', { href: n.hash, class: path.startsWith(n.hash) ? 'active' : '' }, n.label),
-      ),
-    ),
+    el('nav', { class: 'sidebar-nav' }, ...navChildren),
     el(
       'div',
       { class: 'sidebar-user' },
       el('div', { class: 'name' }, user.name),
       el('div', {}, user.email),
       el('div', {}, `Роль: ${tr('role', user.role) || user.role}`),
+      buildRoleSwitcher(user),
       el(
         'button',
         {
@@ -357,3 +439,12 @@ function renderApp() {
 window.addEventListener('hashchange', renderApp);
 
 renderApp();
+
+// Загружаем актуальный список площадок (один раз при старте, если авторизованы).
+if (getToken()) {
+  loadMarketplaces().then(() => {
+    // если открыта страница, использующая площадки, перерисуем её
+    const { path } = parseHash();
+    if (['#/orders', '#/products'].includes(path)) renderApp();
+  });
+}

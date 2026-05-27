@@ -125,6 +125,10 @@ CREATE INDEX IF NOT EXISTS idx_notes_related ON notes(related_to_type, related_t
 ALTER TABLE users ADD COLUMN IF NOT EXISTS manager_id INTEGER REFERENCES users(id) ON DELETE SET NULL;
 CREATE INDEX IF NOT EXISTS idx_users_manager ON users(manager_id);
 
+-- Блоки доступа для менеджера: 'sales' (продажи CRM) и/или 'direct' (прямые продажи).
+-- comma-separated; NULL/пусто = оба блока.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS access_blocks TEXT;
+
 -- Расширяем enum роли до 4 значений (admin/manager/sales/warehouse).
 -- CHECK-ограничение нужно пересоздать, иначе старая проверка не пропустит warehouse.
 DO $$
@@ -136,7 +140,7 @@ BEGIN
     ALTER TABLE users DROP CONSTRAINT users_role_check;
   END IF;
   ALTER TABLE users ADD CONSTRAINT users_role_check
-    CHECK (role IN ('admin', 'manager', 'sales', 'warehouse'));
+    CHECK (role IN ('admin', 'manager', 'sales', 'warehouse', 'rop', 'aus'));
 EXCEPTION WHEN duplicate_object THEN NULL;
 END $$;
 
@@ -166,7 +170,7 @@ BEGIN
     ALTER TABLE invitations DROP CONSTRAINT invitations_role_check;
   END IF;
   ALTER TABLE invitations ADD CONSTRAINT invitations_role_check
-    CHECK (role IN ('admin', 'manager', 'sales', 'warehouse'));
+    CHECK (role IN ('admin', 'manager', 'sales', 'warehouse', 'rop', 'aus'));
 EXCEPTION WHEN duplicate_object THEN NULL;
 END $$;
 

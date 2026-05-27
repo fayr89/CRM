@@ -12,12 +12,11 @@ export function verifyPassword(plain, hash) {
   return bcrypt.compareSync(plain, hash);
 }
 
-export function signToken(user) {
-  return jwt.sign(
-    { sub: user.id, email: user.email, role: user.role },
-    config.jwt.secret,
-    { expiresIn: config.jwt.expiresIn },
-  );
+// actAs — роль для имперсонации (только админ может смотреть систему глазами другой роли).
+export function signToken(user, actAs = null) {
+  const payload = { sub: user.id, email: user.email, role: user.role };
+  if (actAs) payload.act = actAs;
+  return jwt.sign(payload, config.jwt.secret, { expiresIn: config.jwt.expiresIn });
 }
 
 export function verifyToken(token) {
@@ -33,10 +32,16 @@ export async function authenticate(req, _res, next) {
   try {
     const payload = verifyToken(token);
     const user = await db.get(
-      'SELECT id, email, name, role, active FROM users WHERE id = ?',
+      'SELECT id, email, name, role, active, access_blocks FROM users WHERE id = ?',
       payload.sub,
     );
     if (!user || !user.active) return next(Unauthorized('User not found or disabled'));
+    // Имперсонация: только реальный админ может смотреть систему под другой ролью.
+    if (payload.act && user.role === 'admin' && payload.act !== 'admin') {
+      user.realRole = 'admin';
+      user.role = payload.act;
+      user.impersonating = true;
+    }
     req.user = user;
     next();
   } catch (e) {

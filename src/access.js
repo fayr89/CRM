@@ -1,10 +1,10 @@
 // Хелперы для проверки прав доступа в рамках иерархии пользователей.
 //
 // Правила:
-//   - admin    — видит и редактирует всех
-//   - manager  — видит/редактирует себя и всё своё поддерево (manager_id = self,
-//                либо менеджер этого пользователя — подчинённый, и т.д.)
-//   - sales    — видит и редактирует только себя
+//   - admin             — видит и редактирует всех
+//   - rop               — видит/редактирует себя и всё своё поддерево (руководитель отдела)
+//   - manager / sales   — видят и редактируют только себя
+//   - warehouse / aus   — не работают с клиентскими записями (только себя)
 //
 // Записи в companies / contacts / leads / deals / activities имеют owner_id —
 // видимость записи определяется тем, в чьём поддереве находится её владелец.
@@ -15,19 +15,22 @@ import { db } from './db.js';
 export async function getAccessibleUserIds(user) {
   if (!user) return [];
   if (user.role === 'admin') return null;
-  if (user.role === 'sales') return [user.id];
-  // manager: self + вся ветка вниз
-  const rows = await db.all(
-    `WITH RECURSIVE subordinates AS (
-       SELECT id FROM users WHERE id = ?
-       UNION ALL
-       SELECT u.id FROM users u
-       JOIN subordinates s ON u.manager_id = s.id
-     )
-     SELECT id FROM subordinates`,
-    user.id,
-  );
-  return rows.map((r) => r.id);
+  // РОП: self + вся ветка вниз (подчинённые менеджеры)
+  if (user.role === 'rop') {
+    const rows = await db.all(
+      `WITH RECURSIVE subordinates AS (
+         SELECT id FROM users WHERE id = ?
+         UNION ALL
+         SELECT u.id FROM users u
+         JOIN subordinates s ON u.manager_id = s.id
+       )
+       SELECT id FROM subordinates`,
+      user.id,
+    );
+    return rows.map((r) => r.id);
+  }
+  // manager, sales, warehouse, aus — только свои записи
+  return [user.id];
 }
 
 // Возвращает SQL-фрагмент `owner_id = ANY(?)` и список параметров,

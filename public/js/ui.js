@@ -92,6 +92,8 @@ export const T = {
     manager: 'Менеджер',
     sales: 'Продажник',
     warehouse: 'Склад',
+    rop: 'РОП',
+    aus: 'АУС',
   },
   related: {
     contact: 'контакт',

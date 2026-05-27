@@ -10,21 +10,25 @@ const router = Router();
 
 // При создании от admin можно любую роль и любого менеджера.
 // При создании от manager: роль принудительно 'sales', manager_id = self.
+const ROLE_ENUM = z.enum(['admin', 'manager', 'sales', 'warehouse', 'rop', 'aus']);
+
 const createSchema = z.object({
   email: z.string().email(),
   password: z.string().min(6),
   name: z.string().min(1),
-  role: z.enum(['admin', 'manager', 'sales', 'warehouse']).default('sales'),
+  role: ROLE_ENUM.default('manager'),
   manager_id: z.number().int().positive().optional().nullable(),
+  access_blocks: z.string().optional().nullable(),
 });
 
 const updateSchema = z.object({
   email: z.string().email().optional(),
   name: z.string().min(1).optional(),
-  role: z.enum(['admin', 'manager', 'sales', 'warehouse']).optional(),
+  role: ROLE_ENUM.optional(),
   manager_id: z.number().int().positive().nullable().optional(),
   password: z.string().min(6).optional(),
   active: z.boolean().optional(),
+  access_blocks: z.string().optional().nullable(),
 });
 
 router.use(authenticate);
@@ -37,7 +41,7 @@ router.get(
     const scopeSql = ids === null ? '' : 'WHERE id = ANY(?)';
     const scopeParams = ids === null ? [] : [ids];
     const rows = await db.all(
-      `SELECT id, email, name, role, active, manager_id, created_at, updated_at
+      `SELECT id, email, name, role, active, manager_id, access_blocks, created_at, updated_at
        FROM users ${scopeSql} ORDER BY id ASC LIMIT ? OFFSET ?`,
       ...scopeParams,
       limit,
@@ -57,7 +61,7 @@ router.get(
     const id = Number(req.params.id);
     if (!(await canAccessUser(req.user, id))) throw Forbidden('Нет доступа к этому пользователю');
     const user = await db.get(
-      `SELECT id, email, name, role, active, manager_id, created_at, updated_at
+      `SELECT id, email, name, role, active, manager_id, access_blocks, created_at, updated_at
        FROM users WHERE id = ?`,
       id,
     );
@@ -76,13 +80,13 @@ router.post(
     let role = data.role;
     let managerId = data.manager_id ?? null;
 
-    if (!['admin', 'manager'].includes(req.user.role)) {
-      throw Forbidden('Создавать пользователей могут только админ или менеджер');
+    if (!['admin', 'rop'].includes(req.user.role)) {
+      throw Forbidden('Создавать пользователей могут только админ или РОП');
     }
-    if (req.user.role === 'manager') {
-      // Менеджер может создавать только sales-подчинённого под собой
-      if (role !== 'sales') {
-        throw Forbidden('Менеджер может создавать только пользователей с ролью «sales»');
+    if (req.user.role === 'rop') {
+      // РОП может создавать только менеджеров/продажников под собой
+      if (!['manager', 'sales'].includes(role)) {
+        throw Forbidden('РОП может создавать только менеджеров');
       }
       managerId = req.user.id;
     }
@@ -92,16 +96,17 @@ router.post(
     }
 
     const result = await db.run(
-      `INSERT INTO users (email, password_hash, name, role, manager_id)
-       VALUES (?, ?, ?, ?, ?) RETURNING id`,
+      `INSERT INTO users (email, password_hash, name, role, manager_id, access_blocks)
+       VALUES (?, ?, ?, ?, ?, ?) RETURNING id`,
       data.email,
       hashPassword(data.password),
       data.name,
       role,
       managerId,
+      data.access_blocks ?? null,
     );
     const user = await db.get(
-      `SELECT id, email, name, role, active, manager_id, created_at FROM users WHERE id = ?`,
+      `SELECT id, email, name, role, active, manager_id, access_blocks, created_at FROM users WHERE id = ?`,
       result.lastInsertRowid,
     );
     res.status(201).json(user);
@@ -121,7 +126,7 @@ router.patch(
 
     // Менеджер может править своих подчинённых (но не себя или других)
     let isManagerOfTarget = false;
-    if (req.user.role === 'manager' && !isSelf) {
+    if (req.user.role === 'rop' && !isSelf) {
       isManagerOfTarget = await canAccessUser(req.user, id);
     }
 
@@ -159,12 +164,16 @@ router.patch(
       updates.push('active = ?');
       params.push(Boolean(data.active));
     }
+    if (data.access_blocks !== undefined) {
+      updates.push('access_blocks = ?');
+      params.push(data.access_blocks || null);
+    }
     if (!updates.length) return res.json(existing);
     updates.push('updated_at = NOW()');
     params.push(id);
     await db.run(`UPDATE users SET ${updates.join(', ')} WHERE id = ?`, ...params);
     const updated = await db.get(
-      `SELECT id, email, name, role, active, manager_id, created_at, updated_at FROM users WHERE id = ?`,
+      `SELECT id, email, name, role, active, manager_id, access_blocks, created_at, updated_at FROM users WHERE id = ?`,
       id,
     );
     res.json(updated);

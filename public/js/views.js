@@ -455,12 +455,23 @@ const RESOURCES = {
       },
       {
         name: 'manager_id',
-        label: 'Менеджер',
+        label: 'Менеджер / РОП',
         type: 'select',
         numeric: true,
         options: [
           { value: '', label: '— (нет менеджера)' },
           ...CACHE.users.map((u) => ({ value: u.id, label: `${u.name} (${u.email})` })),
+        ],
+      },
+      {
+        name: 'access_blocks',
+        label: 'Блоки доступа (для роли «Менеджер»)',
+        type: 'select',
+        options: [
+          { value: '', label: 'Все блоки (продажи + прямые)' },
+          { value: 'sales', label: 'Только Продажи' },
+          { value: 'direct', label: 'Только Прямые продажи' },
+          { value: 'sales,direct', label: 'Продажи + Прямые продажи' },
         ],
       },
     ],
@@ -694,6 +705,8 @@ export async function renderInvitations(main) {
 // Модуль Avito (прямые продажи): заказы и касса
 // ============================================================
 
+// Площадки. Дефолты — fallback; актуальный список грузится с сервера через loadMarketplaces().
+// Массив мутируется (не переприсваивается), чтобы существующие ссылки оставались валидны.
 const MARKETPLACES = [
   { value: '', label: '—' },
   { value: 'Wildberries', label: 'Wildberries' },
@@ -702,6 +715,19 @@ const MARKETPLACES = [
   { value: 'Avito', label: 'Avito' },
   { value: 'Другое', label: 'Другое' },
 ];
+
+export async function loadMarketplaces() {
+  try {
+    const r = await api.marketplacesList();
+    const list = r.marketplaces || [];
+    if (list.length) {
+      MARKETPLACES.length = 0;
+      MARKETPLACES.push({ value: '', label: '—' }, ...list.map((m) => ({ value: m, label: m })));
+    }
+  } catch {
+    // оставляем дефолты
+  }
+}
 
 function itemsEditor(initialItems = [], { getMarketplace, onChange } = {}) {
   const wrap = el('div', { class: 'items-editor' });
@@ -2868,17 +2894,113 @@ export async function renderIntegrations(main) {
     ),
   );
 
+  const marketplacesArea = el('div', { class: 'integration-section' });
   const warehousesArea = el('div', { class: 'integration-section' });
   const tokensArea = el('div', { class: 'integration-section' });
   const webhooksArea = el('div', { class: 'integration-section' });
   const docsArea = el('div', { class: 'integration-section' });
 
-  main.append(warehousesArea, tokensArea, webhooksArea, docsArea);
+  main.append(marketplacesArea, warehousesArea, tokensArea, webhooksArea, docsArea);
 
+  await renderMarketplacesSection(marketplacesArea);
   await renderWarehousesSection(warehousesArea);
   await renderTokensSection(tokensArea);
   await renderWebhooksSection(webhooksArea);
   renderDocsSection(docsArea);
+}
+
+// Управление списком площадок (маркетплейсов). Админ добавляет/удаляет.
+async function renderMarketplacesSection(area) {
+  clear(area);
+  const me = JSON.parse(localStorage.getItem('crm_user') || '{}');
+  const isAdmin = me.role === 'admin';
+  area.append(el('div', { class: 'section-header' }, el('h2', {}, '🛒 Площадки продаж')));
+
+  if (!isAdmin) {
+    area.append(el('p', { class: 'muted' }, 'Управлять площадками может только администратор.'));
+    return;
+  }
+
+  let current = [];
+  try {
+    const r = await api.marketplacesList();
+    current = r.marketplaces || [];
+  } catch (e) {
+    area.append(el('div', { class: 'empty' }, `Не удалось загрузить: ${e.message}`));
+    return;
+  }
+
+  area.append(
+    el('p', { class: 'page-subtitle' }, 'Эти площадки доступны в форме заказа, прайсах и фильтрах каталога.'),
+  );
+
+  const listEl = el('div', { class: 'marketplace-list' });
+  const render = () => {
+    clear(listEl);
+    current.forEach((m, i) => {
+      listEl.append(
+        el(
+          'div',
+          { class: 'marketplace-row' },
+          el('span', {}, m),
+          el(
+            'button',
+            {
+              class: 'btn btn-sm btn-danger',
+              onClick: () => {
+                current.splice(i, 1);
+                render();
+              },
+            },
+            'Удалить',
+          ),
+        ),
+      );
+    });
+  };
+  render();
+
+  const addInput = el('input', { type: 'text', placeholder: 'Название площадки' });
+  const addBtn = el(
+    'button',
+    {
+      class: 'btn',
+      onClick: () => {
+        const v = addInput.value.trim();
+        if (v && !current.includes(v)) {
+          current.push(v);
+          addInput.value = '';
+          render();
+        }
+      },
+    },
+    'Добавить',
+  );
+  const status = el('span', { class: 'save-status' });
+  const saveBtn = el(
+    'button',
+    {
+      class: 'btn btn-primary',
+      onClick: async () => {
+        status.textContent = 'Сохраняю…';
+        try {
+          await api.setMarketplaces(current);
+          await loadMarketplaces();
+          status.textContent = '✅ Сохранено';
+          toast('Площадки сохранены', 'success');
+        } catch (e) {
+          status.textContent = `❌ ${e.message}`;
+        }
+      },
+    },
+    'Сохранить',
+  );
+
+  area.append(
+    listEl,
+    el('div', { class: 'marketplace-add' }, addInput, addBtn),
+    el('div', { class: 'warehouse-toggle-actions' }, saveBtn, status),
+  );
 }
 
 // Настройка видимости складов: какие склады показывать в каталоге и учитывать в остатке.

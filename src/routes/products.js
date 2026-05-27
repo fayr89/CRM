@@ -578,6 +578,52 @@ router.get(
   }),
 );
 
+const DEFAULT_MARKETPLACES = ['Wildberries', 'Ozon', 'Яндекс.Маркет', 'Avito', 'Другое'];
+
+// Список площадок (для форм заказа/прайсов). Хранится в app_settings, админ редактирует.
+router.get(
+  '/marketplaces/list',
+  asyncHandler(async (_req, res) => {
+    const setting = await db
+      .get(`SELECT value FROM app_settings WHERE key = 'marketplaces'`)
+      .catch(() => null);
+    const marketplaces = Array.isArray(setting?.value) && setting.value.length
+      ? setting.value
+      : DEFAULT_MARKETPLACES;
+    res.json({ marketplaces });
+  }),
+);
+
+const marketplacesSchema = z.object({
+  marketplaces: z.array(z.string().min(1).max(100)).max(100),
+});
+
+router.put(
+  '/marketplaces',
+  requireRole('admin'),
+  asyncHandler(async (req, res) => {
+    const { marketplaces } = marketplacesSchema.parse(req.body);
+    // Убираем дубли и пустые, сохраняем порядок
+    const clean = [...new Set(marketplaces.map((m) => m.trim()).filter(Boolean))];
+    await db.withTransaction(async (tx) => {
+      await tx.run(
+        `CREATE TABLE IF NOT EXISTS app_settings (
+           key TEXT PRIMARY KEY, value JSONB NOT NULL,
+           updated_by INTEGER, updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`,
+      );
+      await tx.run(
+        `INSERT INTO app_settings (key, value, updated_by, updated_at)
+         VALUES ('marketplaces', ?::jsonb, ?, NOW())
+         ON CONFLICT (key) DO UPDATE SET
+           value = EXCLUDED.value, updated_by = EXCLUDED.updated_by, updated_at = NOW()`,
+        JSON.stringify(clean),
+        req.user.id,
+      );
+    });
+    res.json({ marketplaces: clean });
+  }),
+);
+
 const hiddenSchema = z.object({
   hidden: z.array(z.string()).max(500),
 });

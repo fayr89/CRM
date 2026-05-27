@@ -44,6 +44,10 @@ a:hover { text-decoration: underline; }
   border-bottom: 1px solid #1f2937; margin-bottom: 12px;
 }
 .sidebar-nav { flex: 1; }
+.sidebar-group-title {
+  padding: 14px 20px 4px; font-size: 11px; font-weight: 700;
+  text-transform: uppercase; letter-spacing: 0.6px; color: #6b7280;
+}
 .sidebar-nav a {
   display: block; padding: 8px 20px; color: #d1d5db;
   border-left: 3px solid transparent;
@@ -61,6 +65,14 @@ a:hover { text-decoration: underline; }
   border-radius: 4px; cursor: pointer; font-size: 12px;
 }
 .sidebar-user button:hover { background: #1f2937; color: #fff; }
+.role-switcher { margin-top: 8px; }
+.role-switch-select {
+  width: 100%; background: #1f2937; color: #d1d5db;
+  border: 1px solid #374151; border-radius: 4px;
+  padding: 5px 6px; font-size: 12px; cursor: pointer;
+}
+.role-impersonating { color: #fbbf24; font-weight: 600; margin-bottom: 4px; }
+.role-back-btn { width: 100%; }
 
 .main {
   flex: 1; overflow-y: auto;
@@ -821,6 +833,16 @@ table.data tbody tr:last-child td { border-bottom: none; }
 .warehouse-toggle-actions { display: flex; align-items: center; gap: 12px; margin-top: 8px; }
 .save-status { font-size: 13px; color: var(--text-muted); }
 .product-card-reserve { color: var(--warning); font-size: 12px; font-weight: 600; }
+
+/* Управление площадками */
+.marketplace-list { display: flex; flex-direction: column; gap: 4px; margin: 12px 0; }
+.marketplace-row {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 8px 12px; border: 1px solid var(--border); border-radius: var(--radius);
+  background: var(--surface);
+}
+.marketplace-add { display: flex; gap: 8px; margin: 8px 0; }
+.marketplace-add input { flex: 1; }
 
 /* Прайсы по каналам в каталоге */
 .price-channel { font-size: 12px; color: var(--text); }

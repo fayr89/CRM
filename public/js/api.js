@@ -52,6 +52,7 @@ async function request(method, path, { body, query } = {}) {
 export const api = {
   login: (email, password) =>
     request('POST', '/api/auth/login', { body: { email, password } }),
+  impersonate: (role) => request('POST', '/api/auth/impersonate', { body: { role } }),
   me: () => request('GET', '/api/auth/me'),
   acceptInvite: (token, name, password) =>
     request('POST', '/api/auth/accept-invite', { body: { token, name, password } }),
@@ -125,6 +126,9 @@ export const api = {
   warehousesList: () => request('GET', '/api/products/warehouses/list'),
   setHiddenWarehouses: (hidden) =>
     request('PUT', '/api/products/warehouses/hidden', { body: { hidden } }),
+  marketplacesList: () => request('GET', '/api/products/marketplaces/list'),
+  setMarketplaces: (marketplaces) =>
+    request('PUT', '/api/products/marketplaces', { body: { marketplaces } }),
 
   // Расписание отгрузок
   warehouseSchedule: () => request('GET', '/api/warehouse/schedule'),

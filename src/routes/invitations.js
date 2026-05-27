@@ -14,7 +14,7 @@ const DEFAULT_TTL_DAYS = 7;
 const createSchema = z.object({
   email: z.string().email(),
   name: z.string().min(1).optional().nullable(),
-  role: z.enum(['admin', 'manager', 'sales', 'warehouse']).default('sales'),
+  role: z.enum(['admin', 'manager', 'sales', 'warehouse', 'rop', 'aus']).default('manager'),
   manager_id: z.number().int().positive().optional().nullable(),
   ttl_days: z.number().int().min(1).max(90).optional(),
 });
@@ -38,7 +38,7 @@ router.use(authenticate);
 router.get(
   '/',
   asyncHandler(async (req, res) => {
-    if (!['admin', 'manager'].includes(req.user.role)) throw Forbidden();
+    if (!['admin', 'rop'].includes(req.user.role)) throw Forbidden();
     const { page, limit, offset } = parsePagination(req.query);
 
     const where = [];
@@ -78,7 +78,7 @@ router.get(
 router.post(
   '/',
   asyncHandler(async (req, res) => {
-    if (!['admin', 'manager'].includes(req.user.role)) {
+    if (!['admin', 'rop'].includes(req.user.role)) {
       throw Forbidden('Приглашать могут только админ или менеджер');
     }
     const data = createSchema.parse(req.body);
@@ -86,9 +86,9 @@ router.post(
     let role = data.role;
     let managerId = data.manager_id ?? null;
 
-    if (req.user.role === 'manager') {
-      if (role !== 'sales') {
-        throw Forbidden('Менеджер может приглашать только пользователей с ролью «sales»');
+    if (req.user.role === 'rop') {
+      if (!['manager', 'sales'].includes(role)) {
+        throw Forbidden('РОП может приглашать только менеджеров');
       }
       managerId = req.user.id;
     }
