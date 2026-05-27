@@ -1398,12 +1398,23 @@ async function openOrderForm(order, onSaved) {
     const m = paymentMethods.find((x) => x.key === payI.value);
     return m ? Number(m.percent) || 0 : 0;
   }
+  let applyTierDiscount = true; // менеджер может отклонить скидку по объёму
   function tierPctFor(subtotal) {
     let pct = 0;
     for (const t of orderTiers) {
       if (subtotal >= Number(t.threshold)) pct = Number(t.percent) || 0;
     }
     return pct;
+  }
+  // Доступный по сумме процент (без учёта применён/нет) — для предложения скидки.
+  function availableTierPct() {
+    const payPct = currentPaymentPct();
+    let base = 0;
+    for (const it of items.getItems()) {
+      const unit = it.catalog_price != null ? it.catalog_price : it.unit_price;
+      base += unit * (1 + payPct / 100) * it.quantity;
+    }
+    return tierPctFor(base);
   }
   // Рекомендованная цена = цена канала × (1 + % оплаты) × (1 + % по объёму).
   // Порог по объёму берётся от суммы заказа по прайсу с учётом оплаты.
@@ -1414,7 +1425,7 @@ async function openOrderForm(order, onSaved) {
       const unit = it.catalog_price != null ? it.catalog_price : it.unit_price;
       baseForTier += unit * (1 + payPct / 100) * it.quantity;
     }
-    const tierPct = tierPctFor(baseForTier);
+    const tierPct = applyTierDiscount ? tierPctFor(baseForTier) : 0;
     let recommendedTotal = 0;
     let actualTotal = 0;
     let hasRule = false;
@@ -1465,7 +1476,24 @@ async function openOrderForm(order, onSaved) {
             : `${p.deviation > 0 ? '▲ выше' : '▼ ниже'} прайса на ${Math.abs(p.deviation).toLocaleString('ru-RU')} ₽`,
         ),
       );
-    } else if (paymentMethods.length || orderTiers.length) {
+    }
+    // Предложение скидки по сумме: если порог достигнут — показываем с возможностью отклонить.
+    const avail = availableTierPct();
+    if (avail < 0) {
+      const cb = el('input', { type: 'checkbox' });
+      cb.checked = applyTierDiscount;
+      cb.addEventListener('change', () => {
+        applyTierDiscount = cb.checked;
+        renderPricingPanel();
+      });
+      pricingPanel.append(
+        el('div', { class: 'opp-discount' },
+          el('label', { class: 'opp-discount-label' }, cb,
+            el('span', {}, `🎯 Достигнут порог — можно дать клиенту скидку ${Math.abs(avail)}%`)),
+        ),
+      );
+    }
+    if (!p.hasRule && (paymentMethods.length || orderTiers.length)) {
       pricingPanel.append(
         el('div', { class: 'opp-hint' }, 'Выберите товары из каталога — подставится цена из прайса и посчитается отклонение.'),
       );
