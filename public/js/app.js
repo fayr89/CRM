@@ -80,6 +80,33 @@ function parseHash() {
   return { path, params };
 }
 
+// Бэкап БД при логине админа — скачиваем JSON-дамп не чаще раза в сутки.
+async function maybeBackupOnLogin() {
+  try {
+    const today = new Date().toISOString().slice(0, 10);
+    if (localStorage.getItem('last_backup_date') === today) return;
+    const res = await fetch('/api/admin/backup', {
+      headers: { Authorization: `Bearer ${getToken()}` },
+    });
+    if (!res.ok) return;
+    const blob = await res.blob();
+    const cd = res.headers.get('content-disposition') || '';
+    const name = cd.match(/filename="(.+)"/)?.[1] || 'crm-backup.json';
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = name;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+    localStorage.setItem('last_backup_date', today);
+    toast('Бэкап базы скачан', 'success');
+  } catch {
+    // бэкап не критичен для входа — молча игнорируем сбой
+  }
+}
+
 function renderLogin() {
   clear(root);
   const emailInput = el('input', { type: 'email', placeholder: 'Email', value: 'admin@example.com' });
@@ -88,6 +115,7 @@ function renderLogin() {
     try {
       const r = await api.login(emailInput.value, passInput.value);
       setSession(r.token, r.user);
+      if (r.user.role === 'admin') maybeBackupOnLogin();
       location.hash = '#/dashboard';
       renderApp();
     } catch (e) {
