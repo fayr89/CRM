@@ -845,6 +845,23 @@ function itemsEditor(initialItems = [], { getMarketplace, onChange, hiddenSet = 
     if (!sv.visible.length) return '⚠️ нет в наличии на складах';
     return '📦 ' + sv.visible.map((s) => `${s.store}: ${s.stock}`).join(', ');
   }
+  // Обновляет подсказку наличия с учётом заказанного количества (предупреждение, если больше остатка).
+  function updateStoresHint(row) {
+    const meta = row._meta;
+    const i = row._inputs;
+    if (!i.storesHint) return;
+    const hasStores = Array.isArray(meta.stock_by_store) && meta.stock_by_store.length;
+    const total = hasStores ? computeStoreView(meta.stock_by_store, hiddenSet).totalStock : null;
+    const qty = Number(i.quantity.value) || 0;
+    let text = storesText(meta.stock_by_store);
+    if (total != null && qty > total) {
+      text = (text ? text + ' · ' : '') + `⚠️ заказано ${qty}, в наличии ${total}`;
+      i.storesHint.className = 'stores-hint warn';
+    } else {
+      i.storesHint.className = 'stores-hint';
+    }
+    i.storesHint.textContent = text;
+  }
   const wrap = el('div', { class: 'items-editor' });
   const tbody = el('tbody');
   const totalCell = el('td', { colspan: '6', style: { textAlign: 'right' } }, 'Итого: 0 ₽');
@@ -885,17 +902,12 @@ function itemsEditor(initialItems = [], { getMarketplace, onChange, hiddenSet = 
     row._meta.image_url = product.image_url || null;
     row._meta.catalog_price = marketplacePrice ?? null;
     row._meta.stock_by_store = product.stock_by_store ?? null;
-    if (i.storesHint) i.storesHint.textContent = storesText(product.stock_by_store);
+    i.imageCell.innerHTML = '';
     if (product.image_url) {
-      i.imageCell.innerHTML = '';
-      i.imageCell.append(
-        el('img', { src: product.image_url, class: 'item-thumb', alt: '' }),
-      );
-    } else {
-      i.imageCell.innerHTML = '';
-      i.imageCell.append(el('div', { class: 'item-thumb item-thumb-empty' }, '—'));
+      i.imageCell.append(el('img', { src: product.image_url, class: 'item-thumb', alt: '' }));
     }
     updatePriceHint(row);
+    updateStoresHint(row);
     recalc();
   }
 
@@ -907,10 +919,9 @@ function itemsEditor(initialItems = [], { getMarketplace, onChange, hiddenSet = 
       stock_by_store: item.stock_by_store ?? null,
     };
     const imageCell = el('td', { class: 'item-image-cell' });
+    // Картинку показываем только у выбранного товара; для пустой строки — без плейсхолдера.
     if (meta.image_url) {
       imageCell.append(el('img', { src: meta.image_url, class: 'item-thumb', alt: '' }));
-    } else {
-      imageCell.append(el('div', { class: 'item-thumb item-thumb-empty' }, '—'));
     }
 
     const skuI = el('input', { type: 'text', value: item.sku || '', placeholder: 'Артикул' });
@@ -934,6 +945,7 @@ function itemsEditor(initialItems = [], { getMarketplace, onChange, hiddenSet = 
 
     [qtyI, priceI].forEach((i) => i.addEventListener('input', () => {
       updatePriceHint(row);
+      updateStoresHint(row);
       recalc();
     }));
 
@@ -983,6 +995,7 @@ function itemsEditor(initialItems = [], { getMarketplace, onChange, hiddenSet = 
     row._meta = meta;
     tbody.append(row);
     updatePriceHint(row);
+    updateStoresHint(row);
     recalc();
   }
 
@@ -6014,7 +6027,7 @@ function renderContent(container, schedule, readyList, canEdit, reload) {
       try {
         const r = await api.shipBulk(ids);
         toast(`Отгружено: ${r.shipped}`, 'success');
-        load();
+        reload();
       } catch (e) {
         toast(e.message, 'error');
       }
@@ -6068,6 +6081,7 @@ function renderContent(container, schedule, readyList, canEdit, reload) {
       el('th', {}, 'Зарезервирован'),
       el('th', {}, 'Сумма'),
     );
+    if (canEdit) headRow.append(el('th', {}, 'Действия'));
 
     const rowsEls = orders.map((o) => {
       const rowEl = el('tr', {});
@@ -6091,6 +6105,16 @@ function renderContent(container, schedule, readyList, canEdit, reload) {
         el('td', {}, fmtDateTime(o.reserved_at)),
         el('td', {}, fmtMoney(o.total_amount, o.currency)),
       );
+      if (canEdit) {
+        rowEl.append(
+          el('td', {},
+            el('button', {
+              class: 'btn btn-sm btn-danger',
+              onClick: () => openCancelDialog(o.id, reload),
+            }, '🚫 Отменить'),
+          ),
+        );
+      }
       return rowEl;
     });
 

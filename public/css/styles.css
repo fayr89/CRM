@@ -856,6 +856,7 @@ table.data tbody tr:last-child td { border-bottom: none; }
 .help-steps li { margin-bottom: 8px; }
 .help-modal { font-size: 14px; }
 .stores-hint { font-size: 11px; color: #16a34a; margin-top: 2px; }
+.stores-hint.warn { color: var(--danger); font-weight: 600; }
 .popular-card-stock { font-size: 11px; color: #16a34a; margin-top: 2px; }
 .popular-card-stock.out { color: var(--danger); }
 .qr-preview { margin-top: 8px; }
