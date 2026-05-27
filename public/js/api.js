@@ -28,6 +28,7 @@ async function request(method, path, { body, query } = {}) {
   }
   const res = await fetch(url, {
     method,
+    cache: 'no-store', // иначе браузер кэширует GET и отдаёт 304 (фронт трактует как ошибку)
     headers: {
       'Content-Type': 'application/json',
       ...(token ? { Authorization: `Bearer ${token}` } : {}),

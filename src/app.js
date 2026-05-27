@@ -57,6 +57,11 @@ export function createApp({ serveStatic = true } = {}) {
     credentials: true,
   }));
   app.use(express.json({ limit: '1mb' }));
+  // API не кэшируем — иначе повторные GET отдают 304 (фронт трактует как ошибку).
+  app.use('/api', (_req, res, next) => {
+    res.set('Cache-Control', 'no-store');
+    next();
+  });
   if (serveStatic) app.use(express.static(PUBLIC_DIR));
 
   app.get('/health', (_req, res) => {
