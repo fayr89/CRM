@@ -479,6 +479,14 @@ export async function ensureInitialized() {
       await pool.query("ALTER TABLE product_prices ADD COLUMN IF NOT EXISTS warehouse TEXT NOT NULL DEFAULT ''");
       await pool.query('ALTER TABLE product_prices DROP CONSTRAINT IF EXISTS product_prices_product_id_marketplace_key');
       await pool.query('CREATE UNIQUE INDEX IF NOT EXISTS uniq_product_prices_pmw ON product_prices (product_id, marketplace, warehouse)');
+      // Строгая модель «канал+склад»: разовая чистка легаси-прайсов без склада (по запросу).
+      const purged = await pool.query("SELECT 1 FROM app_settings WHERE key = 'prices.legacy_purged'");
+      if (!purged.rows.length) {
+        await pool.query("DELETE FROM product_prices WHERE warehouse IS NULL OR warehouse = ''");
+        await pool.query(
+          "INSERT INTO app_settings (key, value, updated_at) VALUES ('prices.legacy_purged', 'true'::jsonb, NOW()) ON CONFLICT (key) DO NOTHING",
+        );
+      }
       // Обновляем CHECK роли (добавлены rop, aus, finance) — для users и invitations.
       await pool.query('ALTER TABLE users DROP CONSTRAINT IF EXISTS users_role_check');
       await pool.query(

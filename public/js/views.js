@@ -5166,13 +5166,13 @@ async function openPriceTemplate() {
   const channelSel = el(
     'select',
     { class: 'select' },
-    el('option', { value: '' }, '— пусто (заполню канал вручную)'),
+    el('option', { value: '' }, '— выберите канал —'),
     ...MARKETPLACES.filter((m) => m.value).map((m) => el('option', { value: m.value }, m.label)),
   );
   const warehouseSel = el(
     'select',
     { class: 'select' },
-    el('option', { value: '' }, '— пусто (заполню склад вручную)'),
+    el('option', { value: '' }, '— выберите склад —'),
     ...warehouses.map((s) => el('option', { value: s }, s)),
   );
   const body = el(
@@ -5181,16 +5181,19 @@ async function openPriceTemplate() {
     el(
       'p',
       {},
-      'Скачает CSV со всеми активными товарами: артикул, себестоимость, название. Цена задаётся на пару «Канал + Склад». Выберите канал и склад — в шаблон подставятся колонки и текущие цены этой пары (если заданы). Заполните цены и загрузите файл обратно кнопкой «Загрузить прайс».',
+      'Скачает CSV со всеми активными товарами: артикул, поставщик, себестоимость, название. Цена задаётся на пару «Канал + Склад» — выберите оба: колонки подставятся, как и текущие цены этой пары. Заполните цены и загрузите файл обратно кнопкой «Загрузить прайс».',
     ),
-    el('div', { class: 'form-row' }, el('label', {}, 'Канал продаж'), channelSel),
-    el('div', { class: 'form-row' }, el('label', {}, 'Склад'), warehouseSel),
+    el('div', { class: 'form-row' }, el('label', {}, 'Канал продаж *'), channelSel),
+    el('div', { class: 'form-row' }, el('label', {}, 'Склад *'), warehouseSel),
+    warehouses.length ? null : el('p', { class: 'hint' }, 'Склады ещё не загружены — сначала импортируйте остатки по складам (Каталог → 🏬 Склады).'),
   );
   await openModal('Шаблон прайса', body, {
     primaryLabel: 'Скачать CSV',
     onSubmit: async () => {
+      if (!channelSel.value) { toast('Выберите канал продаж', 'error'); return false; }
+      if (!warehouseSel.value) { toast('Выберите склад', 'error'); return false; }
       try {
-        await api.downloadPriceTemplate(channelSel.value || '', warehouseSel.value || '');
+        await api.downloadPriceTemplate(channelSel.value, warehouseSel.value);
         toast('Шаблон скачан', 'success');
       } catch (e) {
         toast(e.message, 'error');
@@ -5247,30 +5250,45 @@ async function openPriceUpload(onDone) {
       }
       if (cSku < 0 || cMarket < 0 || cPrice < 0) {
         statusEl.innerHTML =
-          '❌ Не нашёл нужные колонки. Нужны: «Артикул мойсклад», «Канал продаж», «Цена для канала продаж». Скачайте шаблон кнопкой «Шаблон прайса» и не меняйте названия колонок.';
+          '❌ Не нашёл нужные колонки. Нужны: «Артикул мойсклад», «Канал продаж», «Склад», «Цена для канала продаж». Скачайте шаблон кнопкой «Шаблон прайса» и не меняйте названия колонок.';
+        return;
+      }
+      if (cWarehouse < 0) {
+        statusEl.innerHTML =
+          '❌ В файле нет колонки «Склад». Цена задаётся на пару «Канал + Склад» — скачайте свежий шаблон кнопкой «Шаблон прайса» (там нужно выбрать склад).';
         return;
       }
       const out = [];
       let skippedEmpty = 0;
+      let skippedNoWarehouse = 0;
       for (const r of rows) {
         // Убираем Excel-обёртку ="..." (текстовый формат длинных артикулов).
         const sku = (r[cSku] || '').trim().replace(/^=?"(.*)"$/, '$1').trim();
         const marketplace = (r[cMarket] || '').trim();
-        const warehouse = cWarehouse >= 0 ? (r[cWarehouse] || '').trim() : '';
+        const warehouse = (r[cWarehouse] || '').trim();
         const priceRaw = (r[cPrice] || '').trim().replace(/\s/g, '').replace(/₽/g, '').replace(',', '.');
         const price = Number(priceRaw);
         if (!sku || !marketplace || !priceRaw || !Number.isFinite(price) || price < 0) {
           skippedEmpty += 1;
           continue;
         }
+        // Строгая модель: цена без склада не имеет смысла — пропускаем.
+        if (!warehouse) {
+          skippedNoWarehouse += 1;
+          continue;
+        }
         out.push({ sku, marketplace, warehouse, price });
       }
       parsed = out;
+      const extra = [
+        skippedEmpty ? `пустых/без цены: ${skippedEmpty}` : '',
+        skippedNoWarehouse ? `без склада: ${skippedNoWarehouse}` : '',
+      ].filter(Boolean).join(' · ');
       statusEl.innerHTML = out.length
-        ? `📋 Готово к загрузке: <strong>${out.length}</strong> строк${
-            skippedEmpty ? ` · пропущено пустых/без цены: ${skippedEmpty}` : ''
-          }. Нажмите «Загрузить».`
-        : '❌ Не нашёл ни одной строки с заполненной ценой. Заполните колонку «Цена для канала продаж».';
+        ? `📋 Готово к загрузке: <strong>${out.length}</strong> строк${extra ? ` · пропущено ${extra}` : ''}. Нажмите «Загрузить».`
+        : (skippedNoWarehouse
+            ? '❌ Во всех строках с ценой не заполнен «Склад». Скачайте шаблон с выбранным складом или впишите склад в колонку «Склад».'
+            : '❌ Не нашёл ни одной строки с заполненной ценой. Заполните колонку «Цена для канала продаж».');
     } catch (e) {
       statusEl.innerHTML = `❌ Не удалось прочитать файл: ${e.message}`;
     }

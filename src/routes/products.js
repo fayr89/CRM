@@ -165,7 +165,7 @@ router.get(
     // Цену для строки подставляем, если заданы и канал, и склад (ключ прайса).
     const joinPrice = marketplace && warehouse;
     const rows = await db.all(
-      `SELECT p.sku, p.name, p.cost_price,
+      `SELECT p.sku, p.name, p.cost_price, p.supplier,
               ${joinPrice ? 'pp.price AS channel_price' : 'NULL::real AS channel_price'}
        FROM products p
        ${joinPrice ? 'LEFT JOIN product_prices pp ON pp.product_id = p.id AND pp.marketplace = ? AND pp.warehouse = ?' : ''}
@@ -175,6 +175,7 @@ router.get(
     );
     const columns = [
       { key: 'sku', label: 'Артикул мойсклад', text: true },
+      { key: 'supplier', label: 'Поставщик' },
       { key: 'cost_price', label: 'Себестоимость' },
       { key: 'name', label: 'Название' },
       { key: 'channel', label: 'Канал продаж', get: () => marketplace },
