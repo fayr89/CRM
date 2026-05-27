@@ -1042,7 +1042,12 @@ function itemsEditor(initialItems = [], { getMarketplace, onChange } = {}) {
 
   // --- Блок быстрого добавления: поиск с подсказками + полоса популярных ---
 
-  function addProductRow(product) {
+  async function addProductRow(product) {
+    // Проверка наличия: если товара нет в остатке — спрашиваем подтверждение.
+    if (product.stock != null && product.stock <= 0) {
+      const ok = await confirm(`«${product.name}» нет в наличии (остаток ${product.stock}). Всё равно добавить в заказ?`);
+      if (!ok) return;
+    }
     addRow({
       sku: product.sku,
       name: product.name,
@@ -1707,6 +1712,48 @@ async function openOrderForm(order, onSaved) {
   });
 }
 
+// Диалог отмены заказа: выбор причины из списка (управляется в Интеграциях) — обязательно.
+async function openCancelDialog(orderId, onDone) {
+  let reasons = [];
+  try {
+    const r = await api.cancelReasonsList();
+    reasons = r.cancel_reasons || [];
+  } catch {
+    /* нет списка — впишут свою */
+  }
+  const sel = el(
+    'select',
+    {},
+    el('option', { value: '' }, '— выберите причину —'),
+    ...reasons.map((r) => el('option', { value: r }, r)),
+  );
+  const customI = el('input', { type: 'text', placeholder: 'Или впишите свою причину' });
+  const body = el(
+    'div',
+    {},
+    el('div', { class: 'form-row' }, el('label', {}, 'Причина отмены *'), sel),
+    el('div', { class: 'form-row' }, el('label', {}, 'Своя причина'), customI),
+  );
+  await openModal('Отмена заказа', body, {
+    primaryLabel: 'Отменить заказ',
+    onSubmit: async () => {
+      const reason = customI.value.trim() || sel.value;
+      if (!reason) {
+        toast('Укажите причину отмены', 'error');
+        return false;
+      }
+      try {
+        await api.cancelOrder(orderId, reason);
+        toast('Заказ отменён', 'success');
+        await onDone?.();
+      } catch (e) {
+        toast(e.message, 'error');
+        return false;
+      }
+    },
+  });
+}
+
 export async function renderOrders(main) {
   await loadLookups();
   const me = JSON.parse(localStorage.getItem('crm_user') || '{}');
@@ -1849,8 +1896,8 @@ export async function renderOrders(main) {
 
   async function transitionOrder(id, src, dst) {
     if (dst === 'cancelled') {
-      const reason = prompt('Причина отмены (необязательно):') || '';
-      return api.cancelOrder(id, reason);
+      await openCancelDialog(id, reload);
+      return null; // диалог сам отменит заказ и перезагрузит
     }
     if (src === 'new' && dst === 'reserved') return api.reserveOrder(id);
     if (src === 'reserved' && dst === 'shipped') return api.shipOrder(id);
@@ -1950,13 +1997,9 @@ export async function renderOrders(main) {
             'button',
             {
               class: 'btn btn-sm',
-              onClick: async (e) => {
+              onClick: (e) => {
                 e.stopPropagation();
-                const reason = prompt('Причина отмены (необязательно):') || '';
-                if (!(await confirm(`Отменить заказ #${r.id}?`))) return;
-                await api.cancelOrder(r.id, reason);
-                toast('Заказ отменён', 'success');
-                reload();
+                openCancelDialog(r.id, reload);
               },
             },
             'Отменить',
@@ -3232,16 +3275,24 @@ export async function renderIntegrations(main) {
   const msTokenArea = el('div', { class: 'integration-section' });
   const marketplacesArea = el('div', { class: 'integration-section' });
   const deliveryArea = el('div', { class: 'integration-section' });
+  const cancelReasonsArea = el('div', { class: 'integration-section' });
   const warehousesArea = el('div', { class: 'integration-section' });
   const tokensArea = el('div', { class: 'integration-section' });
   const webhooksArea = el('div', { class: 'integration-section' });
   const docsArea = el('div', { class: 'integration-section' });
 
-  main.append(msTokenArea, marketplacesArea, deliveryArea, warehousesArea, tokensArea, webhooksArea, docsArea);
+  main.append(msTokenArea, marketplacesArea, deliveryArea, cancelReasonsArea, warehousesArea, tokensArea, webhooksArea, docsArea);
 
   await renderMoyskladTokenSection(msTokenArea);
   await renderMarketplacesSection(marketplacesArea);
   await renderDeliveryMethodsSection(deliveryArea);
+  await renderListSettingSection(cancelReasonsArea, {
+    title: '🚫 Причины отмены заказа',
+    subtitle: 'Эти причины предлагаются при отмене заказа.',
+    load: () => api.cancelReasonsList().then((r) => r.cancel_reasons || []),
+    save: (list) => api.setCancelReasons(list),
+    placeholder: 'Новая причина отмены',
+  });
   await renderWarehousesSection(warehousesArea);
   await renderTokensSection(tokensArea);
   await renderWebhooksSection(webhooksArea);
@@ -3292,6 +3343,61 @@ async function renderMoyskladTokenSection(area) {
 }
 
 // Управление способами доставки (для формы заказа). Админ добавляет/удаляет.
+// Общая секция управления списком строк (причины отмены и т.п.). Только админ.
+async function renderListSettingSection(area, { title, subtitle, load, save, placeholder }) {
+  clear(area);
+  const me = JSON.parse(localStorage.getItem('crm_user') || '{}');
+  const isAdmin = me.role === 'admin';
+  area.append(el('div', { class: 'section-header' }, el('h2', {}, title)));
+  if (!isAdmin) {
+    area.append(el('p', { class: 'muted' }, 'Управлять может только администратор.'));
+    return;
+  }
+  let current = [];
+  try {
+    current = await load();
+  } catch (e) {
+    area.append(el('div', { class: 'empty' }, `Не удалось загрузить: ${e.message}`));
+    return;
+  }
+  if (subtitle) area.append(el('p', { class: 'page-subtitle' }, subtitle));
+  const listEl = el('div', { class: 'marketplace-list' });
+  const render = () => {
+    clear(listEl);
+    current.forEach((m, i) => {
+      listEl.append(
+        el('div', { class: 'marketplace-row' },
+          el('span', {}, m),
+          el('button', { class: 'btn btn-sm btn-danger', onClick: () => { current.splice(i, 1); render(); } }, 'Удалить'),
+        ),
+      );
+    });
+  };
+  render();
+  const addInput = el('input', { type: 'text', placeholder: placeholder || 'Новое значение' });
+  const addBtn = el('button', {
+    class: 'btn',
+    onClick: () => {
+      const v = addInput.value.trim();
+      if (v && !current.includes(v)) { current.push(v); addInput.value = ''; render(); }
+    },
+  }, 'Добавить');
+  const status = el('span', { class: 'save-status' });
+  const saveBtn = el('button', {
+    class: 'btn btn-primary',
+    onClick: async () => {
+      status.textContent = 'Сохраняю…';
+      try { await save(current); status.textContent = '✅ Сохранено'; toast('Сохранено', 'success'); }
+      catch (e) { status.textContent = `❌ ${e.message}`; }
+    },
+  }, 'Сохранить');
+  area.append(
+    listEl,
+    el('div', { class: 'marketplace-add' }, addInput, addBtn),
+    el('div', { class: 'warehouse-toggle-actions' }, saveBtn, status),
+  );
+}
+
 async function renderDeliveryMethodsSection(area) {
   clear(area);
   const me = JSON.parse(localStorage.getItem('crm_user') || '{}');

@@ -88,6 +88,9 @@ export const api = {
   completeOrder: (id) => request('POST', `/api/orders/${id}/complete`),
   cancelOrder: (id, reason) =>
     request('POST', `/api/orders/${id}/cancel`, { body: { reason } }),
+  cancelReasonsList: () => request('GET', '/api/products/cancel-reasons/list'),
+  setCancelReasons: (cancel_reasons) =>
+    request('PUT', '/api/products/cancel-reasons', { body: { cancel_reasons } }),
 
   confirmPayment: (id) => request('POST', `/api/payments/${id}/confirm`),
   rejectPayment: (id, reason) =>

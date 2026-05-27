@@ -105,7 +105,7 @@ router.get(
       params.push(s, s);
     }
     const rows = await db.all(
-      `SELECT p.id, p.sku, p.name, p.image_url, p.cost_price, p.unit,
+      `SELECT p.id, p.sku, p.name, p.image_url, p.cost_price, p.unit, p.stock,
               pp.price AS marketplace_price
        FROM products p
        LEFT JOIN product_prices pp ON pp.product_id = p.id AND pp.marketplace = ?
@@ -127,7 +127,7 @@ router.get(
     const days = Math.min(365, Math.max(1, Number(req.query.days) || 30));
     const limit = Math.min(50, Math.max(1, Number(req.query.limit) || 20));
     const rows = await db.all(
-      `SELECT p.id, p.sku, p.name, p.image_url, p.cost_price, p.unit,
+      `SELECT p.id, p.sku, p.name, p.image_url, p.cost_price, p.unit, p.stock,
               pp.price AS marketplace_price,
               COALESCE((
                 SELECT SUM(oi.quantity)::int
@@ -718,6 +718,51 @@ router.put(
       );
     });
     res.json({ delivery_methods: clean });
+  }),
+);
+
+const DEFAULT_CANCEL_REASONS = ['Клиент отказался', 'Нет в наличии', 'Брак товара', 'Дубликат заказа', 'Ошибка оформления', 'Другое'];
+
+// Причины отмены заказа (для формы отмены). Хранятся в app_settings, админ редактирует.
+router.get(
+  '/cancel-reasons/list',
+  asyncHandler(async (_req, res) => {
+    const setting = await db
+      .get(`SELECT value FROM app_settings WHERE key = 'cancel_reasons'`)
+      .catch(() => null);
+    const cancel_reasons = Array.isArray(setting?.value) && setting.value.length
+      ? setting.value
+      : DEFAULT_CANCEL_REASONS;
+    res.json({ cancel_reasons });
+  }),
+);
+
+const cancelReasonsSchema = z.object({
+  cancel_reasons: z.array(z.string().min(1).max(200)).max(100),
+});
+
+router.put(
+  '/cancel-reasons',
+  requireRole('admin'),
+  asyncHandler(async (req, res) => {
+    const { cancel_reasons } = cancelReasonsSchema.parse(req.body);
+    const clean = [...new Set(cancel_reasons.map((m) => m.trim()).filter(Boolean))];
+    await db.withTransaction(async (tx) => {
+      await tx.run(
+        `CREATE TABLE IF NOT EXISTS app_settings (
+           key TEXT PRIMARY KEY, value JSONB NOT NULL,
+           updated_by INTEGER, updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`,
+      );
+      await tx.run(
+        `INSERT INTO app_settings (key, value, updated_by, updated_at)
+         VALUES ('cancel_reasons', ?::jsonb, ?, NOW())
+         ON CONFLICT (key) DO UPDATE SET
+           value = EXCLUDED.value, updated_by = EXCLUDED.updated_by, updated_at = NOW()`,
+        JSON.stringify(clean),
+        req.user.id,
+      );
+    });
+    res.json({ cancel_reasons: clean });
   }),
 );
 
