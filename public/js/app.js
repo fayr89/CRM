@@ -41,7 +41,7 @@ const NAV_GROUPS = [
     title: 'Прямые продажи',
     items: [
       { hash: '#/orders', label: 'Прямые продажи', roles: SALES_ROLES, block: 'direct' },
-      { hash: '#/cashbox', label: 'Касса', roles: SALES_ROLES, block: 'direct' },
+      { hash: '#/cashbox', label: 'Касса', roles: [...SALES_ROLES, 'finance'], block: 'direct' },
     ],
   },
   {
@@ -211,6 +211,7 @@ function buildRoleSwitcher(user) {
     el('option', { value: 'rop' }, 'РОП'),
     el('option', { value: 'warehouse' }, 'Склад'),
     el('option', { value: 'aus' }, 'АУС'),
+    el('option', { value: 'finance' }, 'Фин. управляющий'),
   );
   select.addEventListener('change', () => {
     if (select.value) switchRole(select.value);

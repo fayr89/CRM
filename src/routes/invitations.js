@@ -14,7 +14,7 @@ const DEFAULT_TTL_DAYS = 7;
 const createSchema = z.object({
   email: z.string().email(),
   name: z.string().min(1).optional().nullable(),
-  role: z.enum(['admin', 'manager', 'sales', 'warehouse', 'rop', 'aus']).default('manager'),
+  role: z.enum(['admin', 'manager', 'sales', 'warehouse', 'rop', 'aus', 'finance']).default('manager'),
   manager_id: z.number().int().positive().optional().nullable(),
   ttl_days: z.number().int().min(1).max(90).optional(),
 });

@@ -86,7 +86,7 @@ router.post(
 );
 
 // Быстрый вход админа под любой ролью (имперсонация). role='admin' — вернуться к себе.
-const IMPERSONATE_ROLES = ['manager', 'rop', 'warehouse', 'aus', 'sales', 'admin'];
+const IMPERSONATE_ROLES = ['manager', 'rop', 'warehouse', 'aus', 'sales', 'finance', 'admin'];
 router.post(
   '/impersonate',
   authenticate,
