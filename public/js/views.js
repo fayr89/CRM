@@ -1472,9 +1472,10 @@ async function openOrderForm(order, onSaved) {
         ),
       );
     }
-    // Предложение скидки по сумме: если порог достигнут — показываем с возможностью отклонить.
+    // Предложение скидки/наценки по сумме: если порог достигнут — показываем с возможностью отклонить.
     const avail = p.availTierPct;
-    if (avail < 0) {
+    if (avail !== 0) {
+      const isDiscount = avail < 0;
       const cb = el('input', { type: 'checkbox' });
       cb.checked = applyTierDiscount;
       cb.addEventListener('change', () => {
@@ -1484,11 +1485,21 @@ async function openOrderForm(order, onSaved) {
       pricingPanel.append(
         el('div', { class: 'opp-discount' },
           el('label', { class: 'opp-discount-label' }, cb,
-            el('span', {}, `🎯 Достигнут порог — можно дать клиенту скидку ${Math.abs(avail)}%`)),
+            el('span', {}, `🎯 Достигнут порог — ${isDiscount ? 'скидка' : 'наценка'} ${Math.abs(avail)}% (применить к цене)`)),
         ),
       );
+    } else if (orderTiers.length) {
+      // Пороги настроены, но текущая сумма их не достигает — подсказываем ближайший.
+      const next = [...orderTiers].sort((a, b) => Number(a.threshold) - Number(b.threshold))
+        .find((t) => p.actualTotal < Number(t.threshold));
+      if (next) {
+        pricingPanel.append(
+          el('div', { class: 'opp-hint' },
+            `До скидки/наценки ${next.percent}% не хватает ${(Number(next.threshold) - p.actualTotal).toLocaleString('ru-RU')} ₽ (порог ${Number(next.threshold).toLocaleString('ru-RU')} ₽).`),
+        );
+      }
     }
-    if (!p.hasRule && (paymentMethods.length || orderTiers.length)) {
+    if (!p.hasRule && !orderTiers.length && paymentMethods.length) {
       pricingPanel.append(
         el('div', { class: 'opp-hint' }, 'Выберите товары из каталога — подставится цена из прайса и посчитается отклонение.'),
       );
