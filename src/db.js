@@ -301,6 +301,8 @@ CREATE TABLE IF NOT EXISTS products (
 );
 CREATE INDEX IF NOT EXISTS idx_products_sku ON products(sku);
 CREATE INDEX IF NOT EXISTS idx_products_active ON products(active);
+-- Поставщик (из МойСклад, для фильтра в каталоге)
+ALTER TABLE products ADD COLUMN IF NOT EXISTS supplier TEXT;
 
 -- Прайсы по площадкам: товар + площадка → цена
 CREATE TABLE IF NOT EXISTS product_prices (

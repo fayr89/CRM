@@ -129,6 +129,7 @@ export const api = {
   marketplacesList: () => request('GET', '/api/products/marketplaces/list'),
   setMarketplaces: (marketplaces) =>
     request('PUT', '/api/products/marketplaces', { body: { marketplaces } }),
+  suppliersList: () => request('GET', '/api/products/suppliers/list'),
 
   // Расписание отгрузок
   warehouseSchedule: () => request('GET', '/api/warehouse/schedule'),

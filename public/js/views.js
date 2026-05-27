@@ -3642,14 +3642,23 @@ export async function renderProducts(main) {
 
   // Скрытые склады (настройка) — загружаем один раз, применяем при отображении остатков.
   let hiddenSet = new Set();
+  let visibleWarehouses = [];
+  let suppliers = [];
   try {
     const w = await api.warehousesList();
     hiddenSet = new Set(w.hidden || []);
+    visibleWarehouses = (w.all || []).filter((s) => !hiddenSet.has(s));
   } catch {
     // нет настройки — показываем все склады
   }
+  try {
+    const s = await api.suppliersList();
+    suppliers = s.suppliers || [];
+  } catch {
+    // нет поставщиков
+  }
 
-  let state = { page: 1, search: '', stock: '' };
+  let state = { page: 1, search: '', stock: '', warehouse: '', supplier: '' };
   let view = localStorage.getItem('products_view') === 'list' ? 'list' : 'grid';
   let lastResult = null;
   const tableArea = el('div');
@@ -3888,11 +3897,45 @@ export async function renderProducts(main) {
     el('option', { value: 'out' }, 'Нет в наличии'),
   );
 
+  const warehouseFilter = visibleWarehouses.length
+    ? el(
+        'select',
+        {
+          class: 'select',
+          onChange: (e) => {
+            state.warehouse = e.target.value;
+            state.page = 1;
+            reload();
+          },
+        },
+        el('option', { value: '' }, 'Все склады'),
+        ...visibleWarehouses.map((w) => el('option', { value: w }, w)),
+      )
+    : null;
+
+  const supplierFilter = suppliers.length
+    ? el(
+        'select',
+        {
+          class: 'select',
+          onChange: (e) => {
+            state.supplier = e.target.value;
+            state.page = 1;
+            reload();
+          },
+        },
+        el('option', { value: '' }, 'Все поставщики'),
+        ...suppliers.map((s) => el('option', { value: s }, s)),
+      )
+    : null;
+
   const toolbar = el(
     'div',
     { class: 'toolbar' },
     searchInput,
     stockFilter,
+    warehouseFilter,
+    supplierFilter,
     el('div', { class: 'view-toggle' }, gridBtn, listBtn),
     el('div', { class: 'spacer' }),
     isAdmin

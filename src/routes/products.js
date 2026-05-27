@@ -41,6 +41,18 @@ router.get(
     if (req.query.active === 'false') where.push('p.active = FALSE');
     if (req.query.stock === 'in') where.push('p.stock > 0');
     if (req.query.stock === 'out') where.push('(p.stock IS NULL OR p.stock <= 0)');
+    if (req.query.supplier) {
+      where.push('p.supplier = ?');
+      params.push(String(req.query.supplier));
+    }
+    // Фильтр по складу: товары с положительным остатком на указанном складе.
+    if (req.query.warehouse) {
+      where.push(
+        `EXISTS (SELECT 1 FROM jsonb_array_elements(p.stock_by_store) e
+                 WHERE e->>'store' = ? AND (e->>'stock')::numeric > 0)`,
+      );
+      params.push(String(req.query.warehouse));
+    }
     const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
 
     const rows = await db.all(
@@ -296,7 +308,7 @@ router.post(
     const skipped = [];
 
     const COLS =
-      '(sku, name, image_url, cost_price, unit, description, external_source, external_id, active)';
+      '(sku, name, image_url, cost_price, unit, description, supplier, external_source, external_id, active)';
     const UPSERT_TAIL = `ON CONFLICT (external_source, external_id) DO UPDATE SET
         sku = COALESCE(EXCLUDED.sku, products.sku),
         name = EXCLUDED.name,
@@ -304,13 +316,14 @@ router.post(
         cost_price = EXCLUDED.cost_price,
         unit = EXCLUDED.unit,
         description = EXCLUDED.description,
+        supplier = COALESCE(EXCLUDED.supplier, products.supplier),
         updated_at = NOW()`;
 
     const upsertChunk = (chunk) => {
-      const rows = chunk.map(() => "(?, ?, ?, ?, ?, ?, 'moysklad', ?, TRUE)").join(', ');
+      const rows = chunk.map(() => "(?, ?, ?, ?, ?, ?, ?, 'moysklad', ?, TRUE)").join(', ');
       const params = [];
       for (const p of chunk) {
-        params.push(p.sku, p.name, p.imageUrl, p.costPrice, p.unit, p.description, p.externalId);
+        params.push(p.sku, p.name, p.imageUrl, p.costPrice, p.unit, p.description, p.supplier ?? null, p.externalId);
       }
       return db.run(`INSERT INTO products ${COLS} VALUES ${rows} ${UPSERT_TAIL}`, ...params);
     };
@@ -575,6 +588,23 @@ router.get(
       .catch(() => null);
     const hidden = setting?.value || [];
     res.json({ all, hidden });
+  }),
+);
+
+// Уникальные поставщики (для фильтра в каталоге).
+router.get(
+  '/suppliers/list',
+  asyncHandler(async (_req, res) => {
+    let suppliers = [];
+    try {
+      const rows = await db.all(
+        `SELECT DISTINCT supplier FROM products WHERE supplier IS NOT NULL AND supplier <> '' ORDER BY supplier`,
+      );
+      suppliers = rows.map((r) => r.supplier);
+    } catch {
+      // колонки supplier ещё нет — вернём пустой список
+    }
+    res.json({ suppliers });
   }),
 );
 

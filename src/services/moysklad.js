@@ -89,6 +89,7 @@ function mapProduct(p) {
     imageUrl: pickImage(p.images),
     unit: p.uom?.name || 'шт',
     description: p.description || null,
+    supplier: p.supplier?.name || null,
   };
 }
 
@@ -127,13 +128,14 @@ function mapVariant(v, productById) {
     imageUrl: ownImage || parent?.imageUrl || null,
     unit: parent?.unit || 'шт',
     description: parent?.description || null,
+    supplier: parent?.supplier || null,
   };
 }
 
 // Возвращает плоский массив товаров + модификаций из МойСклад.
 // МойСклад хранит цены в копейках — делим на 100.
 export async function fetchMoyskladProducts(token) {
-  const productRows = await fetchAll('/entity/product?expand=images', token);
+  const productRows = await fetchAll('/entity/product?expand=images,supplier', token);
   const products = productRows.map(mapProduct);
   const productById = new Map(products.map((p) => [p.externalId, p]));
 
