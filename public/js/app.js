@@ -160,7 +160,29 @@ function renderShell() {
     ),
   );
 
-  root.append(el('div', { class: 'shell' }, sidebar, main));
+  // Бургер-меню для мобильных: кнопка открывает sidebar, overlay закрывает.
+  const overlay = el('div', { class: 'sidebar-overlay' });
+  const closeMenu = () => {
+    sidebar.classList.remove('open');
+    overlay.classList.remove('open');
+  };
+  const menuBtn = el(
+    'button',
+    {
+      class: 'mobile-menu-btn',
+      'aria-label': 'Меню',
+      onClick: () => {
+        sidebar.classList.toggle('open');
+        overlay.classList.toggle('open');
+      },
+    },
+    '☰',
+  );
+  overlay.addEventListener('click', closeMenu);
+  // Клик по пункту навигации закрывает меню (на мобильном).
+  sidebar.querySelectorAll('.sidebar-nav a').forEach((a) => a.addEventListener('click', closeMenu));
+
+  root.append(el('div', { class: 'shell' }, sidebar, overlay, main), menuBtn);
   startNotificationsPolling(bellCounter);
   return main;
 }

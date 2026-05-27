@@ -2867,15 +2867,85 @@ export async function renderIntegrations(main) {
     ),
   );
 
+  const warehousesArea = el('div', { class: 'integration-section' });
   const tokensArea = el('div', { class: 'integration-section' });
   const webhooksArea = el('div', { class: 'integration-section' });
   const docsArea = el('div', { class: 'integration-section' });
 
-  main.append(tokensArea, webhooksArea, docsArea);
+  main.append(warehousesArea, tokensArea, webhooksArea, docsArea);
 
+  await renderWarehousesSection(warehousesArea);
   await renderTokensSection(tokensArea);
   await renderWebhooksSection(webhooksArea);
   renderDocsSection(docsArea);
+}
+
+// Настройка видимости складов: какие склады показывать в каталоге и учитывать в остатке.
+async function renderWarehousesSection(area) {
+  clear(area);
+  const me = JSON.parse(localStorage.getItem('crm_user') || '{}');
+  const isAdmin = me.role === 'admin';
+  area.append(el('div', { class: 'section-header' }, el('h2', {}, '🏬 Видимость складов')));
+
+  let data;
+  try {
+    data = await api.warehousesList();
+  } catch (e) {
+    area.append(el('div', { class: 'empty' }, `Не удалось загрузить склады: ${e.message}`));
+    return;
+  }
+  const all = data.all || [];
+  if (!all.length) {
+    area.append(
+      emptyState({
+        icon: '🏬',
+        title: 'Склады ещё не загружены',
+        description: 'Сначала импортируйте остатки по складам из МойСклад (Каталог → 🏬 Склады).',
+      }),
+    );
+    return;
+  }
+
+  const hidden = new Set(data.hidden || []);
+  area.append(
+    el('p', { class: 'page-subtitle' },
+      'Снимите галочку, чтобы скрыть склад: он не будет показываться в каталоге, а его остаток не войдёт в «Остаток» товара.'),
+  );
+
+  const checkboxes = new Map();
+  const list = el('div', { class: 'warehouse-toggle-list' });
+  for (const store of all) {
+    const cb = el('input', { type: 'checkbox' });
+    cb.checked = !hidden.has(store);
+    checkboxes.set(store, cb);
+    list.append(el('label', { class: 'warehouse-toggle' }, cb, el('span', {}, store)));
+  }
+  area.append(list);
+
+  if (isAdmin) {
+    const status = el('span', { class: 'save-status' });
+    const saveBtn = el(
+      'button',
+      {
+        class: 'btn btn-primary',
+        onClick: async () => {
+          const newHidden = [...checkboxes.entries()].filter(([, cb]) => !cb.checked).map(([s]) => s);
+          status.textContent = 'Сохраняю…';
+          try {
+            await api.setHiddenWarehouses(newHidden);
+            status.textContent = '✅ Сохранено';
+            toast('Настройка складов сохранена', 'success');
+          } catch (e) {
+            status.textContent = `❌ ${e.message}`;
+          }
+        },
+      },
+      'Сохранить',
+    );
+    area.append(el('div', { class: 'warehouse-toggle-actions' }, saveBtn, status));
+  } else {
+    area.append(el('p', { class: 'muted' }, 'Менять настройку может только администратор.'));
+  }
 }
 
 async function renderTokensSection(area) {
@@ -3424,10 +3494,37 @@ export function openGlobalSearch() {
 // Каталог товаров: себестоимость, картинки, прайсы по площадкам
 // ============================================================
 
+// Из stock_by_store выбираем видимые склады (не скрытые) с остатком или резервом > 0.
+// Возвращаем строки для показа + суммы доступного остатка и резерва.
+function computeStoreView(stockByStore, hiddenSet) {
+  if (!Array.isArray(stockByStore)) return { visible: [], totalStock: 0, totalReserve: 0 };
+  let totalStock = 0;
+  let totalReserve = 0;
+  const visible = [];
+  for (const s of stockByStore) {
+    if (hiddenSet.has(s.store)) continue;
+    const stock = Number(s.stock) || 0;
+    const reserve = Number(s.reserve) || 0;
+    totalStock += stock;
+    totalReserve += reserve;
+    if (stock !== 0 || reserve !== 0) visible.push({ store: s.store, stock, reserve });
+  }
+  return { visible, totalStock, totalReserve };
+}
+
 export async function renderProducts(main) {
   const me = JSON.parse(localStorage.getItem('crm_user') || '{}');
   const canEdit = ['admin', 'manager'].includes(me.role);
   const isAdmin = me.role === 'admin';
+
+  // Скрытые склады (настройка) — загружаем один раз, применяем при отображении остатков.
+  let hiddenSet = new Set();
+  try {
+    const w = await api.warehousesList();
+    hiddenSet = new Set(w.hidden || []);
+  } catch {
+    // нет настройки — показываем все склады
+  }
 
   let state = { page: 1, search: '', stock: '' };
   let view = localStorage.getItem('products_view') === 'list' ? 'list' : 'grid';
@@ -3502,19 +3599,32 @@ export async function renderProducts(main) {
                 : el('span', { class: 'no-prices' }, 'нет прайсов'),
             ),
           ),
-          el(
-            'div',
-            { class: 'product-card-stock' },
-            'Остаток: ',
-            el('strong', {}, p.stock != null ? String(p.stock) : '—'),
-          ),
-          Array.isArray(p.stock_by_store) && p.stock_by_store.length
-            ? el(
-                'div',
-                { class: 'product-card-stores' },
-                p.stock_by_store.map((s) => `${s.store}: ${s.stock}`).join(', '),
-              )
-            : null,
+          (() => {
+            const sv = computeStoreView(p.stock_by_store, hiddenSet);
+            const hasStores = Array.isArray(p.stock_by_store) && p.stock_by_store.length;
+            const stockVal = hasStores ? sv.totalStock : p.stock;
+            return el(
+              'div',
+              { class: 'product-card-stock' },
+              'Остаток: ',
+              el('strong', {}, stockVal != null ? String(stockVal) : '—'),
+              sv.totalReserve > 0
+                ? el('span', { class: 'product-card-reserve' }, ` (резерв: ${sv.totalReserve})`)
+                : null,
+            );
+          })(),
+          (() => {
+            const sv = computeStoreView(p.stock_by_store, hiddenSet);
+            return sv.visible.length
+              ? el(
+                  'div',
+                  { class: 'product-card-stores' },
+                  sv.visible
+                    .map((s) => (s.reserve > 0 ? `${s.store}: ${s.stock} (рез. ${s.reserve})` : `${s.store}: ${s.stock}`))
+                    .join(', '),
+                )
+              : null;
+          })(),
           !p.active ? el('div', { class: 'product-inactive-badge' }, 'Архив') : null,
         ),
       );
@@ -3589,14 +3699,29 @@ export async function renderProducts(main) {
               ),
               el('td', {}, p.sku ? el('code', {}, p.sku) : '—'),
               el('td', {}, fmtMoney(p.cost_price, 'RUB')),
-              el('td', {}, p.stock != null ? String(p.stock) : '—'),
-              el(
-                'td',
-                { class: 'stores-cell' },
-                Array.isArray(p.stock_by_store) && p.stock_by_store.length
-                  ? p.stock_by_store.map((s) => `${s.store}: ${s.stock}`).join(', ')
-                  : '—',
-              ),
+              (() => {
+                const sv = computeStoreView(p.stock_by_store, hiddenSet);
+                const hasStores = Array.isArray(p.stock_by_store) && p.stock_by_store.length;
+                const stockVal = hasStores ? sv.totalStock : p.stock;
+                return el(
+                  'td',
+                  {},
+                  stockVal != null ? String(stockVal) : '—',
+                  sv.totalReserve > 0 ? el('span', { class: 'muted' }, ` (рез. ${sv.totalReserve})`) : null,
+                );
+              })(),
+              (() => {
+                const sv = computeStoreView(p.stock_by_store, hiddenSet);
+                return el(
+                  'td',
+                  { class: 'stores-cell' },
+                  sv.visible.length
+                    ? sv.visible
+                        .map((s) => (s.reserve > 0 ? `${s.store}: ${s.stock} (рез. ${s.reserve})` : `${s.store}: ${s.stock}`))
+                        .join(', ')
+                    : '—',
+                );
+              })(),
               el(
                 'td',
                 {},

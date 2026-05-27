@@ -551,4 +551,57 @@ router.post(
   }),
 );
 
+// --- Настройка видимости складов ---
+// Список всех складов (из stock_by_store) + какие скрыты (app_settings).
+router.get(
+  '/warehouses/list',
+  asyncHandler(async (_req, res) => {
+    let all = [];
+    try {
+      const rows = await db.all(
+        `SELECT DISTINCT jsonb_array_elements(stock_by_store)->>'store' AS store
+         FROM products
+         WHERE stock_by_store IS NOT NULL AND jsonb_typeof(stock_by_store) = 'array'
+         ORDER BY store`,
+      );
+      all = rows.map((r) => r.store).filter(Boolean);
+    } catch {
+      // колонки stock_by_store ещё нет (склады не импортировали) — вернём пустой список
+    }
+    const setting = await db
+      .get(`SELECT value FROM app_settings WHERE key = 'warehouses.hidden'`)
+      .catch(() => null);
+    const hidden = setting?.value || [];
+    res.json({ all, hidden });
+  }),
+);
+
+const hiddenSchema = z.object({
+  hidden: z.array(z.string()).max(500),
+});
+
+router.put(
+  '/warehouses/hidden',
+  requireRole('admin'),
+  asyncHandler(async (req, res) => {
+    const { hidden } = hiddenSchema.parse(req.body);
+    await db.withTransaction(async (tx) => {
+      await tx.run(
+        `CREATE TABLE IF NOT EXISTS app_settings (
+           key TEXT PRIMARY KEY, value JSONB NOT NULL,
+           updated_by INTEGER, updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`,
+      );
+      await tx.run(
+        `INSERT INTO app_settings (key, value, updated_by, updated_at)
+         VALUES ('warehouses.hidden', ?::jsonb, ?, NOW())
+         ON CONFLICT (key) DO UPDATE SET
+           value = EXCLUDED.value, updated_by = EXCLUDED.updated_by, updated_at = NOW()`,
+        JSON.stringify(hidden),
+        req.user.id,
+      );
+    });
+    res.json({ ok: true, hidden });
+  }),
+);
+
 export default router;

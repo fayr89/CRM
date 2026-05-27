@@ -122,6 +122,9 @@ export const api = {
     request('POST', '/api/products/import/moysklad-stock', { body: token ? { token } : {} }),
   refreshMoyskladStores: (token, offset) =>
     request('POST', '/api/products/import/moysklad-stores', { body: { token: token || undefined, offset: offset || 0 } }),
+  warehousesList: () => request('GET', '/api/products/warehouses/list'),
+  setHiddenWarehouses: (hidden) =>
+    request('PUT', '/api/products/warehouses/hidden', { body: { hidden } }),
 
   // Расписание отгрузок
   warehouseSchedule: () => request('GET', '/api/warehouse/schedule'),

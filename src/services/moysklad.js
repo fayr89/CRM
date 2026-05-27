@@ -174,10 +174,12 @@ export async function fetchMoyskladStockByStorePage(token, offset = 0, limit = 5
   const byId = new Map();
   const bySku = new Map();
   for (const r of rows) {
-    // Сохраняем все склады, включая с нулевыми остатками — для полной информации
+    // Сохраняем все склады, включая с нулевыми остатками — для полной информации.
+    // stock — доступно к продаже, reserve — зарезервировано (показываем отдельно).
     const stores = (r.stockByStore || []).map((s) => ({
       store: s.name || '—',
       stock: Number(s.stock) || 0,
+      reserve: Number(s.reserve) || 0,
     }));
     // Добавляем только если есть хотя бы один склад (даже с нулевыми остатками)
     if (!stores.length) continue;
