@@ -84,7 +84,7 @@ function mapProduct(p, supplierMap) {
   const supplier = p.supplier?.name || (supplierId && supplierMap ? supplierMap.get(supplierId) : null) || null;
   return {
     externalId: p.id,
-    sku: p.code || p.article || null,
+    sku: p.article || p.code || null,
     name: p.name,
     costPrice: (p.buyPrice?.value || 0) / 100,
     defaultPrice: p.salePrices?.[0]?.value ? p.salePrices[0].value / 100 : 0,
@@ -115,7 +115,7 @@ function mapVariant(v, productById) {
 
   // У модификации код по умолчанию равен родительскому → ловим коллизию по unique sku.
   // Дописываем значения характеристик: "TSH-001/Красный/XL".
-  const baseCode = v.code || v.article || parent?.sku || null;
+  const baseCode = v.article || v.code || parent?.sku || null;
   const charSuffix = (v.characteristics || []).map((c) => c.value).filter(Boolean).join('/');
   const sku = baseCode
     ? (charSuffix ? `${baseCode}/${charSuffix}` : `${baseCode}/${v.id.slice(0, 8)}`)
@@ -168,7 +168,7 @@ export async function fetchMoyskladStock(token) {
     const stock = Number(r.stock) || 0;
     const id = extractUuid(r.meta?.href);
     if (id) byId.set(id, stock);
-    const sku = r.code || r.article;
+    const sku = r.article || r.code;
     if (sku) bySku.set(String(sku), stock);
   }
   return { byId, bySku, count: rows.length, sample: rows[0] || null };
@@ -200,7 +200,7 @@ export async function fetchMoyskladStockByStorePage(token, offset = 0, limit = 5
     if (!stores.length) continue;
     const id = extractUuid(r.meta?.href);
     if (id) byId.set(id, stores);
-    const sku = r.code || r.article;
+    const sku = r.article || r.code;
     if (sku) bySku.set(String(sku), stores);
   }
   const samples = rows.slice(0, 3).map((r) => ({

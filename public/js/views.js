@@ -4113,7 +4113,7 @@ export async function renderProducts(main) {
     // нет поставщиков
   }
 
-  let state = { page: 1, search: '', stock: '', warehouse: '', supplier: '' };
+  let state = { page: 1, search: '', stock: '', warehouse: '', supplier: '', priced: '' };
   let view = localStorage.getItem('products_view') === 'list' ? 'list' : 'grid';
   let lastResult = null;
   const tableArea = el('div');
@@ -4384,6 +4384,21 @@ export async function renderProducts(main) {
       )
     : null;
 
+  const pricedFilter = el(
+    'select',
+    {
+      class: 'select',
+      onChange: (e) => {
+        state.priced = e.target.value;
+        state.page = 1;
+        reload();
+      },
+    },
+    el('option', { value: '' }, 'Прайс: все'),
+    el('option', { value: 'with' }, 'С прайсом'),
+    el('option', { value: 'without' }, 'Без прайса'),
+  );
+
   const toolbar = el(
     'div',
     { class: 'toolbar' },
@@ -4391,6 +4406,7 @@ export async function renderProducts(main) {
     stockFilter,
     warehouseFilter,
     supplierFilter,
+    pricedFilter,
     el('div', { class: 'view-toggle' }, gridBtn, listBtn),
     el('div', { class: 'spacer' }),
     isAdmin
@@ -5008,7 +5024,8 @@ async function openPriceUpload(onDone) {
       const out = [];
       let skippedEmpty = 0;
       for (const r of rows) {
-        const sku = (r[cSku] || '').trim();
+        // Убираем Excel-обёртку ="..." (текстовый формат длинных артикулов).
+        const sku = (r[cSku] || '').trim().replace(/^=?"(.*)"$/, '$1').trim();
         const marketplace = (r[cMarket] || '').trim();
         const priceRaw = (r[cPrice] || '').trim().replace(/\s/g, '').replace(/₽/g, '').replace(',', '.');
         const price = Number(priceRaw);

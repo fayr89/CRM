@@ -64,6 +64,12 @@ router.get(
       );
       params.push(String(req.query.warehouse));
     }
+    // Фильтр по наличию прайса.
+    if (req.query.priced === 'with') {
+      where.push('EXISTS (SELECT 1 FROM product_prices pp WHERE pp.product_id = p.id)');
+    } else if (req.query.priced === 'without') {
+      where.push('NOT EXISTS (SELECT 1 FROM product_prices pp WHERE pp.product_id = p.id)');
+    }
     const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
 
     const rows = await db.all(
@@ -161,7 +167,7 @@ router.get(
       ...(marketplace ? [marketplace] : []),
     );
     const columns = [
-      { key: 'sku', label: 'Артикул мойсклад' },
+      { key: 'sku', label: 'Артикул мойсклад', text: true },
       { key: 'cost_price', label: 'Себестоимость' },
       { key: 'name', label: 'Название' },
       { key: 'channel', label: 'Канал продаж', get: () => marketplace },

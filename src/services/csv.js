@@ -11,6 +11,7 @@ function escape(value) {
 }
 
 // columns = [{ key: 'id', label: 'ID' }, { key: 'sum', label: 'Сумма', format: v => `${v} ₽` }]
+// column.text=true — выводит ="значение", чтобы Excel не превращал длинные артикулы в 5,45E+13.
 export function toCsv(rows, columns, { separator = ';', bom = true } = {}) {
   const header = columns.map((c) => escape(c.label)).join(separator);
   const body = rows
@@ -19,6 +20,9 @@ export function toCsv(rows, columns, { separator = ';', bom = true } = {}) {
         .map((c) => {
           const raw = c.get ? c.get(row) : row[c.key];
           const formatted = c.format ? c.format(raw, row) : raw;
+          if (c.text && formatted != null && formatted !== '') {
+            return `="${String(formatted).replace(/"/g, '""')}"`;
+          }
           return escape(formatted);
         })
         .join(separator),
