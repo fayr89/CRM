@@ -855,6 +855,7 @@ table.data tbody tr:last-child td { border-bottom: none; }
 .help-steps { margin: 0; padding-left: 22px; line-height: 1.7; }
 .help-steps li { margin-bottom: 8px; }
 .help-modal { font-size: 14px; }
+.stores-hint { font-size: 11px; color: #16a34a; margin-top: 2px; }
 .qr-preview { margin-top: 8px; }
 .qr-preview img { border: 1px solid var(--border); }
 .opp-discount {

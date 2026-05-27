@@ -105,7 +105,7 @@ router.get(
       params.push(s, s);
     }
     const rows = await db.all(
-      `SELECT p.id, p.sku, p.name, p.image_url, p.cost_price, p.unit, p.stock,
+      `SELECT p.id, p.sku, p.name, p.image_url, p.cost_price, p.unit, p.stock, p.stock_by_store,
               pp.price AS marketplace_price
        FROM products p
        LEFT JOIN product_prices pp ON pp.product_id = p.id AND pp.marketplace = ?
@@ -127,7 +127,7 @@ router.get(
     const days = Math.min(365, Math.max(1, Number(req.query.days) || 30));
     const limit = Math.min(50, Math.max(1, Number(req.query.limit) || 20));
     const rows = await db.all(
-      `SELECT p.id, p.sku, p.name, p.image_url, p.cost_price, p.unit, p.stock,
+      `SELECT p.id, p.sku, p.name, p.image_url, p.cost_price, p.unit, p.stock, p.stock_by_store,
               pp.price AS marketplace_price,
               COALESCE((
                 SELECT SUM(oi.quantity)::int

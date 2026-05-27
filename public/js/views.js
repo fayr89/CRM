@@ -837,7 +837,13 @@ export async function loadDeliveryMethods() {
   }
 }
 
-function itemsEditor(initialItems = [], { getMarketplace, onChange } = {}) {
+function itemsEditor(initialItems = [], { getMarketplace, onChange, hiddenSet = new Set() } = {}) {
+  // Показывает наличие товара по видимым складам под названием позиции.
+  function storesText(stockByStore) {
+    const sv = computeStoreView(stockByStore, hiddenSet);
+    if (!sv.visible.length) return '';
+    return '📦 ' + sv.visible.map((s) => `${s.store}: ${s.stock}`).join(', ');
+  }
   const wrap = el('div', { class: 'items-editor' });
   const tbody = el('tbody');
   const totalCell = el('td', { colspan: '6', style: { textAlign: 'right' } }, 'Итого: 0 ₽');
@@ -877,6 +883,8 @@ function itemsEditor(initialItems = [], { getMarketplace, onChange } = {}) {
     row._meta.product_id = product.id;
     row._meta.image_url = product.image_url || null;
     row._meta.catalog_price = marketplacePrice ?? null;
+    row._meta.stock_by_store = product.stock_by_store ?? null;
+    if (i.storesHint) i.storesHint.textContent = storesText(product.stock_by_store);
     if (product.image_url) {
       i.imageCell.innerHTML = '';
       i.imageCell.append(
@@ -895,6 +903,7 @@ function itemsEditor(initialItems = [], { getMarketplace, onChange } = {}) {
       product_id: item.product_id || null,
       image_url: item.image_url || null,
       catalog_price: item.catalog_price ?? null,
+      stock_by_store: item.stock_by_store ?? null,
     };
     const imageCell = el('td', { class: 'item-image-cell' });
     if (meta.image_url) {
@@ -905,6 +914,7 @@ function itemsEditor(initialItems = [], { getMarketplace, onChange } = {}) {
 
     const skuI = el('input', { type: 'text', value: item.sku || '', placeholder: 'Артикул' });
     const nameI = el('input', { type: 'text', value: item.name || '', placeholder: 'Название' });
+    const storesHint = el('div', { class: 'stores-hint' }, storesText(meta.stock_by_store));
     const qtyI = el('input', {
       type: 'number',
       min: '1',
@@ -960,14 +970,14 @@ function itemsEditor(initialItems = [], { getMarketplace, onChange } = {}) {
       {},
       imageCell,
       el('td', {}, pickBtn, skuI),
-      el('td', {}, nameI),
+      el('td', {}, nameI, storesHint),
       el('td', {}, qtyI),
       el('td', {}, priceI, priceHint),
       el('td', {}, removeBtn),
     );
     row._inputs = {
       sku: skuI, name: nameI, quantity: qtyI, unit_price: priceI,
-      priceHint, imageCell,
+      priceHint, imageCell, storesHint,
     };
     row._meta = meta;
     tbody.append(row);
@@ -1056,6 +1066,7 @@ function itemsEditor(initialItems = [], { getMarketplace, onChange } = {}) {
       product_id: product.id,
       image_url: product.image_url,
       catalog_price: product.marketplace_price ?? null,
+      stock_by_store: product.stock_by_store ?? null,
     });
     toast(`Товар добавлен: ${product.name}`, 'success');
   }
@@ -1437,6 +1448,15 @@ async function openOrderForm(order, onSaved) {
   const paymentMethods = pricing.payment_methods || [];
   const orderTiers = pricing.order_tiers || [];
 
+  // Скрытые склады — чтобы наличие в позициях показывалось только по нужным складам.
+  let hiddenSet = new Set();
+  try {
+    const w = await api.warehousesList();
+    hiddenSet = new Set(w.hidden || []);
+  } catch {
+    /* нет настройки — покажем все склады */
+  }
+
   const marketI = el(
     'select',
     {},
@@ -1619,6 +1639,7 @@ async function openOrderForm(order, onSaved) {
   items = itemsEditor(cur.items || [], {
     getMarketplace: () => marketI.value,
     onChange: renderPricingPanel,
+    hiddenSet,
   });
   marketI.addEventListener('change', () => {
     items.refreshCatalogPrices().then(() => renderPricingPanel());
