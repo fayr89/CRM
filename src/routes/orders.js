@@ -675,14 +675,14 @@ router.post(
     const reason = z.object({ reason: z.string().min(1, 'Укажите причину отмены') }).parse(req.body || {}).reason;
     const order = await db.get('SELECT * FROM orders WHERE id = ?', req.params.id);
     if (!order) throw NotFound('Заказ не найден');
-    // Отменять может: админ, склад (любой статус), менеджер-владелец (только новый).
+    // Отменять может: админ, склад (любой статус), менеджер-владелец (новый или зарезервированный).
     const isAdminOrWarehouse = ['admin', 'warehouse'].includes(req.user.role);
     if (!isAdminOrWarehouse && !(await canAccessOrder(req.user, order))) throw Forbidden();
     if (['completed', 'cancelled'].includes(order.status)) {
       throw BadRequest('Заказ уже закрыт');
     }
-    if (!isAdminOrWarehouse && order.status !== 'new') {
-      throw BadRequest('Менеджер может отменить только новый заказ');
+    if (!isAdminOrWarehouse && !['new', 'reserved'].includes(order.status)) {
+      throw BadRequest('Менеджер может отменить только новый или зарезервированный заказ');
     }
     // Если товар был зарезервирован/отгружён — заказ попадает в «Возвраты» на обработку складом.
     const needsReturn = ['reserved', 'shipped'].includes(order.status);

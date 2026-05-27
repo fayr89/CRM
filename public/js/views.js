@@ -2211,7 +2211,7 @@ async function showOrderDetails(order, reload) {
   // Отменять может: админ/склад (любой активный статус), менеджер-владелец (только новый).
   const canCancel =
     !['completed', 'cancelled'].includes(order.status) &&
-    (['admin', 'warehouse'].includes(me.role) || (me.id === order.manager_id && order.status === 'new'));
+    (['admin', 'warehouse'].includes(me.role) || (me.id === order.manager_id && ['new', 'reserved'].includes(order.status)));
 
   const itemsTable = el(
     'table',
