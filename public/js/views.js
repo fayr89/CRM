@@ -840,8 +840,9 @@ export async function loadDeliveryMethods() {
 function itemsEditor(initialItems = [], { getMarketplace, onChange, hiddenSet = new Set() } = {}) {
   // Показывает наличие товара по видимым складам под названием позиции.
   function storesText(stockByStore) {
+    if (!Array.isArray(stockByStore) || !stockByStore.length) return ''; // склады не загружены
     const sv = computeStoreView(stockByStore, hiddenSet);
-    if (!sv.visible.length) return '';
+    if (!sv.visible.length) return '⚠️ нет в наличии на складах';
     return '📦 ' + sv.visible.map((s) => `${s.store}: ${s.stock}`).join(', ');
   }
   const wrap = el('div', { class: 'items-editor' });
@@ -1053,9 +1054,12 @@ function itemsEditor(initialItems = [], { getMarketplace, onChange, hiddenSet = 
   // --- Блок быстрого добавления: поиск с подсказками + полоса популярных ---
 
   async function addProductRow(product) {
-    // Проверка наличия: если товара нет в остатке — спрашиваем подтверждение.
-    if (product.stock != null && product.stock <= 0) {
-      const ok = await confirm(`«${product.name}» нет в наличии (остаток ${product.stock}). Всё равно добавить в заказ?`);
+    // Проверка наличия: наличие = сумма по видимым складам (если есть), иначе общий остаток.
+    const sv = computeStoreView(product.stock_by_store, hiddenSet);
+    const hasStores = Array.isArray(product.stock_by_store) && product.stock_by_store.length;
+    const available = hasStores ? sv.totalStock : product.stock;
+    if (available != null && available <= 0) {
+      const ok = await confirm(`«${product.name}» нет в наличии (остаток ${available}). Всё равно добавить в заказ?`);
       if (!ok) return;
     }
     addRow({
@@ -2204,6 +2208,10 @@ async function showOrderDetails(order, reload) {
   const me = JSON.parse(localStorage.getItem('crm_user') || '{}');
   const canEdit =
     (me.role === 'admin' || me.id === order.manager_id) && order.status === 'new';
+  // Отменять может: админ/склад (любой активный статус), менеджер-владелец (только новый).
+  const canCancel =
+    !['completed', 'cancelled'].includes(order.status) &&
+    (['admin', 'warehouse'].includes(me.role) || (me.id === order.manager_id && order.status === 'new'));
 
   const itemsTable = el(
     'table',
@@ -2263,6 +2271,13 @@ async function showOrderDetails(order, reload) {
   const body = el(
     'div',
     {},
+    canCancel
+      ? el('div', { style: { marginBottom: '12px' } },
+          el('button', {
+            class: 'btn btn-danger btn-sm',
+            onClick: () => openCancelDialog(order.id, () => { reload?.(); }),
+          }, '🚫 Отменить заказ'))
+      : null,
     el(
       'div',
       { class: 'detail-grid' },
