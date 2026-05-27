@@ -33,6 +33,10 @@ const PUBLIC_DIR = path.resolve(__dirname, '..', 'public');
 export function createApp({ serveStatic = true } = {}) {
   const app = express();
 
+  // Отключаем ETag для API: иначе повторные GET отдают 304, а фронт трактует
+  // не-2xx как ошибку (данные теряются — например, не грузились фильтры складов).
+  app.set('etag', false);
+
   // CORS: разрешить same-origin, localhost и vercel.app домены
   const extraOrigins = process.env.ALLOWED_ORIGINS
     ? process.env.ALLOWED_ORIGINS.split(',').map(o => o.trim())

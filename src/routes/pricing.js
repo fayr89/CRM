@@ -24,10 +24,16 @@ async function getSetting(key, fallback) {
 }
 
 async function loadPricing() {
-  const [payment_methods, order_tiers] = await Promise.all([
+  const [saved, order_tiers] = await Promise.all([
     getSetting('pricing.payment_methods', DEFAULT_PAYMENT_METHODS),
     getSetting('pricing.order_tiers', DEFAULT_ORDER_TIERS),
   ]);
+  // Гарантируем наличие обязательных методов (например «Авито доставка») даже если
+  // у пользователя сохранён старый набор без них — иначе не сработает логика отгрузок.
+  const payment_methods = Array.isArray(saved) ? [...saved] : [...DEFAULT_PAYMENT_METHODS];
+  for (const def of DEFAULT_PAYMENT_METHODS) {
+    if (!payment_methods.some((m) => m.key === def.key)) payment_methods.push(def);
+  }
   return { payment_methods, order_tiers };
 }
 
