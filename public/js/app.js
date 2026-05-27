@@ -40,8 +40,14 @@ const NAV_GROUPS = [
     title: 'Прямые продажи',
     items: [
       { hash: '#/orders', label: 'Прямые продажи', roles: SALES_ROLES, block: 'direct' },
-      { hash: '#/products', label: 'Каталог', roles: ['admin', 'rop', 'manager', 'sales', 'aus', 'warehouse'], block: 'direct' },
       { hash: '#/cashbox', label: 'Касса', roles: SALES_ROLES, block: 'direct' },
+    ],
+  },
+  {
+    title: 'Каталог',
+    items: [
+      // Каталог нужен обоим блокам продаж + складу/АУС — без блок-ограничения.
+      { hash: '#/products', label: 'Каталог', roles: ['admin', 'rop', 'manager', 'sales', 'aus', 'warehouse'] },
     ],
   },
   {

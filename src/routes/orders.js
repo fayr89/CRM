@@ -31,6 +31,7 @@ const pricingMeta = {
   price_deviation: z.number().optional().nullable(),
   recommended_total: z.number().optional().nullable(),
   shipment_qr: z.string().optional().nullable(),
+  delivery_method: z.string().optional().nullable(),
 };
 
 const createSchema = z.object({
@@ -62,18 +63,20 @@ async function saveOrderPricingMeta(orderId, data) {
     data.payment_method === undefined &&
     data.price_deviation === undefined &&
     data.recommended_total === undefined &&
-    data.shipment_qr === undefined
+    data.shipment_qr === undefined &&
+    data.delivery_method === undefined
   ) {
     return;
   }
   try {
     await db.run(
       `UPDATE orders SET payment_method = ?, price_deviation = ?, recommended_total = ?,
-       shipment_qr = ?, updated_at = NOW() WHERE id = ?`,
+       shipment_qr = ?, delivery_method = ?, updated_at = NOW() WHERE id = ?`,
       data.payment_method ?? null,
       data.price_deviation ?? null,
       data.recommended_total ?? null,
       data.shipment_qr ?? null,
+      data.delivery_method ?? null,
       orderId,
     );
   } catch (e) {
@@ -224,6 +227,7 @@ router.get(
       { key: 'client_name', label: 'Клиент' },
       { key: 'status', label: 'Статус' },
       { key: 'payment_method', label: 'Способ оплаты' },
+      { key: 'delivery_method', label: 'Способ отправки' },
       { key: 'shipment_qr', label: 'QR код отгрузки' },
       { key: 'manager_name', label: 'Менеджер' },
       { key: 'warehouse_user_name', label: 'Склад' },

@@ -1326,6 +1326,14 @@ async function openOrderForm(order, onSaved) {
   const currencyI = el('input', { type: 'text', value: cur.currency || 'RUB', maxlength: '3', style: { width: '80px' } });
   const notesI = el('textarea', {}, cur.notes || '');
   const qrI = el('input', { type: 'text', value: cur.shipment_qr || '', placeholder: 'QR код отгрузки (обязателен для Avito + Авито доставка)' });
+  const DELIVERY_METHODS = ['Авито доставка', 'Почта', 'ЯМаркет', 'СДЭК', 'Dpd', '5post'];
+  const deliveryI = el(
+    'select',
+    {},
+    el('option', { value: '' }, '—'),
+    ...DELIVERY_METHODS.map((d) => el('option', { value: d, selected: d === cur.delivery_method ? true : false }, d)),
+  );
+  const deliveryRow = el('div', { class: 'form-row' }, el('label', {}, 'Способ отправки'), deliveryI);
 
   const payI = paymentMethods.length
     ? el(
@@ -1430,7 +1438,16 @@ async function openOrderForm(order, onSaved) {
   marketI.addEventListener('change', () => {
     items.refreshCatalogPrices().then(() => renderPricingPanel());
   });
-  if (payI) payI.addEventListener('change', () => renderPricingPanel());
+  const updateDeliveryVisibility = () => {
+    deliveryRow.style.display = payI && payI.value === 'avito_delivery' ? '' : 'none';
+  };
+  if (payI) {
+    payI.addEventListener('change', () => {
+      renderPricingPanel();
+      updateDeliveryVisibility();
+    });
+  }
+  updateDeliveryVisibility();
 
   const body = el(
     'div',
@@ -1443,6 +1460,7 @@ async function openOrderForm(order, onSaved) {
       el('div', { class: 'form-row' }, el('label', {}, 'Классификация клиента'), classI),
       el('div', { class: 'form-row' }, el('label', {}, 'Клиент'), clientI),
       payI ? el('div', { class: 'form-row' }, el('label', {}, 'Способ оплаты'), payI) : null,
+      deliveryRow,
       el('div', { class: 'form-row' }, el('label', {}, 'Валюта'), currencyI),
       el('div', { class: 'form-row', style: { gridColumn: '1 / -1' } }, el('label', {}, 'QR код отгрузки'), qrI),
       el('div', { class: 'form-row' }, el('label', {}, 'Заметки'), notesI),
@@ -1484,6 +1502,7 @@ async function openOrderForm(order, onSaved) {
         price_deviation: p.hasRule ? p.deviation : null,
         recommended_total: p.hasRule ? p.recommendedTotal : null,
         shipment_qr: qrI.value.trim() || null,
+        delivery_method: deliveryI.value || null,
       };
       if (isEdit) {
         await api.update('orders', cur.id, payload);
@@ -4304,6 +4323,7 @@ async function openMoyskladImport(onDone) {
         const parts = [`создано ${r.created}`, `обновлено ${r.updated}`, `всего получено из МойСклад ${r.total}`];
         if (r.skipped) parts.push(`пропущено ${r.skipped}`);
         statusEl.innerHTML = `✅ Готово: ${parts.join(', ')}`;
+        statusEl.innerHTML += `<div style="margin-top:6px;font-size:.85em;color:#64748b">Поставщики: у ${r.withSupplier ?? 0} товаров${r.supplierSample ? ` (напр.: ${r.supplierSample})` : ' — поле supplier пустое в МойСклад'}</div>`;
         if (r.skipped && r.skipped_details?.length) {
           const sample = r.skipped_details.slice(0, 3).map((s) => `• ${s.name}${s.sku ? ` (${s.sku})` : ''}: ${s.error}`).join('<br>');
           statusEl.innerHTML += `<div style="margin-top:8px;font-size:.9em;opacity:.8">${sample}${r.skipped_details.length > 3 ? `<br>… ещё ${r.skipped_details.length - 3}` : ''}</div>`;

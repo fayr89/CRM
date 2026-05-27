@@ -356,7 +356,12 @@ router.post(
         }
       }
     }
-    res.json({ ok: true, created, updated, skipped: skipped.length, skipped_details: skipped, total: products.length });
+    const withSupplier = products.filter((p) => p.supplier).length;
+    const supplierSample = products.find((p) => p.supplier)?.supplier || null;
+    res.json({
+      ok: true, created, updated, skipped: skipped.length, skipped_details: skipped,
+      total: products.length, withSupplier, supplierSample,
+    });
   }),
 );
 
@@ -574,14 +579,14 @@ router.get(
     let all = [];
     try {
       const rows = await db.all(
-        `SELECT DISTINCT jsonb_array_elements(stock_by_store)->>'store' AS store
-         FROM products
-         WHERE stock_by_store IS NOT NULL AND jsonb_typeof(stock_by_store) = 'array'
+        `SELECT DISTINCT el->>'store' AS store
+         FROM products p, jsonb_array_elements(p.stock_by_store) AS el
+         WHERE p.stock_by_store IS NOT NULL AND jsonb_typeof(p.stock_by_store) = 'array'
          ORDER BY store`,
       );
       all = rows.map((r) => r.store).filter(Boolean);
-    } catch {
-      // колонки stock_by_store ещё нет (склады не импортировали) — вернём пустой список
+    } catch (e) {
+      console.error('[warehouses/list] error:', e.message);
     }
     const setting = await db
       .get(`SELECT value FROM app_settings WHERE key = 'warehouses.hidden'`)

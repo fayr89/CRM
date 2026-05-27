@@ -198,6 +198,7 @@ export async function fetchMoyskladStockByStorePage(token, offset = 0, limit = 5
     stores: (r.stockByStore || []).map((s) => ({
       name: s.name ?? null,
       stock: Number(s.stock) ?? null,
+      reserve: Number(s.reserve) ?? null,
     })),
   }));
 

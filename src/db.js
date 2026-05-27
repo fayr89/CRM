@@ -459,6 +459,7 @@ export async function ensureInitialized() {
       await pool.query('ALTER TABLE orders ADD COLUMN IF NOT EXISTS price_deviation REAL');
       await pool.query('ALTER TABLE orders ADD COLUMN IF NOT EXISTS recommended_total REAL');
       await pool.query('ALTER TABLE orders ADD COLUMN IF NOT EXISTS shipment_qr TEXT');
+      await pool.query('ALTER TABLE orders ADD COLUMN IF NOT EXISTS delivery_method TEXT');
       await pool.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS access_blocks TEXT');
       await pool.query('ALTER TABLE products ADD COLUMN IF NOT EXISTS supplier TEXT');
       // Обновляем CHECK роли до 6 значений (добавлены rop, aus) — для users и invitations.
