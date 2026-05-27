@@ -237,6 +237,14 @@ router.get(
       { key: 'total_amount', label: 'Сумма' },
       { key: 'currency', label: 'Валюта' },
       {
+        key: 'total_qty',
+        label: 'Кол-во, шт',
+        get: (row) => {
+          const list = itemsByOrder.get(row.id) || [];
+          return list.reduce((sum, i) => sum + (Number(i.quantity) || 0), 0);
+        },
+      },
+      {
         key: 'items',
         label: 'Позиции',
         get: (row) => {
