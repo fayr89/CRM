@@ -5526,6 +5526,137 @@ function renderFunnel(area, f) {
 }
 
 // ============================================================
+// Возвраты (отменённые заказы с зарезервированным/отгруженным товаром)
+// ============================================================
+
+export async function renderReturns(main) {
+  const me = JSON.parse(localStorage.getItem('crm_user') || '{}');
+  const canResolve = ['warehouse', 'admin'].includes(me.role);
+
+  main.append(
+    el(
+      'div',
+      { class: 'page-header' },
+      el('div', {},
+        el('h1', { class: 'page-title' }, 'Возвраты'),
+        el('div', { class: 'page-subtitle' }, 'Отменённые заказы: вернуть товар в сток или списать с подтверждением'),
+      ),
+    ),
+    el('div', { class: 'help-row' }, helpButton('returns')),
+  );
+
+  const container = el('div');
+  main.append(container);
+
+  async function load() {
+    container.replaceChildren(el('div', { class: 'loading' }, 'Загрузка…'));
+    try {
+      const r = await api.returnsList();
+      const rows = r.data || [];
+      container.replaceChildren();
+      if (!rows.length) {
+        container.append(emptyState({ icon: '↩️', title: 'Возвратов нет', description: 'Отменённые заказы с товаром появятся здесь.' }));
+        return;
+      }
+      const head = el('tr', {},
+        el('th', {}, '№'),
+        el('th', {}, 'Площадка'),
+        el('th', {}, 'Клиент'),
+        el('th', {}, 'Сумма'),
+        el('th', {}, 'Причина отмены'),
+        el('th', {}, 'Статус возврата'),
+        el('th', { style: { textAlign: 'right' } }, 'Действия'),
+      );
+      const body = rows.map((o) => {
+        const statusCell = o.return_status === 'pending'
+          ? el('span', { class: 'badge pending' }, 'Ждёт обработки')
+          : o.return_status === 'restocked'
+            ? el('span', { class: 'badge confirmed' }, 'Возвращён в сток')
+            : el('span', { class: 'badge rejected' }, 'Списан');
+        const actions = el('td', { style: { textAlign: 'right' } });
+        if (canResolve && o.return_status === 'pending') {
+          actions.append(
+            el('button', {
+              class: 'btn btn-sm',
+              onClick: async () => {
+                if (!(await confirm(`Вернуть товар заказа #${o.id} в сток?`))) return;
+                try { await api.resolveReturn(o.id, 'restocked'); toast('Возвращён в сток', 'success'); load(); }
+                catch (e) { toast(e.message, 'error'); }
+              },
+            }, '↩️ В сток'),
+            el('button', {
+              class: 'btn btn-sm btn-danger',
+              onClick: () => openWriteOff(o, load),
+            }, '🗑 Списать'),
+          );
+        } else if (o.return_status !== 'pending') {
+          const parts = [];
+          if (o.resolved_by_name) parts.push(o.resolved_by_name);
+          if (o.return_resolved_at) parts.push(fmtDateTime(o.return_resolved_at));
+          actions.append(el('span', { class: 'hint' }, parts.join(' · ') || '—'));
+          if (o.return_proof) {
+            actions.append(' ', el('button', {
+              class: 'btn btn-sm',
+              onClick: () => {
+                const img = el('img', { src: o.return_proof, style: { maxWidth: '100%', borderRadius: '8px' } });
+                openModal('Пруф списания', el('div', {}, img), { primaryLabel: null });
+              },
+            }, '📷 Пруф'));
+          }
+        }
+        return el('tr', {},
+          el('td', {}, '#' + o.id),
+          el('td', {}, o.marketplace || '—'),
+          el('td', {}, o.client_name || '—'),
+          el('td', {}, fmtMoney(o.total_amount, o.currency)),
+          el('td', {}, o.cancel_reason || '—'),
+          el('td', {}, statusCell),
+          actions,
+        );
+      });
+      container.append(el('div', { class: 'table-wrap' },
+        el('table', { class: 'data' }, el('thead', {}, head), el('tbody', {}, ...body))));
+    } catch (e) {
+      container.replaceChildren(el('div', { class: 'empty' }, `Ошибка: ${e.message}`));
+    }
+  }
+
+  // Списание с обязательным фото-пруфом.
+  function openWriteOff(order, onDone) {
+    let proofData = '';
+    const preview = el('div', { class: 'qr-preview' });
+    const fileI = el('input', { type: 'file', accept: 'image/*' });
+    fileI.addEventListener('change', () => {
+      const f = fileI.files?.[0];
+      if (!f) return;
+      const reader = new FileReader();
+      reader.onload = () => {
+        proofData = reader.result;
+        preview.replaceChildren(el('img', { src: proofData, style: { maxWidth: '200px', borderRadius: '8px' } }));
+      };
+      reader.readAsDataURL(f);
+    });
+    const body = el('div', {},
+      el('p', {}, `Списание товара по заказу #${order.id}. Приложите фото — подтверждение, что товар негоден.`),
+      el('div', { class: 'form-row' }, el('label', {}, 'Фото-пруф *'), fileI, preview),
+    );
+    openModal('Списать товар', body, {
+      primaryLabel: 'Списать',
+      onSubmit: async () => {
+        if (!proofData) { toast('Приложите фото-подтверждение', 'error'); return false; }
+        try {
+          await api.resolveReturn(order.id, 'written_off', proofData);
+          toast('Товар списан', 'success');
+          onDone?.();
+        } catch (e) { toast(e.message, 'error'); return false; }
+      },
+    });
+  }
+
+  load();
+}
+
+// ============================================================
 // Расписание отгрузок (для склада + менеджеров)
 // ============================================================
 

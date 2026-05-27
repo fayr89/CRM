@@ -82,6 +82,9 @@ export const api = {
   reserveOrder: (id) => request('POST', `/api/orders/${id}/reserve`),
   shipOrder: (id) => request('POST', `/api/orders/${id}/ship`),
   shipBulk: (ids) => request('POST', '/api/orders/ship-bulk', { body: { ids } }),
+  returnsList: (status) => request('GET', '/api/orders/returns/list', { query: { status } }),
+  resolveReturn: (id, resolution, proof) =>
+    request('POST', `/api/orders/${id}/return-resolve`, { body: { resolution, proof } }),
   completeOrder: (id) => request('POST', `/api/orders/${id}/complete`),
   cancelOrder: (id, reason) =>
     request('POST', `/api/orders/${id}/cancel`, { body: { reason } }),

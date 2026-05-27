@@ -467,6 +467,11 @@ export async function ensureInitialized() {
       // Касса: комиссия площадки и тип транзакции (income/expense), привязка авто-транзакции к заказу.
       await pool.query('ALTER TABLE payments ADD COLUMN IF NOT EXISTS commission REAL');
       await pool.query("ALTER TABLE payments ADD COLUMN IF NOT EXISTS kind TEXT DEFAULT 'income'");
+      // Возвраты: отменённый заказ → склад возвращает в сток или списывает (с пруфом-фото).
+      await pool.query('ALTER TABLE orders ADD COLUMN IF NOT EXISTS return_status TEXT');
+      await pool.query('ALTER TABLE orders ADD COLUMN IF NOT EXISTS return_proof TEXT');
+      await pool.query('ALTER TABLE orders ADD COLUMN IF NOT EXISTS return_resolved_by INTEGER');
+      await pool.query('ALTER TABLE orders ADD COLUMN IF NOT EXISTS return_resolved_at TIMESTAMPTZ');
       // Обновляем CHECK роли (добавлены rop, aus, finance) — для users и invitations.
       await pool.query('ALTER TABLE users DROP CONSTRAINT IF EXISTS users_role_check');
       await pool.query(

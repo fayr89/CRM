@@ -297,6 +297,59 @@ router.get(
   }),
 );
 
+// Возвраты: отменённые заказы, по которым товар был зарезервирован/отгружен.
+// Видят склад и админ. status=pending — ждут обработки, else — все возвраты.
+router.get(
+  '/returns/list',
+  asyncHandler(async (req, res) => {
+    if (!['warehouse', 'admin', 'aus'].includes(req.user.role)) {
+      throw Forbidden('Возвраты видят склад, АУС и админ');
+    }
+    const onlyPending = req.query.status === 'pending';
+    const orders = await db.all(
+      `SELECT o.id, o.marketplace, o.client_name, o.total_amount, o.currency,
+              o.cancel_reason, o.cancelled_at, o.return_status, o.return_proof,
+              o.return_resolved_at, u.name AS manager_name, rb.name AS resolved_by_name
+       FROM orders o
+       LEFT JOIN users u ON u.id = o.manager_id
+       LEFT JOIN users rb ON rb.id = o.return_resolved_by
+       WHERE o.return_status IS NOT NULL ${onlyPending ? "AND o.return_status = 'pending'" : ''}
+       ORDER BY o.cancelled_at DESC`,
+    );
+    res.json({ data: orders });
+  }),
+);
+
+// Обработка возврата складом: restocked (вернуть в сток) или written_off (списать с пруфом).
+const returnResolveSchema = z.object({
+  resolution: z.enum(['restocked', 'written_off']),
+  proof: z.string().optional().nullable(), // base64-фото для списания
+});
+router.post(
+  '/:id/return-resolve',
+  asyncHandler(async (req, res) => {
+    if (!['warehouse', 'admin'].includes(req.user.role)) {
+      throw Forbidden('Обрабатывать возвраты может только склад или админ');
+    }
+    const { resolution, proof } = returnResolveSchema.parse(req.body);
+    const order = await db.get('SELECT * FROM orders WHERE id = ?', req.params.id);
+    if (!order) throw NotFound('Заказ не найден');
+    if (order.return_status !== 'pending') throw BadRequest('Возврат уже обработан или не требуется');
+    if (resolution === 'written_off' && !proof) {
+      throw BadRequest('Для списания приложите фото-подтверждение, что товар негоден');
+    }
+    await db.run(
+      `UPDATE orders SET return_status = ?, return_proof = ?, return_resolved_by = ?,
+       return_resolved_at = NOW(), updated_at = NOW() WHERE id = ?`,
+      resolution,
+      resolution === 'written_off' ? proof : null,
+      req.user.id,
+      order.id,
+    );
+    res.json(await db.get('SELECT * FROM orders WHERE id = ?', order.id));
+  }),
+);
+
 router.get(
   '/:id',
   asyncHandler(async (req, res) => {
@@ -628,10 +681,13 @@ router.post(
     if (req.user.role !== 'admin' && order.status !== 'new') {
       throw BadRequest('Менеджер может отменить только новый заказ');
     }
+    // Если товар был зарезервирован/отгружён — заказ попадает в «Возвраты» на обработку складом.
+    const needsReturn = ['reserved', 'shipped'].includes(order.status);
     await db.run(
       `UPDATE orders SET status = 'cancelled', cancel_reason = ?,
-       cancelled_at = NOW(), updated_at = NOW() WHERE id = ?`,
+       return_status = ?, cancelled_at = NOW(), updated_at = NOW() WHERE id = ?`,
       reason ?? null,
+      needsReturn ? 'pending' : null,
       order.id,
     );
     const updated = await db.get('SELECT * FROM orders WHERE id = ?', order.id);

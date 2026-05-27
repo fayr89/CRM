@@ -14,6 +14,7 @@ import {
   renderPipeline,
   renderProducts,
   renderResource,
+  renderReturns,
   renderShipping,
 } from './views.js';
 
@@ -53,7 +54,10 @@ const NAV_GROUPS = [
   },
   {
     title: 'Склад',
-    items: [{ hash: '#/shipping', label: 'Отгрузки', roles: ['admin', 'warehouse'] }],
+    items: [
+      { hash: '#/shipping', label: 'Отгрузки', roles: ['admin', 'warehouse'] },
+      { hash: '#/returns', label: 'Возвраты', roles: ['admin', 'warehouse', 'aus'] },
+    ],
   },
   {
     title: 'Управление',
@@ -464,6 +468,7 @@ const ROUTES = {
   '#/invitations': renderInvitations,
   '#/orders': renderOrders,
   '#/shipping': renderShipping,
+  '#/returns': renderReturns,
   '#/products': renderProducts,
   '#/cashbox': renderCashbox,
   '#/analytics': renderAnalytics,
