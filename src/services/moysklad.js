@@ -78,7 +78,10 @@ function mapSalePrices(salePrices) {
   }));
 }
 
-function mapProduct(p) {
+function mapProduct(p, supplierMap) {
+  // Поставщик приходит ссылкой (supplier.meta.href .../counterparty/<UUID>) — резолвим имя.
+  const supplierId = extractUuid(p.supplier?.meta?.href);
+  const supplier = p.supplier?.name || (supplierId && supplierMap ? supplierMap.get(supplierId) : null) || null;
   return {
     externalId: p.id,
     sku: p.code || p.article || null,
@@ -89,7 +92,7 @@ function mapProduct(p) {
     imageUrl: pickImage(p.images),
     unit: p.uom?.name || 'шт',
     description: p.description || null,
-    supplier: p.supplier?.name || null,
+    supplier,
   };
 }
 
@@ -135,11 +138,21 @@ function mapVariant(v, productById) {
 // Возвращает плоский массив товаров + модификаций из МойСклад.
 // МойСклад хранит цены в копейках — делим на 100.
 export async function fetchMoyskladProducts(token) {
-  const productRows = await fetchAll('/entity/product?expand=images,supplier', token);
-  const products = productRows.map(mapProduct);
+  // Поставщики: expand игнорируется при limit>100, поэтому тянем контрагентов
+  // отдельно и сопоставляем по ссылке product.supplier.meta.href → имя.
+  let supplierMap = new Map();
+  try {
+    const agents = await fetchAll('/entity/counterparty', token);
+    supplierMap = new Map(agents.map((a) => [a.id, a.name]));
+  } catch {
+    // не критично — товары импортируются без поставщика
+  }
+
+  const productRows = await fetchAll('/entity/product', token);
+  const products = productRows.map((p) => mapProduct(p, supplierMap));
   const productById = new Map(products.map((p) => [p.externalId, p]));
 
-  const variantRows = await fetchAll('/entity/variant?expand=images', token);
+  const variantRows = await fetchAll('/entity/variant', token);
   const variants = variantRows.map((v) => mapVariant(v, productById));
 
   return [...products, ...variants];
