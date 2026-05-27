@@ -32,10 +32,17 @@ export async function authenticate(req, _res, next) {
   try {
     const payload = verifyToken(token);
     const user = await db.get(
-      'SELECT id, email, name, role, active, access_blocks FROM users WHERE id = ?',
+      'SELECT id, email, name, role, active FROM users WHERE id = ?',
       payload.sub,
     );
     if (!user || !user.active) return next(Unauthorized('User not found or disabled'));
+    // access_blocks — best-effort (колонка может ещё не существовать на пуле соединений)
+    try {
+      const ab = await db.get('SELECT access_blocks FROM users WHERE id = ?', user.id);
+      user.access_blocks = ab?.access_blocks ?? null;
+    } catch {
+      user.access_blocks = null;
+    }
     // Имперсонация: только реальный админ может смотреть систему под другой ролью.
     if (payload.act && user.role === 'admin' && payload.act !== 'admin') {
       user.realRole = 'admin';

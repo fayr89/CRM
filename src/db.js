@@ -459,6 +459,19 @@ export async function ensureInitialized() {
       await pool.query('ALTER TABLE orders ADD COLUMN IF NOT EXISTS price_deviation REAL');
       await pool.query('ALTER TABLE orders ADD COLUMN IF NOT EXISTS recommended_total REAL');
       await pool.query('ALTER TABLE orders ADD COLUMN IF NOT EXISTS shipment_qr TEXT');
+      await pool.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS access_blocks TEXT');
+      await pool.query('ALTER TABLE products ADD COLUMN IF NOT EXISTS supplier TEXT');
+      // Обновляем CHECK роли до 6 значений (добавлены rop, aus) — для users и invitations.
+      await pool.query('ALTER TABLE users DROP CONSTRAINT IF EXISTS users_role_check');
+      await pool.query(
+        `ALTER TABLE users ADD CONSTRAINT users_role_check
+         CHECK (role IN ('admin','manager','sales','warehouse','rop','aus'))`,
+      );
+      await pool.query('ALTER TABLE invitations DROP CONSTRAINT IF EXISTS invitations_role_check');
+      await pool.query(
+        `ALTER TABLE invitations ADD CONSTRAINT invitations_role_check
+         CHECK (role IN ('admin','manager','sales','warehouse','rop','aus'))`,
+      );
       globalThis.__crmInitialized = true;
       return;
     } catch (e) {

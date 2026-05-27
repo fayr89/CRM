@@ -57,7 +57,7 @@ router.post(
 
     const { email, password } = loginSchema.parse(req.body);
     const user = await db.get(
-      'SELECT id, email, name, role, password_hash, active, access_blocks FROM users WHERE email = ?',
+      'SELECT id, email, name, role, password_hash, active FROM users WHERE email = ?',
       email,
     );
     if (!user || !user.active || !verifyPassword(password, user.password_hash)) {
@@ -66,12 +66,20 @@ router.post(
     }
 
     clearLoginAttempts(key);
+    // access_blocks — best-effort (колонка может ещё не существовать на этом соединении пула)
+    let accessBlocks = null;
+    try {
+      const ab = await db.get('SELECT access_blocks FROM users WHERE id = ?', user.id);
+      accessBlocks = ab?.access_blocks ?? null;
+    } catch {
+      // колонки нет — не критично
+    }
     const token = signToken(user);
     res.json({
       token,
       user: {
         id: user.id, email: user.email, name: user.name,
-        role: user.role, access_blocks: user.access_blocks,
+        role: user.role, access_blocks: accessBlocks,
       },
     });
   }),
