@@ -114,6 +114,21 @@ async function maybeBackupOnLogin() {
   }
 }
 
+// Автообновление остатков из МойСклад при входе (admin/aus), не чаще раза в сутки.
+async function maybeRefreshStockOnLogin() {
+  try {
+    const today = new Date().toISOString().slice(0, 10);
+    if (localStorage.getItem('last_stock_refresh') === today) return;
+    const r = await api.refreshMoyskladStock(); // токен берётся из БД
+    if (r && r.updated != null) {
+      localStorage.setItem('last_stock_refresh', today);
+      toast(`Остатки обновлены: ${r.updated}`, 'success');
+    }
+  } catch {
+    // нет токена/недоступно — не критично, обновят вручную кнопкой
+  }
+}
+
 function renderLogin() {
   clear(root);
   const emailInput = el('input', { type: 'email', placeholder: 'Email', value: 'admin@example.com' });
@@ -123,6 +138,7 @@ function renderLogin() {
       const r = await api.login(emailInput.value, passInput.value);
       setSession(r.token, r.user);
       if (r.user.role === 'admin') maybeBackupOnLogin();
+      if (['admin', 'aus'].includes(r.user.role)) maybeRefreshStockOnLogin();
       location.hash = '#/dashboard';
       renderApp();
     } catch (e) {

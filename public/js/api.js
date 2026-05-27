@@ -135,6 +135,8 @@ export const api = {
   deliveryMethodsList: () => request('GET', '/api/products/delivery-methods/list'),
   setDeliveryMethods: (delivery_methods) =>
     request('PUT', '/api/products/delivery-methods', { body: { delivery_methods } }),
+  moyskladTokenStatus: () => request('GET', '/api/products/moysklad-token/status'),
+  setMoyskladToken: (token) => request('PUT', '/api/products/moysklad-token', { body: { token } }),
 
   // Расписание отгрузок
   warehouseSchedule: () => request('GET', '/api/warehouse/schedule'),

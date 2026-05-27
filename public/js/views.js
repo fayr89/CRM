@@ -3016,6 +3016,7 @@ export async function renderIntegrations(main) {
     ),
   );
 
+  const msTokenArea = el('div', { class: 'integration-section' });
   const marketplacesArea = el('div', { class: 'integration-section' });
   const deliveryArea = el('div', { class: 'integration-section' });
   const warehousesArea = el('div', { class: 'integration-section' });
@@ -3023,14 +3024,58 @@ export async function renderIntegrations(main) {
   const webhooksArea = el('div', { class: 'integration-section' });
   const docsArea = el('div', { class: 'integration-section' });
 
-  main.append(marketplacesArea, deliveryArea, warehousesArea, tokensArea, webhooksArea, docsArea);
+  main.append(msTokenArea, marketplacesArea, deliveryArea, warehousesArea, tokensArea, webhooksArea, docsArea);
 
+  await renderMoyskladTokenSection(msTokenArea);
   await renderMarketplacesSection(marketplacesArea);
   await renderDeliveryMethodsSection(deliveryArea);
   await renderWarehousesSection(warehousesArea);
   await renderTokensSection(tokensArea);
   await renderWebhooksSection(webhooksArea);
   renderDocsSection(docsArea);
+}
+
+// Токен МойСклад: хранится в БД (шифрованно), используется для импорта и автообновления остатков.
+async function renderMoyskladTokenSection(area) {
+  clear(area);
+  const me = JSON.parse(localStorage.getItem('crm_user') || '{}');
+  if (!['admin', 'aus'].includes(me.role)) return;
+  area.append(el('div', { class: 'section-header' }, el('h2', {}, '🔑 Токен МойСклад')));
+
+  let status = { hasToken: false };
+  try {
+    status = await api.moyskladTokenStatus();
+  } catch {
+    /* нет статуса */
+  }
+  area.append(
+    el('p', { class: 'page-subtitle' },
+      status.hasToken
+        ? (status.fromEnv ? 'Токен задан через переменную окружения. Можно сохранить свой ниже.' : '✅ Токен сохранён в базе. Остатки обновляются автоматически при входе.')
+        : 'Введите Bearer-токен МойСклад — он сохранится шифрованно и будет использоваться для импорта и автообновления остатков.'),
+  );
+  const tokenI = el('input', { type: 'password', placeholder: 'Bearer-токен МойСклад' });
+  const st = el('span', { class: 'save-status' });
+  const saveBtn = el('button', {
+    class: 'btn btn-primary',
+    onClick: async () => {
+      const t = tokenI.value.trim();
+      if (t.length < 8) { st.textContent = '❌ Слишком короткий токен'; return; }
+      st.textContent = 'Сохраняю…';
+      try {
+        await api.setMoyskladToken(t);
+        tokenI.value = '';
+        st.textContent = '✅ Токен сохранён';
+        toast('Токен МойСклад сохранён', 'success');
+      } catch (e) {
+        st.textContent = `❌ ${e.message}`;
+      }
+    },
+  }, 'Сохранить токен');
+  area.append(
+    el('div', { class: 'form-row' }, el('label', {}, 'Токен'), tokenI),
+    el('div', { class: 'warehouse-toggle-actions' }, saveBtn, st),
+  );
 }
 
 // Управление способами доставки (для формы заказа). Админ добавляет/удаляет.

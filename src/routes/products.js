@@ -6,8 +6,19 @@ import { BadRequest, NotFound, asyncHandler } from '../errors.js';
 import { parsePagination, parseSort, paginated } from '../query.js';
 import { fetchMoyskladProducts, fetchMoyskladStock, fetchMoyskladStockByStorePage } from '../services/moysklad.js';
 import { toCsv } from '../services/csv.js';
+import { encryptSecret, decryptSecret } from '../services/secrets.js';
 
 const router = Router();
+
+// Возвращает токен МойСклад: из тела запроса, иначе сохранённый в БД (шифрованный), иначе env.
+async function resolveMoyskladToken(bodyToken) {
+  if (bodyToken) return bodyToken;
+  const row = await db
+    .get(`SELECT value FROM app_settings WHERE key = 'moysklad.token'`)
+    .catch(() => null);
+  const stored = row?.value ? decryptSecret(row.value) : null;
+  return stored || process.env.MOYSKLAD_TOKEN || null;
+}
 
 const SORT_COLUMNS = ['id', 'name', 'sku', 'cost_price', 'stock', 'created_at', 'updated_at'];
 
@@ -282,9 +293,9 @@ router.delete(
 
 router.post(
   '/import/moysklad',
-  requireRole('admin'),
+  requireRole('admin', 'aus'),
   asyncHandler(async (req, res) => {
-    const token = req.body?.token || process.env.MOYSKLAD_TOKEN;
+    const token = await resolveMoyskladToken(req.body?.token);
     if (!token) {
       throw BadRequest(
         'Передайте токен МойСклад в теле запроса {token: "..."} или установите переменную окружения MOYSKLAD_TOKEN',
@@ -368,9 +379,9 @@ router.post(
 // Быстрое обновление только остатков (без выгрузки самого каталога).
 router.post(
   '/import/moysklad-stock',
-  requireRole('admin'),
+  requireRole('admin', 'aus'),
   asyncHandler(async (req, res) => {
-    const token = req.body?.token || process.env.MOYSKLAD_TOKEN;
+    const token = await resolveMoyskladToken(req.body?.token);
     if (!token) {
       throw BadRequest('Передайте токен МойСклад в теле запроса {token: "..."}');
     }
@@ -426,9 +437,9 @@ router.post(
 // По 500 позиций за запрос, чтобы тяжёлый отчёт укладывался в лимит времени.
 router.post(
   '/import/moysklad-stores',
-  requireRole('admin'),
+  requireRole('admin', 'aus'),
   asyncHandler(async (req, res) => {
-    const token = req.body?.token || process.env.MOYSKLAD_TOKEN;
+    const token = await resolveMoyskladToken(req.body?.token);
     if (!token) {
       throw BadRequest('Передайте токен МойСклад в теле запроса {token: "..."}');
     }
@@ -701,6 +712,45 @@ router.put(
       );
     });
     res.json({ delivery_methods: clean });
+  }),
+);
+
+// Токен МойСклад: сохранение (шифрованно) и статус. Меняют админ/АУС.
+router.get(
+  '/moysklad-token/status',
+  asyncHandler(async (_req, res) => {
+    const row = await db
+      .get(`SELECT value, updated_at FROM app_settings WHERE key = 'moysklad.token'`)
+      .catch(() => null);
+    const hasStored = !!(row?.value && decryptSecret(row.value));
+    res.json({ hasToken: hasStored || !!process.env.MOYSKLAD_TOKEN, fromEnv: !hasStored && !!process.env.MOYSKLAD_TOKEN, updated_at: row?.updated_at || null });
+  }),
+);
+
+const tokenSchema = z.object({ token: z.string().min(8).max(4000) });
+
+router.put(
+  '/moysklad-token',
+  requireRole('admin', 'aus'),
+  asyncHandler(async (req, res) => {
+    const { token } = tokenSchema.parse(req.body);
+    const encrypted = encryptSecret(token.trim());
+    await db.withTransaction(async (tx) => {
+      await tx.run(
+        `CREATE TABLE IF NOT EXISTS app_settings (
+           key TEXT PRIMARY KEY, value JSONB NOT NULL,
+           updated_by INTEGER, updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`,
+      );
+      await tx.run(
+        `INSERT INTO app_settings (key, value, updated_by, updated_at)
+         VALUES ('moysklad.token', ?::jsonb, ?, NOW())
+         ON CONFLICT (key) DO UPDATE SET
+           value = EXCLUDED.value, updated_by = EXCLUDED.updated_by, updated_at = NOW()`,
+        JSON.stringify(encrypted),
+        req.user.id,
+      );
+    });
+    res.json({ ok: true, hasToken: true });
   }),
 );
 
