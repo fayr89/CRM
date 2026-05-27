@@ -96,6 +96,7 @@ router.get(
   '/for-marketplace',
   asyncHandler(async (req, res) => {
     const marketplace = String(req.query.marketplace || '').trim();
+    const warehouse = String(req.query.warehouse || '').trim();
     const search = String(req.query.search || '').trim();
     const where = ['p.active = TRUE'];
     const params = [];
@@ -108,13 +109,14 @@ router.get(
       `SELECT p.id, p.sku, p.name, p.image_url, p.cost_price, p.unit, p.stock, p.stock_by_store,
               pp.price AS marketplace_price
        FROM products p
-       LEFT JOIN product_prices pp ON pp.product_id = p.id AND pp.marketplace = ?
+       LEFT JOIN product_prices pp ON pp.product_id = p.id AND pp.marketplace = ? AND pp.warehouse = ?
        WHERE ${where.join(' AND ')}
        ORDER BY p.name ASC LIMIT 50`,
       marketplace,
+      warehouse,
       ...params,
     );
-    res.json({ data: rows, marketplace });
+    res.json({ data: rows, marketplace, warehouse });
   }),
 );
 
@@ -124,6 +126,7 @@ router.get(
   '/popular',
   asyncHandler(async (req, res) => {
     const marketplace = String(req.query.marketplace || '').trim();
+    const warehouse = String(req.query.warehouse || '').trim();
     const days = Math.min(365, Math.max(1, Number(req.query.days) || 30));
     const limit = Math.min(50, Math.max(1, Number(req.query.limit) || 20));
     const rows = await db.all(
@@ -138,12 +141,13 @@ router.get(
                   AND o.status != 'cancelled'
               ), 0) AS recent_usage
        FROM products p
-       LEFT JOIN product_prices pp ON pp.product_id = p.id AND pp.marketplace = ?
+       LEFT JOIN product_prices pp ON pp.product_id = p.id AND pp.marketplace = ? AND pp.warehouse = ?
        WHERE p.active = TRUE
        ORDER BY recent_usage DESC, p.name ASC
        LIMIT ?`,
       String(days),
       marketplace,
+      warehouse,
       limit,
     );
     res.json({ data: rows, marketplace, days });
@@ -157,25 +161,29 @@ router.get(
   '/price-template.csv',
   asyncHandler(async (req, res) => {
     const marketplace = String(req.query.marketplace || '').trim();
+    const warehouse = String(req.query.warehouse || '').trim();
+    // Цену для строки подставляем, если заданы и канал, и склад (ключ прайса).
+    const joinPrice = marketplace && warehouse;
     const rows = await db.all(
       `SELECT p.sku, p.name, p.cost_price,
-              ${marketplace ? 'pp.price AS channel_price' : 'NULL::real AS channel_price'}
+              ${joinPrice ? 'pp.price AS channel_price' : 'NULL::real AS channel_price'}
        FROM products p
-       ${marketplace ? 'LEFT JOIN product_prices pp ON pp.product_id = p.id AND pp.marketplace = ?' : ''}
+       ${joinPrice ? 'LEFT JOIN product_prices pp ON pp.product_id = p.id AND pp.marketplace = ? AND pp.warehouse = ?' : ''}
        WHERE p.active = TRUE
        ORDER BY p.name ASC`,
-      ...(marketplace ? [marketplace] : []),
+      ...(joinPrice ? [marketplace, warehouse] : []),
     );
     const columns = [
       { key: 'sku', label: 'Артикул мойсклад', text: true },
       { key: 'cost_price', label: 'Себестоимость' },
       { key: 'name', label: 'Название' },
       { key: 'channel', label: 'Канал продаж', get: () => marketplace },
+      { key: 'warehouse', label: 'Склад', get: () => warehouse },
       { key: 'channel_price', label: 'Цена для канала продаж', format: (v) => (v == null ? '' : v) },
     ];
     const csv = toCsv(rows, columns);
     // В имени файла только ASCII — Node не пропускает кириллицу в заголовке.
-    const safe = (marketplace || 'all').replace(/[^a-zA-Z0-9_-]+/g, '_') || 'all';
+    const safe = `${marketplace || 'all'}-${warehouse || 'all'}`.replace(/[^a-zA-Z0-9_-]+/g, '_') || 'all';
     res.setHeader('Content-Type', 'text/csv; charset=utf-8');
     res.setHeader('Content-Disposition', `attachment; filename="price-template-${safe}.csv"`);
     res.send(csv);
@@ -188,7 +196,7 @@ router.get(
     const product = await db.get('SELECT * FROM products WHERE id = ?', req.params.id);
     if (!product) throw NotFound('Товар не найден');
     const prices = await db.all(
-      'SELECT marketplace, price FROM product_prices WHERE product_id = ? ORDER BY marketplace',
+      'SELECT marketplace, warehouse, price FROM product_prices WHERE product_id = ? ORDER BY marketplace, warehouse',
       product.id,
     );
     res.json({ ...product, prices });
@@ -253,6 +261,7 @@ router.delete(
 
 const priceSchema = z.object({
   marketplace: z.string().min(1),
+  warehouse: z.string().default(''),
   price: z.number().nonnegative(),
 });
 
@@ -264,19 +273,21 @@ router.put(
     const product = await db.get('SELECT id FROM products WHERE id = ?', req.params.id);
     if (!product) throw NotFound('Товар не найден');
     await db.run(
-      `INSERT INTO product_prices (product_id, marketplace, price)
-       VALUES (?, ?, ?)
-       ON CONFLICT (product_id, marketplace)
+      `INSERT INTO product_prices (product_id, marketplace, warehouse, price)
+       VALUES (?, ?, ?, ?)
+       ON CONFLICT (product_id, marketplace, warehouse)
        DO UPDATE SET price = EXCLUDED.price, updated_at = NOW()`,
       product.id,
       data.marketplace,
+      data.warehouse ?? '',
       data.price,
     );
     res.json(
       await db.get(
-        'SELECT * FROM product_prices WHERE product_id = ? AND marketplace = ?',
+        'SELECT * FROM product_prices WHERE product_id = ? AND marketplace = ? AND warehouse = ?',
         product.id,
         data.marketplace,
+        data.warehouse ?? '',
       ),
     );
   }),
@@ -287,9 +298,10 @@ router.delete(
   requireRole('admin', 'manager'),
   asyncHandler(async (req, res) => {
     await db.run(
-      'DELETE FROM product_prices WHERE product_id = ? AND marketplace = ?',
+      'DELETE FROM product_prices WHERE product_id = ? AND marketplace = ? AND warehouse = ?',
       req.params.id,
       req.params.marketplace,
+      String(req.query.warehouse || ''),
     );
     res.status(204).send();
   }),
@@ -543,6 +555,7 @@ router.post(
 const priceRowSchema = z.object({
   sku: z.string().min(1),
   marketplace: z.string().min(1),
+  warehouse: z.string().default(''),
   price: z.number().nonnegative(),
 });
 
@@ -558,25 +571,27 @@ router.post(
     // Дедуп по (sku, marketplace) — последняя строка побеждает. Иначе ON CONFLICT
     // упадёт на повторе одного и того же ключа в рамках одного INSERT.
     const seen = new Map();
-    for (const r of input) seen.set(`${r.sku}\u0000${r.marketplace}`, r);
+    for (const r of input) seen.set(`${r.sku}\u0000${r.marketplace}\u0000${r.warehouse || ""}`, r);
     const rows = [...seen.values()];
 
     const skus = rows.map((r) => r.sku);
     const markets = rows.map((r) => r.marketplace);
+    const warehouses = rows.map((r) => r.warehouse || '');
     const prices = rows.map((r) => r.price);
 
     let upserted = 0;
     try {
       await db.withTransaction(async (tx) => {
         const r = await tx.run(
-          `INSERT INTO product_prices (product_id, marketplace, price)
-           SELECT p.id, d.marketplace, d.price
-           FROM unnest(?::text[], ?::text[], ?::real[]) AS d(sku, marketplace, price)
+          `INSERT INTO product_prices (product_id, marketplace, warehouse, price)
+           SELECT p.id, d.marketplace, d.warehouse, d.price
+           FROM unnest(?::text[], ?::text[], ?::text[], ?::real[]) AS d(sku, marketplace, warehouse, price)
            JOIN products p ON p.sku = d.sku
-           ON CONFLICT (product_id, marketplace)
+           ON CONFLICT (product_id, marketplace, warehouse)
            DO UPDATE SET price = EXCLUDED.price, updated_at = NOW()`,
           skus,
           markets,
+          warehouses,
           prices,
         );
         upserted = r.changes || 0;
@@ -609,7 +624,28 @@ router.get(
       .get(`SELECT value FROM app_settings WHERE key = 'warehouses.hidden'`)
       .catch(() => null);
     const hidden = setting?.value || [];
-    res.json({ all, hidden });
+    const defSetting = await db
+      .get(`SELECT value FROM app_settings WHERE key = 'warehouses.default_writeoff'`)
+      .catch(() => null);
+    const default_writeoff = defSetting?.value || '';
+    res.json({ all, hidden, default_writeoff });
+  }),
+);
+
+// Склад списания по умолчанию (подставляется в форму заказа). Меняет только админ.
+router.put(
+  '/warehouses/default',
+  requireRole('admin'),
+  asyncHandler(async (req, res) => {
+    const warehouse = z.object({ warehouse: z.string() }).parse(req.body || {}).warehouse;
+    await db.run(
+      `INSERT INTO app_settings (key, value, updated_by, updated_at)
+       VALUES ('warehouses.default_writeoff', ?::jsonb, ?, NOW())
+       ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_by = EXCLUDED.updated_by, updated_at = NOW()`,
+      JSON.stringify(warehouse || ''),
+      req.user.id,
+    );
+    res.json({ ok: true, default_writeoff: warehouse || '' });
   }),
 );
 

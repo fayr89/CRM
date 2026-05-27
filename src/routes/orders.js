@@ -34,6 +34,7 @@ const pricingMeta = {
   delivery_method: z.string().optional().nullable(),
   client_phone: z.string().optional().nullable(),
   avito_dialog_url: z.string().optional().nullable(),
+  warehouse: z.string().optional().nullable(),
 };
 
 const createSchema = z.object({
@@ -68,7 +69,8 @@ async function saveOrderPricingMeta(orderId, data) {
     data.shipment_qr === undefined &&
     data.delivery_method === undefined &&
     data.client_phone === undefined &&
-    data.avito_dialog_url === undefined
+    data.avito_dialog_url === undefined &&
+    data.warehouse === undefined
   ) {
     return;
   }
@@ -76,7 +78,7 @@ async function saveOrderPricingMeta(orderId, data) {
     await db.run(
       `UPDATE orders SET payment_method = ?, price_deviation = ?, recommended_total = ?,
        shipment_qr = ?, delivery_method = ?, client_phone = ?, avito_dialog_url = ?,
-       updated_at = NOW() WHERE id = ?`,
+       warehouse = ?, updated_at = NOW() WHERE id = ?`,
       data.payment_method ?? null,
       data.price_deviation ?? null,
       data.recommended_total ?? null,
@@ -84,6 +86,7 @@ async function saveOrderPricingMeta(orderId, data) {
       data.delivery_method ?? null,
       data.client_phone ?? null,
       data.avito_dialog_url ?? null,
+      data.warehouse ?? null,
       orderId,
     );
   } catch (e) {
@@ -320,9 +323,10 @@ router.get(
   }),
 );
 
-// Обработка возврата складом: restocked (вернуть в сток) или written_off (списать с пруфом).
+// Обработка возврата складом: restocked (в сток), written_off (списать с пруфом)
+// или lost (товар потерян — попадает в «Потерянные товары»).
 const returnResolveSchema = z.object({
-  resolution: z.enum(['restocked', 'written_off']),
+  resolution: z.enum(['restocked', 'written_off', 'lost']),
   proof: z.string().optional().nullable(), // base64-фото для списания
 });
 router.post(
@@ -346,6 +350,51 @@ router.post(
       req.user.id,
       order.id,
     );
+    res.json(await db.get('SELECT * FROM orders WHERE id = ?', order.id));
+  }),
+);
+
+// Потерянные товары: заказы, по которым возврат отмечен как «потерян».
+// Сумма потерь считается по цене продажи (total_amount). Аннулированные (loss_voided)
+// в сумму не входят. Фильтр status: new (новые) | settled (погашены).
+router.get(
+  '/lost/list',
+  asyncHandler(async (req, res) => {
+    if (!['warehouse', 'admin', 'aus'].includes(req.user.role)) {
+      throw Forbidden('Потерянные товары видят склад, АУС и админ');
+    }
+    const status = req.query.status === 'settled' ? 'settled' : req.query.status === 'new' ? 'new' : null;
+    const statusFilter =
+      status === 'new' ? 'AND COALESCE(o.loss_voided, FALSE) = FALSE'
+        : status === 'settled' ? 'AND COALESCE(o.loss_voided, FALSE) = TRUE'
+          : '';
+    const orders = await db.all(
+      `SELECT o.id, o.marketplace, o.client_name, o.total_amount, o.currency, o.warehouse,
+              o.cancel_reason, o.cancelled_at, o.return_resolved_at, COALESCE(o.loss_voided, FALSE) AS loss_voided,
+              u.name AS manager_name, rb.name AS resolved_by_name
+       FROM orders o
+       LEFT JOIN users u ON u.id = o.manager_id
+       LEFT JOIN users rb ON rb.id = o.return_resolved_by
+       WHERE o.return_status = 'lost' ${statusFilter}
+       ORDER BY o.return_resolved_at DESC NULLS LAST, o.id DESC`,
+    );
+    const totalLoss = await db.get(
+      `SELECT COALESCE(SUM(total_amount), 0) AS sum
+       FROM orders WHERE return_status = 'lost' AND COALESCE(loss_voided, FALSE) = FALSE`,
+    );
+    res.json({ data: orders, total_loss: totalLoss?.sum || 0 });
+  }),
+);
+
+// Аннулировать потерю (только админ) — позиция перестаёт считаться в сумме потерь.
+router.post(
+  '/:id/lost-void',
+  requireRole('admin'),
+  asyncHandler(async (req, res) => {
+    const order = await db.get('SELECT * FROM orders WHERE id = ?', req.params.id);
+    if (!order) throw NotFound('Заказ не найден');
+    if (order.return_status !== 'lost') throw BadRequest('Заказ не в списке потерянных товаров');
+    await db.run('UPDATE orders SET loss_voided = TRUE, updated_at = NOW() WHERE id = ?', order.id);
     res.json(await db.get('SELECT * FROM orders WHERE id = ?', order.id));
   }),
 );

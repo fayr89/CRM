@@ -85,6 +85,8 @@ export const api = {
   returnsList: (status) => request('GET', '/api/orders/returns/list', { query: { status } }),
   resolveReturn: (id, resolution, proof) =>
     request('POST', `/api/orders/${id}/return-resolve`, { body: { resolution, proof } }),
+  lostList: (status) => request('GET', '/api/orders/lost/list', { query: { status } }),
+  voidLoss: (id) => request('POST', `/api/orders/${id}/lost-void`),
   completeOrder: (id) => request('POST', `/api/orders/${id}/complete`),
   cancelOrder: (id, reason) =>
     request('POST', `/api/orders/${id}/cancel`, { body: { reason } }),
@@ -118,13 +120,13 @@ export const api = {
   webhookDeliveries: (id) => request('GET', `/api/webhooks/${id}/deliveries`),
 
   // Каталог товаров
-  productsForMarketplace: (marketplace, search) =>
-    request('GET', '/api/products/for-marketplace', { query: { marketplace, search } }),
-  popularProducts: (marketplace, days) =>
-    request('GET', '/api/products/popular', { query: { marketplace, days } }),
+  productsForMarketplace: (marketplace, search, warehouse) =>
+    request('GET', '/api/products/for-marketplace', { query: { marketplace, search, warehouse } }),
+  popularProducts: (marketplace, days, warehouse) =>
+    request('GET', '/api/products/popular', { query: { marketplace, days, warehouse } }),
   setProductPrice: (id, body) => request('PUT', `/api/products/${id}/prices`, { body }),
-  deleteProductPrice: (id, marketplace) =>
-    request('DELETE', `/api/products/${id}/prices/${encodeURIComponent(marketplace)}`),
+  deleteProductPrice: (id, marketplace, warehouse) =>
+    request('DELETE', `/api/products/${id}/prices/${encodeURIComponent(marketplace)}`, { query: { warehouse } }),
   importMoysklad: (token) =>
     request('POST', '/api/products/import/moysklad', { body: token ? { token } : {} }),
   refreshMoyskladStock: (token) =>
@@ -134,6 +136,8 @@ export const api = {
   warehousesList: () => request('GET', '/api/products/warehouses/list'),
   setHiddenWarehouses: (hidden) =>
     request('PUT', '/api/products/warehouses/hidden', { body: { hidden } }),
+  setDefaultWarehouse: (warehouse) =>
+    request('PUT', '/api/products/warehouses/default', { body: { warehouse } }),
   marketplacesList: () => request('GET', '/api/products/marketplaces/list'),
   setMarketplaces: (marketplaces) =>
     request('PUT', '/api/products/marketplaces', { body: { marketplaces } }),
@@ -196,9 +200,12 @@ export const api = {
   pricingSettings: () => request('GET', '/api/pricing/settings'),
   savePricingSettings: (body) => request('PUT', '/api/pricing/settings', { body }),
 
-  downloadPriceTemplate: async (marketplace) => {
+  downloadPriceTemplate: async (marketplace, warehouse) => {
     const token = getToken();
-    const qs = marketplace ? `?marketplace=${encodeURIComponent(marketplace)}` : '';
+    const params = new URLSearchParams();
+    if (marketplace) params.set('marketplace', marketplace);
+    if (warehouse) params.set('warehouse', warehouse);
+    const qs = params.toString() ? `?${params.toString()}` : '';
     const url = `/api/products/price-template.csv${qs}`;
     const res = await fetch(url, {
       headers: token ? { Authorization: `Bearer ${token}` } : {},
@@ -208,7 +215,7 @@ export const api = {
     const downloadUrl = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = downloadUrl;
-    a.download = `price-template-${marketplace || 'all'}.csv`;
+    a.download = `price-template-${marketplace || 'all'}-${warehouse || 'all'}.csv`;
     document.body.appendChild(a);
     a.click();
     a.remove();

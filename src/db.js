@@ -304,15 +304,15 @@ CREATE INDEX IF NOT EXISTS idx_products_active ON products(active);
 -- Поставщик (из МойСклад, для фильтра в каталоге)
 ALTER TABLE products ADD COLUMN IF NOT EXISTS supplier TEXT;
 
--- Прайсы по площадкам: товар + площадка → цена
+-- Прайсы по площадкам и складам: товар + площадка + склад → цена
 CREATE TABLE IF NOT EXISTS product_prices (
   id SERIAL PRIMARY KEY,
   product_id INTEGER NOT NULL REFERENCES products(id) ON DELETE CASCADE,
   marketplace TEXT NOT NULL,
+  warehouse TEXT NOT NULL DEFAULT '',
   price REAL NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  UNIQUE(product_id, marketplace)
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS idx_product_prices_product ON product_prices(product_id);
 CREATE INDEX IF NOT EXISTS idx_product_prices_marketplace ON product_prices(marketplace);
@@ -472,6 +472,13 @@ export async function ensureInitialized() {
       await pool.query('ALTER TABLE orders ADD COLUMN IF NOT EXISTS return_proof TEXT');
       await pool.query('ALTER TABLE orders ADD COLUMN IF NOT EXISTS return_resolved_by INTEGER');
       await pool.query('ALTER TABLE orders ADD COLUMN IF NOT EXISTS return_resolved_at TIMESTAMPTZ');
+      // Склад списания заказа (для МойСклад) + потерянные товары (аннулирование админом).
+      await pool.query('ALTER TABLE orders ADD COLUMN IF NOT EXISTS warehouse TEXT');
+      await pool.query('ALTER TABLE orders ADD COLUMN IF NOT EXISTS loss_voided BOOLEAN DEFAULT FALSE');
+      // Прайс с привязкой к складу: товар × канал × склад. Старое UNIQUE(product,market) снимаем.
+      await pool.query("ALTER TABLE product_prices ADD COLUMN IF NOT EXISTS warehouse TEXT NOT NULL DEFAULT ''");
+      await pool.query('ALTER TABLE product_prices DROP CONSTRAINT IF EXISTS product_prices_product_id_marketplace_key');
+      await pool.query('CREATE UNIQUE INDEX IF NOT EXISTS uniq_product_prices_pmw ON product_prices (product_id, marketplace, warehouse)');
       // Обновляем CHECK роли (добавлены rop, aus, finance) — для users и invitations.
       await pool.query('ALTER TABLE users DROP CONSTRAINT IF EXISTS users_role_check');
       await pool.query(

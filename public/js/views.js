@@ -837,7 +837,7 @@ export async function loadDeliveryMethods() {
   }
 }
 
-function itemsEditor(initialItems = [], { getMarketplace, onChange, hiddenSet = new Set() } = {}) {
+function itemsEditor(initialItems = [], { getMarketplace, getWarehouse, onChange, hiddenSet = new Set() } = {}) {
   // Показывает наличие товара по видимым складам под названием позиции.
   function storesText(stockByStore) {
     if (!Array.isArray(stockByStore) || !stockByStore.length) return ''; // склады не загружены
@@ -1000,10 +1000,11 @@ function itemsEditor(initialItems = [], { getMarketplace, onChange, hiddenSet = 
   // но unit_price НЕ трогаем (если расходится — увидите подсветку).
   async function refreshCatalogPrices() {
     const marketplace = getMarketplace?.() || '';
+    const warehouse = getWarehouse?.() || '';
     for (const row of tbody.children) {
       if (!row._meta.product_id) continue;
       try {
-        const r = await api.productsForMarketplace(marketplace, '');
+        const r = await api.productsForMarketplace(marketplace, '', warehouse);
         const p = (r.data || []).find((x) => x.id === row._meta.product_id);
         row._meta.catalog_price = p?.marketplace_price ?? null;
       } catch {
@@ -1150,7 +1151,7 @@ function itemsEditor(initialItems = [], { getMarketplace, onChange, hiddenSet = 
     }
     searchDebounce = setTimeout(async () => {
       try {
-        const r = await api.productsForMarketplace(getMarketplace?.() || '', q);
+        const r = await api.productsForMarketplace(getMarketplace?.() || '', q, getWarehouse?.() || '');
         renderSuggestions((r.data || []).slice(0, 8));
       } catch (e) {
         renderSuggestions([]);
@@ -1191,7 +1192,7 @@ function itemsEditor(initialItems = [], { getMarketplace, onChange, hiddenSet = 
       type: 'button',
       class: 'btn btn-sm',
       onClick: async () => {
-        const product = await openProductPicker(getMarketplace?.() || '', hiddenSet);
+        const product = await openProductPicker(getMarketplace?.() || '', hiddenSet, getWarehouse?.() || '');
         if (product) addProductRow(product);
       },
       title: 'Открыть полный каталог',
@@ -1210,7 +1211,7 @@ function itemsEditor(initialItems = [], { getMarketplace, onChange, hiddenSet = 
 
   async function refreshPopular() {
     try {
-      const r = await api.popularProducts(getMarketplace?.() || '', 30);
+      const r = await api.popularProducts(getMarketplace?.() || '', 30, getWarehouse?.() || '');
       clear(popularStrip);
       const items = r.data || [];
       if (items.length === 0) {
@@ -1308,7 +1309,7 @@ function itemsEditor(initialItems = [], { getMarketplace, onChange, hiddenSet = 
 
 // Пикер товара: открывает модалку со списком, фильтрация по поиску.
 // Если задана площадка — показывает цену из её прайса.
-async function openProductPicker(marketplace, hiddenSet = new Set()) {
+async function openProductPicker(marketplace, hiddenSet = new Set(), warehouse = '') {
   return new Promise((resolve) => {
     const searchI = el('input', {
       type: 'search',
@@ -1320,7 +1321,7 @@ async function openProductPicker(marketplace, hiddenSet = new Set()) {
 
     async function load() {
       try {
-        const r = await api.productsForMarketplace(marketplace, searchI.value);
+        const r = await api.productsForMarketplace(marketplace, searchI.value, warehouse);
         renderList(r.data || []);
       } catch (e) {
         clear(list);
@@ -1453,13 +1454,27 @@ async function openOrderForm(order, onSaved) {
   const orderTiers = pricing.order_tiers || [];
 
   // Скрытые склады — чтобы наличие в позициях показывалось только по нужным складам.
+  // Список складов + склад списания по умолчанию (из администрирования).
   let hiddenSet = new Set();
+  let allWarehouses = [];
+  let defaultWarehouse = '';
   try {
     const w = await api.warehousesList();
     hiddenSet = new Set(w.hidden || []);
+    allWarehouses = (w.all || []).filter((s) => !hiddenSet.has(s));
+    defaultWarehouse = w.default_writeoff || '';
   } catch {
     /* нет настройки — покажем все склады */
   }
+  // Склад списания заказа (для МойСклад и подбора прайса по складу).
+  const warehouseI = el(
+    'select',
+    {},
+    el('option', { value: '' }, '— склад списания —'),
+    ...allWarehouses.map((s) =>
+      el('option', { value: s, selected: s === (cur.warehouse || defaultWarehouse) ? true : false }, s),
+    ),
+  );
 
   const marketI = el(
     'select',
@@ -1642,10 +1657,14 @@ async function openOrderForm(order, onSaved) {
 
   items = itemsEditor(cur.items || [], {
     getMarketplace: () => marketI.value,
+    getWarehouse: () => warehouseI.value,
     onChange: renderPricingPanel,
     hiddenSet,
   });
   marketI.addEventListener('change', () => {
+    items.refreshCatalogPrices().then(() => renderPricingPanel());
+  });
+  warehouseI.addEventListener('change', () => {
     items.refreshCatalogPrices().then(() => renderPricingPanel());
   });
   if (payI) {
@@ -1666,6 +1685,7 @@ async function openOrderForm(order, onSaved) {
       'div',
       { class: 'form-grid' },
       el('div', { class: 'form-row' }, el('label', {}, 'Площадка'), marketI),
+      el('div', { class: 'form-row' }, el('label', {}, 'Склад списания'), warehouseI),
       el('div', { class: 'form-row' }, el('label', {}, 'Классификация клиента'), classI),
       el('div', { class: 'form-row' }, el('label', {}, 'Клиент / компания'), clientI),
       el('div', { class: 'form-row' }, el('label', {}, 'Телефон клиента'), clientPhoneI),
@@ -1725,6 +1745,7 @@ async function openOrderForm(order, onSaved) {
         shipment_qr: (qrImageData || qrI.value.trim()) || null,
         delivery_method: deliveryI.value || null,
         avito_dialog_url: avitoDialogI.value.trim() || null,
+        warehouse: warehouseI.value || null,
       };
       if (isEdit) {
         await api.update('orders', cur.id, payload);
@@ -3663,6 +3684,33 @@ async function renderWarehousesSection(area) {
       'Сохранить',
     );
     area.append(el('div', { class: 'warehouse-toggle-actions' }, saveBtn, status));
+
+    // Склад списания по умолчанию — подставляется в форму заказа.
+    area.append(el('div', { class: 'section-header', style: { marginTop: '20px' } }, el('h2', {}, '📦 Склад списания по умолчанию')));
+    area.append(el('p', { class: 'page-subtitle' },
+      'Этот склад будет автоматически выбираться в форме нового заказа (можно изменить вручную).'));
+    const defSel = el(
+      'select',
+      {},
+      el('option', { value: '' }, '— не задан —'),
+      ...all.map((s) => el('option', { value: s, selected: s === (data.default_writeoff || '') ? true : false }, s)),
+    );
+    const defStatus = el('span', { class: 'save-status' });
+    const defSaveBtn = el('button', {
+      class: 'btn btn-primary',
+      onClick: async () => {
+        defStatus.textContent = 'Сохраняю…';
+        try {
+          await api.setDefaultWarehouse(defSel.value);
+          defStatus.textContent = '✅ Сохранено';
+          toast('Склад списания по умолчанию сохранён', 'success');
+        } catch (e) {
+          defStatus.textContent = `❌ ${e.message}`;
+        }
+      },
+    }, 'Сохранить');
+    area.append(el('div', { class: 'form-row' }, el('label', {}, 'Склад'), defSel));
+    area.append(el('div', { class: 'warehouse-toggle-actions' }, defSaveBtn, defStatus));
   } else {
     area.append(el('p', { class: 'muted' }, 'Менять настройку может только администратор.'));
   }
@@ -4325,7 +4373,7 @@ export async function renderProducts(main) {
                   'div',
                   { class: 'product-card-pricelists' },
                   ...p.prices.map((pr) =>
-                    el('div', { class: 'price-channel' }, `${pr.marketplace}: ${fmtMoney(pr.price, 'RUB')}`),
+                    el('div', { class: 'price-channel' }, `${pr.marketplace}${pr.warehouse ? ' · ' + pr.warehouse : ''}: ${fmtMoney(pr.price, 'RUB')}`),
                   ),
                 )
               : el('div', { class: 'product-card-pricelists' }, el('span', { class: 'no-prices' }, 'нет прайсов')),
@@ -4457,7 +4505,7 @@ export async function renderProducts(main) {
                 'td',
                 { class: 'prices-cell' },
                 Array.isArray(p.prices) && p.prices.length
-                  ? p.prices.map((pr) => `${pr.marketplace}: ${fmtMoney(pr.price, 'RUB')}`).join(', ')
+                  ? p.prices.map((pr) => `${pr.marketplace}${pr.warehouse ? ' · ' + pr.warehouse : ''}: ${fmtMoney(pr.price, 'RUB')}`).join(', ')
                   : el('span', { class: 'no-prices' }, 'нет'),
               ),
               el('td', {}, p.active ? 'Активен' : el('span', { class: 'muted' }, 'Архив')),
@@ -4656,6 +4704,15 @@ async function openProductForm(product, onSaved) {
       return;
     }
   }
+  // Список складов для прайса (цена задаётся на канал + склад).
+  let priceWarehouses = [];
+  try {
+    const w = await api.warehousesList();
+    const hidden = new Set(w.hidden || []);
+    priceWarehouses = (w.all || []).filter((s) => !hidden.has(s));
+  } catch {
+    /* складов нет — можно сохранить прайс без склада */
+  }
 
   const nameI = el('input', { type: 'text', value: cur.name || '' });
   const skuI = el('input', { type: 'text', value: cur.sku || '' });
@@ -4697,11 +4754,12 @@ async function openProductForm(product, onSaved) {
     } else {
       const list = el('div', { class: 'prices-list' });
       for (const pp of prices) {
+        const wh = pp.warehouse || '';
         list.append(
           el(
             'div',
             { class: 'price-row' },
-            el('span', { class: 'price-marketplace' }, pp.marketplace),
+            el('span', { class: 'price-marketplace' }, pp.marketplace + (wh ? ` · ${wh}` : ' · (все склады)')),
             el('span', { class: 'price-value' }, `${pp.price.toLocaleString('ru-RU')} ₽`),
             el(
               'button',
@@ -4709,9 +4767,9 @@ async function openProductForm(product, onSaved) {
                 type: 'button',
                 class: 'btn btn-sm',
                 onClick: async () => {
-                  if (!(await confirm(`Удалить цену для «${pp.marketplace}»?`))) return;
-                  await api.deleteProductPrice(cur.id, pp.marketplace);
-                  cur.prices = cur.prices.filter((x) => x.marketplace !== pp.marketplace);
+                  if (!(await confirm(`Удалить цену «${pp.marketplace}${wh ? ' · ' + wh : ''}»?`))) return;
+                  await api.deleteProductPrice(cur.id, pp.marketplace, wh);
+                  cur.prices = cur.prices.filter((x) => !(x.marketplace === pp.marketplace && (x.warehouse || '') === wh));
                   renderPricesEditor();
                 },
               },
@@ -4723,7 +4781,7 @@ async function openProductForm(product, onSaved) {
       pricesArea.append(list);
     }
 
-    // Форма добавления
+    // Форма добавления (канал + склад → цена)
     const newMarketI = el(
       'select',
       {},
@@ -4732,12 +4790,19 @@ async function openProductForm(product, onSaved) {
         el('option', { value: m.value }, m.label),
       ),
     );
+    const newWarehouseI = el(
+      'select',
+      {},
+      el('option', { value: '' }, priceWarehouses.length ? 'Склад…' : '(все склады)'),
+      ...priceWarehouses.map((s) => el('option', { value: s }, s)),
+    );
     const newPriceI = el('input', { type: 'number', min: '0', step: 'any', placeholder: 'Цена' });
     pricesArea.append(
       el(
         'div',
         { class: 'price-add-row' },
         newMarketI,
+        newWarehouseI,
         newPriceI,
         el(
           'button',
@@ -4749,8 +4814,13 @@ async function openProductForm(product, onSaved) {
                 toast('Выберите площадку и укажите цену', 'error');
                 return;
               }
+              if (priceWarehouses.length && !newWarehouseI.value) {
+                toast('Выберите склад', 'error');
+                return;
+              }
               await api.setProductPrice(cur.id, {
                 marketplace: newMarketI.value,
+                warehouse: newWarehouseI.value || '',
                 price: Number(newPriceI.value),
               });
               const updated = await api.get('products', cur.id);
@@ -5085,11 +5155,25 @@ function findCsvCol(header, ...names) {
 }
 
 async function openPriceTemplate() {
+  let warehouses = [];
+  try {
+    const w = await api.warehousesList();
+    const hidden = new Set(w.hidden || []);
+    warehouses = (w.all || []).filter((s) => !hidden.has(s));
+  } catch {
+    /* складов нет */
+  }
   const channelSel = el(
     'select',
     { class: 'select' },
     el('option', { value: '' }, '— пусто (заполню канал вручную)'),
     ...MARKETPLACES.filter((m) => m.value).map((m) => el('option', { value: m.value }, m.label)),
+  );
+  const warehouseSel = el(
+    'select',
+    { class: 'select' },
+    el('option', { value: '' }, '— пусто (заполню склад вручную)'),
+    ...warehouses.map((s) => el('option', { value: s }, s)),
   );
   const body = el(
     'div',
@@ -5097,15 +5181,16 @@ async function openPriceTemplate() {
     el(
       'p',
       {},
-      'Скачает CSV со всеми активными товарами: артикул, себестоимость, название. Выберите канал — в шаблон подставится колонка «Канал продаж» и текущие цены этого канала (если уже заданы). Заполните цены и загрузите файл обратно кнопкой «Загрузить прайс».',
+      'Скачает CSV со всеми активными товарами: артикул, себестоимость, название. Цена задаётся на пару «Канал + Склад». Выберите канал и склад — в шаблон подставятся колонки и текущие цены этой пары (если заданы). Заполните цены и загрузите файл обратно кнопкой «Загрузить прайс».',
     ),
     el('div', { class: 'form-row' }, el('label', {}, 'Канал продаж'), channelSel),
+    el('div', { class: 'form-row' }, el('label', {}, 'Склад'), warehouseSel),
   );
   await openModal('Шаблон прайса', body, {
     primaryLabel: 'Скачать CSV',
     onSubmit: async () => {
       try {
-        await api.downloadPriceTemplate(channelSel.value || '');
+        await api.downloadPriceTemplate(channelSel.value || '', warehouseSel.value || '');
         toast('Шаблон скачан', 'success');
       } catch (e) {
         toast(e.message, 'error');
@@ -5138,6 +5223,7 @@ async function openPriceUpload(onDone) {
       let rows = [];
       let cSku = -1;
       let cMarket = -1;
+      let cWarehouse = -1;
       let cPrice = -1;
       for (const enc of ['utf-8', 'windows-1251']) {
         let text;
@@ -5154,6 +5240,7 @@ async function openPriceUpload(onDone) {
           rows = p.rows;
           cSku = a;
           cMarket = b;
+          cWarehouse = findCsvCol(p.header, 'Склад', 'warehouse'); // необязательная колонка
           cPrice = c;
           break;
         }
@@ -5169,13 +5256,14 @@ async function openPriceUpload(onDone) {
         // Убираем Excel-обёртку ="..." (текстовый формат длинных артикулов).
         const sku = (r[cSku] || '').trim().replace(/^=?"(.*)"$/, '$1').trim();
         const marketplace = (r[cMarket] || '').trim();
+        const warehouse = cWarehouse >= 0 ? (r[cWarehouse] || '').trim() : '';
         const priceRaw = (r[cPrice] || '').trim().replace(/\s/g, '').replace(/₽/g, '').replace(',', '.');
         const price = Number(priceRaw);
         if (!sku || !marketplace || !priceRaw || !Number.isFinite(price) || price < 0) {
           skippedEmpty += 1;
           continue;
         }
-        out.push({ sku, marketplace, price });
+        out.push({ sku, marketplace, warehouse, price });
       }
       parsed = out;
       statusEl.innerHTML = out.length
@@ -5194,7 +5282,7 @@ async function openPriceUpload(onDone) {
     el(
       'p',
       {},
-      'Загрузите CSV из шаблона: проставьте «Канал продаж» и «Цена для канала продаж». Товары находятся по «Артикул мойсклад». Пустые строки и строки без цены пропускаются — можно грузить частями.',
+      'Загрузите CSV из шаблона: проставьте «Канал продаж», «Склад» и «Цена для канала продаж». Цена привязывается к паре канал+склад. Товары находятся по «Артикул мойсклад». Пустые строки и строки без цены пропускаются — можно грузить частями.',
     ),
     el(
       'p',
@@ -5731,7 +5819,9 @@ export async function renderReturns(main) {
           ? el('span', { class: 'badge pending' }, 'Ждёт обработки')
           : o.return_status === 'restocked'
             ? el('span', { class: 'badge confirmed' }, 'Возвращён в сток')
-            : el('span', { class: 'badge rejected' }, 'Списан');
+            : o.return_status === 'lost'
+              ? el('span', { class: 'badge pending' }, 'Потерян')
+              : el('span', { class: 'badge rejected' }, 'Списан');
         const actions = el('td', { style: { textAlign: 'right' } });
         if (canResolve && o.return_status === 'pending') {
           actions.append(
@@ -5747,6 +5837,14 @@ export async function renderReturns(main) {
               class: 'btn btn-sm btn-danger',
               onClick: () => openWriteOff(o, load),
             }, '🗑 Списать'),
+            el('button', {
+              class: 'btn btn-sm btn-warning',
+              onClick: async () => {
+                if (!(await confirm(`Отметить товар заказа #${o.id} как потерянный? Попадёт в «Потерянные товары».`))) return;
+                try { await api.resolveReturn(o.id, 'lost'); toast('Товар отмечен как потерянный', 'success'); load(); }
+                catch (e) { toast(e.message, 'error'); }
+              },
+            }, '❓ Товар потерян'),
           );
         } else if (o.return_status !== 'pending') {
           const parts = [];
@@ -5810,6 +5908,117 @@ export async function renderReturns(main) {
         } catch (e) { toast(e.message, 'error'); return false; }
       },
     });
+  }
+
+  load();
+}
+
+// ============================================================
+// Потерянные товары (учёт потерь; аннулирует только админ)
+// ============================================================
+
+export async function renderLostGoods(main) {
+  const me = JSON.parse(localStorage.getItem('crm_user') || '{}');
+  const isAdmin = me.role === 'admin';
+  let filter = 'new'; // new | settled | all
+
+  main.append(
+    el(
+      'div',
+      { class: 'page-header' },
+      el('div', {},
+        el('h1', { class: 'page-title' }, 'Потерянные товары'),
+        el('div', { class: 'page-subtitle' }, 'Товары, отмеченные как потерянные при обработке возвратов. Сумма — по цене продажи.'),
+      ),
+    ),
+  );
+
+  const totalCard = el('div', { class: 'card', style: { marginBottom: '16px' } });
+  const filterBar = el('div', { class: 'filter-bar', style: { marginBottom: '12px' } });
+  const container = el('div');
+  main.append(totalCard, filterBar, container);
+
+  const filters = [
+    { key: 'new', label: 'Новые' },
+    { key: 'settled', label: 'Погашенные' },
+    { key: 'all', label: 'Все' },
+  ];
+  function renderFilterBar() {
+    clear(filterBar);
+    filters.forEach((f) => {
+      filterBar.append(
+        el('button', {
+          class: `btn btn-sm ${filter === f.key ? 'btn-primary' : ''}`,
+          onClick: () => { filter = f.key; load(); },
+        }, f.label),
+      );
+    });
+  }
+
+  async function load() {
+    renderFilterBar();
+    container.replaceChildren(el('div', { class: 'loading' }, 'Загрузка…'));
+    try {
+      const r = await api.lostList(filter === 'all' ? '' : filter);
+      const rows = r.data || [];
+      clear(totalCard);
+      totalCard.append(
+        el('div', { class: 'hint' }, 'Общая сумма потерь (без аннулированных)'),
+        el('div', { style: { fontSize: '24px', fontWeight: '700', marginTop: '4px', color: 'var(--danger)' } },
+          fmtMoney(r.total_loss || 0, 'RUB')),
+      );
+      container.replaceChildren();
+      if (!rows.length) {
+        container.append(emptyState({ icon: '📉', title: 'Потерь нет', description: 'Товары, отмеченные как потерянные в возвратах, появятся здесь.' }));
+        return;
+      }
+      const head = el('tr', {},
+        el('th', {}, '№'),
+        el('th', {}, 'Площадка'),
+        el('th', {}, 'Клиент'),
+        el('th', {}, 'Склад'),
+        el('th', {}, 'Сумма'),
+        el('th', {}, 'Причина отмены'),
+        el('th', {}, 'Дата'),
+        el('th', {}, 'Статус'),
+        el('th', { style: { textAlign: 'right' } }, 'Действия'),
+      );
+      const body = rows.map((o) => {
+        const voided = o.loss_voided === true || o.loss_voided === 't';
+        const actions = el('td', { style: { textAlign: 'right' } });
+        if (isAdmin && !voided) {
+          actions.append(
+            el('button', {
+              class: 'btn btn-sm',
+              onClick: async () => {
+                if (!(await confirm(`Аннулировать потерю по заказу #${o.id}? Перестанет считаться в сумме потерь.`))) return;
+                try { await api.voidLoss(o.id); toast('Потеря аннулирована', 'success'); load(); }
+                catch (e) { toast(e.message, 'error'); }
+              },
+            }, 'Аннулировать'),
+          );
+        } else {
+          actions.append(el('span', { class: 'hint' }, '—'));
+        }
+        return el('tr', {},
+          el('td', {}, '#' + o.id),
+          el('td', {}, o.marketplace || '—'),
+          el('td', {}, o.client_name || '—'),
+          el('td', {}, o.warehouse || '—'),
+          el('td', {}, fmtMoney(o.total_amount, o.currency)),
+          el('td', {}, o.cancel_reason || '—'),
+          el('td', {}, fmtDateTime(o.return_resolved_at || o.cancelled_at)),
+          el('td', {}, voided
+            ? el('span', { class: 'badge confirmed' }, 'Погашен')
+            : el('span', { class: 'badge pending' }, 'Новый')),
+          actions,
+        );
+      });
+      container.append(el('div', { class: 'table-wrap' },
+        el('table', { class: 'data' }, el('thead', {}, head), el('tbody', {}, ...body))));
+    } catch (e) {
+      container.replaceChildren(el('div', { class: 'empty' }, `Ошибка: ${e.message}`));
+    }
   }
 
   load();

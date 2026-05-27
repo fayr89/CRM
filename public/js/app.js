@@ -11,6 +11,7 @@ import {
   renderIntegrations,
   renderInvitations,
   renderOrders,
+  renderLostGoods,
   renderPipeline,
   renderProducts,
   renderResource,
@@ -57,6 +58,7 @@ const NAV_GROUPS = [
     items: [
       { hash: '#/shipping', label: 'Отгрузки', roles: ['admin', 'warehouse'] },
       { hash: '#/returns', label: 'Возвраты', roles: ['admin', 'warehouse', 'aus'] },
+      { hash: '#/lost-goods', label: 'Потерянные товары', roles: ['admin', 'warehouse', 'aus'] },
     ],
   },
   {
@@ -469,6 +471,7 @@ const ROUTES = {
   '#/orders': renderOrders,
   '#/shipping': renderShipping,
   '#/returns': renderReturns,
+  '#/lost-goods': renderLostGoods,
   '#/products': renderProducts,
   '#/cashbox': renderCashbox,
   '#/analytics': renderAnalytics,

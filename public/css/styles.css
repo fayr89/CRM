@@ -130,6 +130,9 @@ a:hover { text-decoration: underline; }
 .btn-primary:hover { background: var(--primary-hover); border-color: var(--primary-hover); }
 .btn-danger { background: var(--danger); color: #fff; border-color: var(--danger); }
 .btn-danger:hover { background: var(--danger-hover); border-color: var(--danger-hover); }
+.btn-warning { background: var(--warning); color: #fff; border-color: var(--warning); }
+.btn-warning:hover { filter: brightness(0.92); }
+.filter-bar { display: flex; gap: 8px; flex-wrap: wrap; }
 .btn-sm { padding: 3px 8px; font-size: 12px; }
 .btn-ghost { background: transparent; border-color: transparent; }
 .btn-ghost:hover { background: #f3f4f6; }
