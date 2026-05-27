@@ -2686,11 +2686,15 @@ export async function renderDashboard(main) {
   await loadLookups();
   const me = JSON.parse(localStorage.getItem('crm_user') || '{}');
 
+  // Инструкция «как работать» по роли (закрывает часть #6 — памятка прямо на дашборде).
   const tipsForRole = {
-    admin: 'Вы видите все данные. Раздел «Интеграции» позволяет подключить внешние сайты и Telegram-боты.',
-    manager: 'Вы видите данные своих подчинённых. Создавайте сделки и распределяйте задачи.',
-    sales: 'Здесь сводка по вашим сделкам и задачам на сегодня. Перетащите сделку на воронке — стадия поменяется.',
-    warehouse: 'Откройте раздел «Прямые продажи», переключитесь на канбан и тащите заказы между стадиями.',
+    admin: 'Вы видите все данные и настройки. Интеграции, роли, площадки, бэкап — в вашем ведении.',
+    rop: 'Вы видите данные своих менеджеров и аналитику отдела. Контролируйте воронку и выполнение задач.',
+    manager: 'Набивайте заказы (Прямые продажи) и ведите сделки (Продажи). Переводите готовый заказ в «Зарезервирован».',
+    sales: 'Здесь сводка по вашим сделкам и задачам. Перетащите сделку на воронке — стадия поменяется.',
+    warehouse: 'Раздел «Отгрузки»: заказы в статусе «Зарезервирован» собирайте и подтверждайте отгрузку (массово или по одному), выгружайте Excel с QR.',
+    aus: 'Раздел «Каталог» и «Интеграции»: импортируйте товары и остатки из МойСклад, ведите прайсы, площадки и склады.',
+    finance: 'Раздел «Касса»: проверяйте транзакции по заказам, подтверждайте или отклоняйте, проставляйте комиссии.',
   };
 
   main.append(
@@ -2698,23 +2702,85 @@ export async function renderDashboard(main) {
       'div',
       { class: 'greeting-card' },
       el('div', { class: 'greeting-text' }, greeting(me.name)),
-      el(
-        'div',
-        { class: 'greeting-sub' },
-        tipsForRole[me.role] || 'Откройте боковое меню — там все разделы CRM.',
-      ),
+      el('div', { class: 'greeting-sub' }, tipsForRole[me.role] || 'Откройте боковое меню — там все разделы.'),
     ),
   );
 
   const container = el('div');
   main.append(container);
 
+  // Дашборд под роль: склад — отгрузки, АУС — каталог, остальные — CRM-метрики.
   try {
-    const stats = await api.dashboard();
-    renderDashboardContent(container, stats, me);
+    if (me.role === 'warehouse') {
+      await renderWarehouseDashboard(container);
+    } else if (me.role === 'aus') {
+      await renderAusDashboard(container);
+    } else if (me.role === 'finance') {
+      await renderFinanceDashboard(container);
+    } else {
+      const stats = await api.dashboard();
+      renderDashboardContent(container, stats, me);
+    }
   } catch (e) {
     container.append(el('div', { class: 'empty' }, `Ошибка: ${e.message}`));
   }
+}
+
+// Дашборд склада: заказы к отгрузке на ближайшую дату.
+async function renderWarehouseDashboard(container) {
+  const r = await api.readyToShip();
+  const orders = r.data || [];
+  const nextDate = r.next_shipping_date ? fmtDateTime(r.next_shipping_date) : '—';
+  const needQr = orders.filter((o) => o.marketplace === 'Avito' && o.payment_method === 'avito_delivery' && !o.shipment_qr).length;
+  container.append(
+    el('div', { class: 'dashboard-grid' },
+      statCard('К отгрузке', orders.length, 'заказов в статусе «Зарезервирован»'),
+      statCard('Ближайшая отгрузка', nextDate),
+      statCard('Без QR', needQr, needQr ? 'Avito-доставка без QR-кода' : 'все QR на месте'),
+    ),
+    el('div', { class: 'today-card card' },
+      el('h3', { style: { margin: '0 0 8px' } }, 'Что делать'),
+      el('ul', { class: 'today-list' },
+        el('li', {}, '1. Откройте раздел «Отгрузки»'),
+        el('li', {}, '2. Выгрузите заказы в Excel (с QR-кодами)'),
+        el('li', {}, '3. Соберите и подтвердите отгрузку — заказы уйдут в «Отгружен», менеджеры получат уведомление'),
+      ),
+    ),
+  );
+}
+
+// Дашборд АУС: состояние каталога и учётной системы.
+async function renderAusDashboard(container) {
+  let total = 0;
+  try {
+    const r = await api.list('products', { limit: 1 });
+    total = r.pagination?.total ?? 0;
+  } catch { /* ignore */ }
+  const lastStock = localStorage.getItem('last_stock_refresh') || '—';
+  container.append(
+    el('div', { class: 'dashboard-grid' },
+      statCard('Товаров в каталоге', total),
+      statCard('Остатки обновлены', lastStock),
+    ),
+    el('div', { class: 'today-card card' },
+      el('h3', { style: { margin: '0 0 8px' } }, 'Что делать'),
+      el('ul', { class: 'today-list' },
+        el('li', {}, '1. «Интеграции» → сохраните токен МойСклад (один раз)'),
+        el('li', {}, '2. «Каталог» → Импорт из МойСклад (товары), 🔄 Остатки, 🏬 Склады'),
+        el('li', {}, '3. Ведите прайсы по площадкам и настройку складов'),
+      ),
+    ),
+  );
+}
+
+// Дашборд финансиста: транзакции кассы на подтверждение (заглушка до полной кассы #9).
+async function renderFinanceDashboard(container) {
+  container.append(
+    el('div', { class: 'today-card card' },
+      el('h3', { style: { margin: '0 0 8px' } }, 'Касса'),
+      el('p', {}, 'Откройте раздел «Касса» — там транзакции по заказам, комиссии и подтверждение прихода/расхода.'),
+    ),
+  );
 }
 
 function renderDashboardContent(container, stats, me) {
