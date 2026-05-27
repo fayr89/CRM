@@ -846,6 +846,8 @@ table.data tbody tr:last-child td { border-bottom: none; }
 .warehouse-toggle-actions { display: flex; align-items: center; gap: 12px; margin-top: 8px; }
 .save-status { font-size: 13px; color: var(--text-muted); }
 .product-card-reserve { color: var(--warning); font-size: 12px; font-weight: 600; }
+.qr-preview { margin-top: 8px; }
+.qr-preview img { border: 1px solid var(--border); }
 
 /* Управление площадками */
 .marketplace-list { display: flex; flex-direction: column; gap: 4px; margin: 12px 0; }

@@ -1329,7 +1329,6 @@ async function openOrderForm(order, onSaved) {
   const paymentMethods = pricing.payment_methods || [];
   const orderTiers = pricing.order_tiers || [];
 
-  const refI = el('input', { type: 'text', value: cur.reference_number || '', placeholder: 'WB-123456' });
   const marketI = el(
     'select',
     {},
@@ -1337,11 +1336,38 @@ async function openOrderForm(order, onSaved) {
       el('option', { value: m.value, selected: m.value === cur.marketplace ? true : false }, m.label),
     ),
   );
-  const classI = el('input', { type: 'text', value: cur.client_classification || '', placeholder: 'B2B / B2C / VIP / …' });
+  // Классификация клиента: B2C по умолчанию, при B2B — обязательны данные клиента.
+  const classI = el(
+    'select',
+    {},
+    el('option', { value: 'B2C', selected: (cur.client_classification || 'B2C') === 'B2C' }, 'B2C (физлицо)'),
+    el('option', { value: 'B2B', selected: cur.client_classification === 'B2B' }, 'B2B (компания)'),
+  );
   const clientI = el('input', { type: 'text', value: cur.client_name || '' });
+  const clientPhoneI = el('input', { type: 'tel', value: cur.client_phone || '', placeholder: '+7…' });
   const currencyI = el('input', { type: 'text', value: cur.currency || 'RUB', maxlength: '3', style: { width: '80px' } });
   const notesI = el('textarea', {}, cur.notes || '');
-  const qrI = el('input', { type: 'text', value: cur.shipment_qr || '', placeholder: 'QR код отгрузки (обязателен для Avito + Авито доставка)' });
+  // Ссылка на диалог Avito — обязательна при площадке Avito.
+  const avitoDialogI = el('input', { type: 'url', value: cur.avito_dialog_url || '', placeholder: 'https://www.avito.ru/...' });
+  const avitoDialogRow = el('div', { class: 'form-row', style: { gridColumn: '1 / -1' } },
+    el('label', {}, 'Ссылка на диалог Avito *'), avitoDialogI);
+  // QR код отправления — текст или загруженное изображение (скрин). Храним в shipment_qr.
+  const qrI = el('input', { type: 'text', value: (cur.shipment_qr && !String(cur.shipment_qr).startsWith('data:')) ? cur.shipment_qr : '', placeholder: 'QR код (текст) или загрузите изображение ниже' });
+  let qrImageData = (cur.shipment_qr && String(cur.shipment_qr).startsWith('data:')) ? cur.shipment_qr : '';
+  const qrPreview = el('div', { class: 'qr-preview' });
+  const renderQrPreview = () => {
+    clear(qrPreview);
+    if (qrImageData) qrPreview.append(el('img', { src: qrImageData, style: { maxWidth: '160px', maxHeight: '160px', borderRadius: '6px' } }));
+  };
+  renderQrPreview();
+  const qrFileI = el('input', { type: 'file', accept: 'image/*' });
+  qrFileI.addEventListener('change', () => {
+    const file = qrFileI.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => { qrImageData = reader.result; renderQrPreview(); };
+    reader.readAsDataURL(file);
+  });
   const deliveryI = el(
     'select',
     {},
@@ -1457,20 +1483,29 @@ async function openOrderForm(order, onSaved) {
     payI.addEventListener('change', () => renderPricingPanel());
   }
 
+  // Ссылка на диалог Avito видна только при площадке Avito.
+  const updateAvitoVisibility = () => {
+    avitoDialogRow.style.display = marketI.value === 'Avito' ? '' : 'none';
+  };
+  marketI.addEventListener('change', updateAvitoVisibility);
+  updateAvitoVisibility();
+
   const body = el(
     'div',
     {},
     el(
       'div',
       { class: 'form-grid' },
-      el('div', { class: 'form-row' }, el('label', {}, 'Номер заказа (с площадки)'), refI),
       el('div', { class: 'form-row' }, el('label', {}, 'Площадка'), marketI),
       el('div', { class: 'form-row' }, el('label', {}, 'Классификация клиента'), classI),
-      el('div', { class: 'form-row' }, el('label', {}, 'Клиент'), clientI),
+      el('div', { class: 'form-row' }, el('label', {}, 'Клиент / компания'), clientI),
+      el('div', { class: 'form-row' }, el('label', {}, 'Телефон клиента'), clientPhoneI),
       payI ? el('div', { class: 'form-row' }, el('label', {}, 'Способ оплаты'), payI) : null,
       deliveryRow,
       el('div', { class: 'form-row' }, el('label', {}, 'Валюта'), currencyI),
-      el('div', { class: 'form-row', style: { gridColumn: '1 / -1' } }, el('label', {}, 'QR код отгрузки'), qrI),
+      avitoDialogRow,
+      el('div', { class: 'form-row', style: { gridColumn: '1 / -1' } },
+        el('label', {}, 'QR код отправления (текст или изображение)'), qrI, qrFileI, qrPreview),
       el('div', { class: 'form-row' }, el('label', {}, 'Заметки'), notesI),
     ),
     el('div', { class: 'form-row' }, el('label', {}, 'Позиции заказа *'), items.node),
@@ -1488,6 +1523,15 @@ async function openOrderForm(order, onSaved) {
         toast('Добавьте хотя бы одну позицию', 'error');
         return false;
       }
+      // Валидации новых требований.
+      if (marketI.value === 'Avito' && !avitoDialogI.value.trim()) {
+        toast('Для Avito укажите ссылку на диалог с клиентом', 'error');
+        return false;
+      }
+      if (classI.value === 'B2B' && (!clientI.value.trim() || !clientPhoneI.value.trim())) {
+        toast('Для B2B обязательны имя клиента и телефон', 'error');
+        return false;
+      }
       const p = computePricing(orderItems);
       if (p.hasRule && Math.abs(p.deviation) >= 1) {
         const sign = p.deviation > 0 ? 'выше' : 'ниже';
@@ -1499,18 +1543,19 @@ async function openOrderForm(order, onSaved) {
         if (!ok) return false;
       }
       const payload = {
-        reference_number: refI.value || null,
         marketplace: marketI.value || null,
         client_classification: classI.value || null,
         client_name: clientI.value || null,
+        client_phone: clientPhoneI.value.trim() || null,
         currency: currencyI.value || 'RUB',
         notes: notesI.value || null,
         items: orderItems,
         payment_method: payI ? payI.value || null : cur.payment_method ?? null,
         price_deviation: p.hasRule ? p.deviation : null,
         recommended_total: p.hasRule ? p.recommendedTotal : null,
-        shipment_qr: qrI.value.trim() || null,
+        shipment_qr: (qrImageData || qrI.value.trim()) || null,
         delivery_method: deliveryI.value || null,
+        avito_dialog_url: avitoDialogI.value.trim() || null,
       };
       if (isEdit) {
         await api.update('orders', cur.id, payload);

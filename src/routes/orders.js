@@ -25,13 +25,15 @@ const itemSchema = z.object({
   catalog_price: z.number().nonnegative().optional().nullable(),
 });
 
-// Метаданные прайса (необязательные): способ оплаты и отклонение цены от прайса.
+// Метаданные прайса и доставки (необязательные).
 const pricingMeta = {
   payment_method: z.string().optional().nullable(),
   price_deviation: z.number().optional().nullable(),
   recommended_total: z.number().optional().nullable(),
   shipment_qr: z.string().optional().nullable(),
   delivery_method: z.string().optional().nullable(),
+  client_phone: z.string().optional().nullable(),
+  avito_dialog_url: z.string().optional().nullable(),
 };
 
 const createSchema = z.object({
@@ -64,19 +66,24 @@ async function saveOrderPricingMeta(orderId, data) {
     data.price_deviation === undefined &&
     data.recommended_total === undefined &&
     data.shipment_qr === undefined &&
-    data.delivery_method === undefined
+    data.delivery_method === undefined &&
+    data.client_phone === undefined &&
+    data.avito_dialog_url === undefined
   ) {
     return;
   }
   try {
     await db.run(
       `UPDATE orders SET payment_method = ?, price_deviation = ?, recommended_total = ?,
-       shipment_qr = ?, delivery_method = ?, updated_at = NOW() WHERE id = ?`,
+       shipment_qr = ?, delivery_method = ?, client_phone = ?, avito_dialog_url = ?,
+       updated_at = NOW() WHERE id = ?`,
       data.payment_method ?? null,
       data.price_deviation ?? null,
       data.recommended_total ?? null,
       data.shipment_qr ?? null,
       data.delivery_method ?? null,
+      data.client_phone ?? null,
+      data.avito_dialog_url ?? null,
       orderId,
     );
   } catch (e) {
@@ -360,6 +367,28 @@ router.post(
     });
 
     await saveOrderPricingMeta(newId, data);
+
+    // B2B: заносим клиента в базу контактов и закрепляем за менеджером (если ещё нет).
+    if (data.client_classification === 'B2B' && data.client_name) {
+      try {
+        let existing = null;
+        if (data.client_phone) {
+          existing = await db.get('SELECT id FROM contacts WHERE phone = ?', data.client_phone);
+        }
+        if (!existing) {
+          await db.run(
+            `INSERT INTO contacts (first_name, phone, owner_id, created_at, updated_at)
+             VALUES (?, ?, ?, NOW(), NOW())`,
+            data.client_name,
+            data.client_phone ?? null,
+            req.user.id,
+          );
+        }
+      } catch (e) {
+        // eslint-disable-next-line no-console
+        console.error('[orders] B2B contact:', e.message);
+      }
+    }
 
     const order = await db.get('SELECT * FROM orders WHERE id = ?', newId);
     const items = await db.all(
