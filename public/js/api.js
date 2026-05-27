@@ -197,6 +197,7 @@ export const api = {
 
   // Прайсы: шаблон, загрузка, правила цен
   importPrices: (rows) => request('POST', '/api/products/import/prices', { body: { rows } }),
+  purgeLegacyPrices: () => request('POST', '/api/products/prices/purge-legacy'),
   pricingSettings: () => request('GET', '/api/pricing/settings'),
   savePricingSettings: (body) => request('PUT', '/api/pricing/settings', { body }),
 

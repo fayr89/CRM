@@ -590,9 +590,9 @@ router.post(
       throw Forbidden('Нет прав на этот заказ');
     }
     if (order.status !== 'new') throw BadRequest('Зарезервировать можно только новый заказ');
-    // QR обязателен для Avito + «Авито доставка» — отсутствие допустимо только в статусе «новый».
-    if (order.marketplace === 'Avito' && order.payment_method === 'avito_delivery' && !order.shipment_qr) {
-      throw BadRequest('Для площадки Avito и способа «Авито доставка» нужен QR код отгрузки. Добавьте его в заказ.');
+    // Номер отправления обязателен при резерве любого заказа.
+    if (!order.shipment_qr || !String(order.shipment_qr).trim()) {
+      throw BadRequest('Заполните «Номер отправления» в заказе — он обязателен при резерве.');
     }
     await db.run(
       `UPDATE orders SET status = 'reserved', warehouse_user_id = ?,

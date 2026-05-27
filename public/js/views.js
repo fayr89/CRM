@@ -1498,22 +1498,11 @@ async function openOrderForm(order, onSaved) {
   const avitoDialogI = el('input', { type: 'url', value: cur.avito_dialog_url || '', placeholder: 'https://www.avito.ru/...' });
   const avitoDialogRow = el('div', { class: 'form-row', style: { gridColumn: '1 / -1' } },
     el('label', {}, 'Ссылка на диалог Avito *'), avitoDialogI);
-  // QR код отправления — текст или загруженное изображение (скрин). Храним в shipment_qr.
-  const qrI = el('input', { type: 'text', value: (cur.shipment_qr && !String(cur.shipment_qr).startsWith('data:')) ? cur.shipment_qr : '', placeholder: 'QR код (текст) или загрузите изображение ниже' });
-  let qrImageData = (cur.shipment_qr && String(cur.shipment_qr).startsWith('data:')) ? cur.shipment_qr : '';
-  const qrPreview = el('div', { class: 'qr-preview' });
-  const renderQrPreview = () => {
-    clear(qrPreview);
-    if (qrImageData) qrPreview.append(el('img', { src: qrImageData, style: { maxWidth: '160px', maxHeight: '160px', borderRadius: '6px' } }));
-  };
-  renderQrPreview();
-  const qrFileI = el('input', { type: 'file', accept: 'image/*' });
-  qrFileI.addEventListener('change', () => {
-    const file = qrFileI.files?.[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = () => { qrImageData = reader.result; renderQrPreview(); };
-    reader.readAsDataURL(file);
+  // Номер отправления (трек-номер). Храним в shipment_qr. Обязателен при резерве.
+  const qrI = el('input', {
+    type: 'text',
+    value: (cur.shipment_qr && !String(cur.shipment_qr).startsWith('data:')) ? cur.shipment_qr : '',
+    placeholder: 'Номер отправления',
   });
   const deliveryI = el(
     'select',
@@ -1694,7 +1683,7 @@ async function openOrderForm(order, onSaved) {
       el('div', { class: 'form-row' }, el('label', {}, 'Валюта'), currencyI),
       avitoDialogRow,
       el('div', { class: 'form-row', style: { gridColumn: '1 / -1' } },
-        el('label', {}, 'QR код отправления (текст или изображение)'), qrI, qrFileI, qrPreview),
+        el('label', {}, 'Номер отправления'), qrI),
       el('div', { class: 'form-row' }, el('label', {}, 'Заметки'), notesI),
     ),
     el('div', { class: 'form-row' }, el('label', {}, 'Позиции заказа *'), items.node),
@@ -1742,7 +1731,7 @@ async function openOrderForm(order, onSaved) {
         payment_method: payI ? payI.value || null : cur.payment_method ?? null,
         price_deviation: p.hasRule ? p.deviation : null,
         recommended_total: p.hasRule ? p.recommendedTotal : null,
-        shipment_qr: (qrImageData || qrI.value.trim()) || null,
+        shipment_qr: qrI.value.trim() || null,
         delivery_method: deliveryI.value || null,
         avito_dialog_url: avitoDialogI.value.trim() || null,
         warehouse: warehouseI.value || null,
@@ -4657,6 +4646,20 @@ export async function renderProducts(main) {
     isAdmin
       ? el('button', { class: 'btn', onClick: () => openPricingSettings() }, '⚙ Правила цен')
       : null,
+    isAdmin
+      ? el('button', {
+          class: 'btn',
+          onClick: async () => {
+            if (!(await confirm('Удалить все прайсы без склада (старые, до привязки к складу)? Цены с указанным складом останутся.'))) return;
+            try {
+              const r = await api.purgeLegacyPrices();
+              toast(`Удалено прайсов без склада: ${r.deleted}`, 'success');
+              state.page = 1;
+              reload();
+            } catch (e) { toast(e.message, 'error'); }
+          },
+        }, '🧹 Очистить прайсы без склада')
+      : null,
     canEdit
       ? el(
           'button',
@@ -4793,7 +4796,7 @@ async function openProductForm(product, onSaved) {
     const newWarehouseI = el(
       'select',
       {},
-      el('option', { value: '' }, priceWarehouses.length ? 'Склад…' : '(все склады)'),
+      el('option', { value: '' }, 'Склад…'),
       ...priceWarehouses.map((s) => el('option', { value: s }, s)),
     );
     const newPriceI = el('input', { type: 'number', min: '0', step: 'any', placeholder: 'Цена' });
@@ -4814,13 +4817,13 @@ async function openProductForm(product, onSaved) {
                 toast('Выберите площадку и укажите цену', 'error');
                 return;
               }
-              if (priceWarehouses.length && !newWarehouseI.value) {
-                toast('Выберите склад', 'error');
+              if (!newWarehouseI.value) {
+                toast(priceWarehouses.length ? 'Выберите склад' : 'Сначала импортируйте склады (Каталог → 🏬 Склады)', 'error');
                 return;
               }
               await api.setProductPrice(cur.id, {
                 marketplace: newMarketI.value,
-                warehouse: newWarehouseI.value || '',
+                warehouse: newWarehouseI.value,
                 price: Number(newPriceI.value),
               });
               const updated = await api.get('products', cur.id);
@@ -5323,7 +5326,8 @@ async function openPriceUpload(onDone) {
         const r = await api.importPrices(parsed);
         statusEl.innerHTML =
           `✅ Обновлено цен: <strong>${r.upserted}</strong> из ${r.total}` +
-          (r.notFound ? ` · не найдено по артикулу: ${r.notFound}` : '');
+          (r.notFound ? ` · не найдено по артикулу: ${r.notFound}` : '') +
+          (r.skippedNoWarehouse ? ` · пропущено без склада: ${r.skippedNoWarehouse}` : '');
         toast('Прайс загружен', 'success');
         await onDone?.();
         return new Promise((resolve) => setTimeout(() => resolve(true), 1800));

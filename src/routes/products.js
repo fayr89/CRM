@@ -262,7 +262,7 @@ router.delete(
 
 const priceSchema = z.object({
   marketplace: z.string().min(1),
-  warehouse: z.string().default(''),
+  warehouse: z.string().min(1, 'Укажите склад'),
   price: z.number().nonnegative(),
 });
 
@@ -564,12 +564,15 @@ router.post(
   '/import/prices',
   requireRole('admin', 'manager'),
   asyncHandler(async (req, res) => {
-    const input = z.array(priceRowSchema).max(50000).parse(req.body?.rows || []);
+    const parsed = z.array(priceRowSchema).max(50000).parse(req.body?.rows || []);
+    // Строгая модель: цена без склада недопустима — отбрасываем такие строки.
+    const input = parsed.filter((r) => r.warehouse && String(r.warehouse).trim());
+    const skippedNoWarehouse = parsed.length - input.length;
     if (!input.length) {
-      res.json({ ok: true, upserted: 0, notFound: 0, total: 0 });
+      res.json({ ok: true, upserted: 0, notFound: 0, total: parsed.length, skippedNoWarehouse });
       return;
     }
-    // Дедуп по (sku, marketplace) — последняя строка побеждает. Иначе ON CONFLICT
+    // Дедуп по (sku, marketplace, warehouse) — последняя строка побеждает. Иначе ON CONFLICT
     // упадёт на повторе одного и того же ключа в рамках одного INSERT.
     const seen = new Map();
     for (const r of input) seen.set(`${r.sku}\u0000${r.marketplace}\u0000${r.warehouse || ""}`, r);
@@ -600,7 +603,17 @@ router.post(
     } catch (e) {
       throw BadRequest('Не удалось загрузить прайс: ' + e.message);
     }
-    res.json({ ok: true, upserted, notFound: rows.length - upserted, total: input.length });
+    res.json({ ok: true, upserted, notFound: rows.length - upserted, total: parsed.length, skippedNoWarehouse });
+  }),
+);
+
+// Удалить «легаси»-прайсы без склада (строгая модель канал+склад). Только админ.
+router.post(
+  '/prices/purge-legacy',
+  requireRole('admin'),
+  asyncHandler(async (_req, res) => {
+    const r = await db.run("DELETE FROM product_prices WHERE warehouse IS NULL OR warehouse = ''");
+    res.json({ ok: true, deleted: r.changes || 0 });
   }),
 );
 
