@@ -499,6 +499,25 @@ router.post(
       order.id,
     );
     const updated = await db.get('SELECT * FROM orders WHERE id = ?', order.id);
+    // Касса: при резерве заказ попадает в кассу транзакцией прихода (на подтверждение),
+    // если по этому заказу транзакции ещё нет.
+    try {
+      const existing = await db.get('SELECT id FROM payments WHERE order_id = ?', order.id);
+      if (!existing && (order.total_amount || 0) > 0) {
+        await db.run(
+          `INSERT INTO payments (manager_id, order_id, amount, currency, kind, status, notes, created_at, updated_at)
+           VALUES (?, ?, ?, ?, 'income', 'pending', ?, NOW(), NOW())`,
+          order.manager_id,
+          order.id,
+          order.total_amount,
+          order.currency || 'RUB',
+          `Заказ #${order.id}${order.marketplace ? ' · ' + order.marketplace : ''}`,
+        );
+      }
+    } catch (e) {
+      // eslint-disable-next-line no-console
+      console.error('[orders] касса при резерве:', e.message);
+    }
     await notify(
       order.manager_id,
       'order.reserved',
@@ -616,6 +635,34 @@ router.post(
       order.id,
     );
     const updated = await db.get('SELECT * FROM orders WHERE id = ?', order.id);
+    // Касса: если по заказу была транзакция прихода — отражаем отмену компенсирующим
+    // расходом (возврат). Так оборот по отменённому заказу обнуляется и виден в кассе.
+    try {
+      const income = await db.get(
+        `SELECT * FROM payments WHERE order_id = ? AND kind = 'income' ORDER BY id DESC LIMIT 1`,
+        order.id,
+      );
+      if (income) {
+        const alreadyReversed = await db.get(
+          `SELECT id FROM payments WHERE order_id = ? AND kind = 'expense'`,
+          order.id,
+        );
+        if (!alreadyReversed) {
+          await db.run(
+            `INSERT INTO payments (manager_id, order_id, amount, currency, kind, status, notes, created_at, updated_at)
+             VALUES (?, ?, ?, ?, 'expense', 'pending', ?, NOW(), NOW())`,
+            income.manager_id,
+            order.id,
+            income.amount,
+            income.currency || 'RUB',
+            `Возврат по отменённому заказу #${order.id}${reason ? ' · ' + reason : ''}`,
+          );
+        }
+      }
+    } catch (e) {
+      // eslint-disable-next-line no-console
+      console.error('[orders] касса при отмене:', e.message);
+    }
     emitEvent('order.cancelled', updated);
     res.json(updated);
   }),

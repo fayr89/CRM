@@ -9,43 +9,53 @@ const router = Router();
 
 router.use(authenticate);
 
-async function cashboxSummary(userId) {
+// Сумма с учётом типа (расход вычитается) минус комиссия — «чистый» оборот.
+const NET = `COALESCE(SUM(CASE WHEN kind = 'expense' THEN -amount ELSE amount END), 0)::float`;
+const COMM = `COALESCE(SUM(commission), 0)::float`;
+
+// scopeSql/params — фильтр (manager_id = ? для менеджера, пусто для admin/finance — вся касса).
+async function cashboxSummary(scopeSql, params) {
+  const w = scopeSql ? `${scopeSql} AND` : '';
   const confirmed = await db.get(
-    `SELECT COALESCE(SUM(amount), 0)::float AS sum, COUNT(*)::int AS count
-     FROM payments WHERE manager_id = ? AND status = 'confirmed'`,
-    userId,
+    `SELECT ${NET} AS sum, ${COMM} AS commission, COUNT(*)::int AS count
+     FROM payments p WHERE ${w} status = 'confirmed'`,
+    ...params,
   );
   const pending = await db.get(
-    `SELECT COALESCE(SUM(amount), 0)::float AS sum, COUNT(*)::int AS count
-     FROM payments WHERE manager_id = ? AND status = 'pending'`,
-    userId,
+    `SELECT ${NET} AS sum, COUNT(*)::int AS count
+     FROM payments p WHERE ${w} status = 'pending'`,
+    ...params,
   );
   const rejected = await db.get(
-    `SELECT COUNT(*)::int AS count
-     FROM payments WHERE manager_id = ? AND status = 'rejected'`,
-    userId,
+    `SELECT COUNT(*)::int AS count FROM payments p WHERE ${w} status = 'rejected'`,
+    ...params,
   );
   const recent = await db.all(
-    `SELECT p.*, o.reference_number AS order_reference
-     FROM payments p LEFT JOIN orders o ON o.id = p.order_id
-     WHERE p.manager_id = ? ORDER BY p.created_at DESC LIMIT 20`,
-    userId,
+    `SELECT p.*, o.reference_number AS order_reference, u.name AS manager_name
+     FROM payments p
+     LEFT JOIN orders o ON o.id = p.order_id
+     LEFT JOIN users u ON u.id = p.manager_id
+     ${scopeSql ? `WHERE ${scopeSql}` : ''} ORDER BY p.created_at DESC LIMIT 20`,
+    ...params,
   );
   return {
-    user_id: userId,
-    balance: confirmed.sum,
-    confirmed: { count: confirmed.count, sum: confirmed.sum },
+    balance: confirmed.sum - confirmed.commission,
+    confirmed: { count: confirmed.count, sum: confirmed.sum, commission: confirmed.commission },
     pending: { count: pending.count, sum: pending.sum },
     rejected: { count: rejected.count },
     recent,
   };
 }
 
-// Касса текущего пользователя
+// Касса текущего пользователя (admin/finance — вся касса, остальные — своя).
 router.get(
   '/',
   asyncHandler(async (req, res) => {
-    res.json(await cashboxSummary(req.user.id));
+    if (['admin', 'finance'].includes(req.user.role)) {
+      res.json(await cashboxSummary('', []));
+    } else {
+      res.json(await cashboxSummary('p.manager_id = ?', [req.user.id]));
+    }
   }),
 );
 
@@ -57,7 +67,7 @@ router.get(
     if (req.user.role !== 'admin' && !(await canAccessUser(req.user, id))) {
       throw Forbidden();
     }
-    res.json(await cashboxSummary(id));
+    res.json(await cashboxSummary('p.manager_id = ?', [id]));
   }),
 );
 

@@ -2174,6 +2174,7 @@ export async function renderCashbox(main) {
   await loadLookups();
   const me = JSON.parse(localStorage.getItem('crm_user') || '{}');
   const isAdmin = me.role === 'admin';
+  const canConfirm = ['admin', 'finance'].includes(me.role); // подтверждение транзакций
   const tableArea = el('div');
   const summaryArea = el('div');
 
@@ -2224,10 +2225,11 @@ export async function renderCashbox(main) {
       'tr',
       {},
       el('th', {}, 'Дата'),
+      el('th', {}, 'Тип'),
       el('th', {}, 'Сумма'),
+      el('th', {}, 'Комиссия'),
       el('th', {}, 'Метод'),
       el('th', {}, 'Заказ'),
-      el('th', {}, 'Транзакция'),
       el('th', {}, 'Менеджер'),
       el('th', {}, 'Статус'),
       el('th', { style: { textAlign: 'right' } }, 'Действия'),
@@ -2237,16 +2239,33 @@ export async function renderCashbox(main) {
         'tr',
         {},
         el('td', {}, fmtDateTime(p.created_at)),
+        el('td', {}, p.kind === 'expense' ? el('span', { class: 'dev-down' }, '− расход') : el('span', { class: 'dev-up' }, '+ приход')),
         el('td', {}, fmtMoney(p.amount, p.currency)),
+        el(
+          'td',
+          {},
+          // Комиссию финансист может проставить/изменить прямо в таблице.
+          canConfirm
+            ? (() => {
+                const ci = el('input', { type: 'number', min: '0', step: 'any', value: p.commission ?? '', style: { width: '90px' }, placeholder: '—' });
+                ci.addEventListener('change', async () => {
+                  try {
+                    await api.update('payments', p.id, { commission: ci.value === '' ? null : Number(ci.value) });
+                    toast('Комиссия сохранена', 'success');
+                  } catch (e) { toast(e.message, 'error'); }
+                });
+                return ci;
+              })()
+            : (p.commission != null ? fmtMoney(p.commission, p.currency) : '—'),
+        ),
         el('td', {}, p.method ? tr('payment_method', p.method) : '—'),
-        el('td', {}, p.order_reference ? `#${p.order_id} (${p.order_reference})` : p.order_id ? `#${p.order_id}` : '—'),
-        el('td', {}, p.reference || '—'),
+        el('td', {}, p.order_id ? `#${p.order_id}` : (p.reference || '—')),
         el('td', {}, p.manager_name || '—'),
         el('td', {}, badge(p.status, 'payment_status')),
         el(
           'td',
           { style: { textAlign: 'right' } },
-          isAdmin && p.status === 'pending'
+          canConfirm && p.status === 'pending'
             ? el(
                 'button',
                 {
@@ -2261,7 +2280,7 @@ export async function renderCashbox(main) {
                 'Подтвердить',
               )
             : null,
-          isAdmin && p.status === 'pending'
+          canConfirm && p.status === 'pending'
             ? el(
                 'button',
                 {
@@ -2294,6 +2313,13 @@ export async function renderCashbox(main) {
 
   async function openAddPayment() {
     const amountI = el('input', { type: 'number', min: '0', step: 'any', required: true });
+    const kindI = el(
+      'select',
+      {},
+      el('option', { value: 'income' }, '+ Приход'),
+      el('option', { value: 'expense' }, '− Расход'),
+    );
+    const commissionI = el('input', { type: 'number', min: '0', step: 'any', placeholder: 'Комиссия площадки (необязательно)' });
     const methodI = el(
       'select',
       {},
@@ -2330,14 +2356,16 @@ export async function renderCashbox(main) {
     const body = el(
       'div',
       {},
+      el('div', { class: 'form-row' }, el('label', {}, 'Тип'), kindI),
       el('div', { class: 'form-row' }, el('label', {}, 'Сумма *'), amountI),
+      el('div', { class: 'form-row' }, el('label', {}, 'Комиссия'), commissionI),
       el('div', { class: 'form-row' }, el('label', {}, 'Метод'), methodI),
       el('div', { class: 'form-row' }, el('label', {}, 'Номер транзакции'), referenceI),
       el('div', { class: 'form-row' }, el('label', {}, 'Привязать к заказу (id)'), orderI, orderDevHint),
       el('div', { class: 'form-row' }, el('label', {}, 'Заметки'), notesI),
     );
 
-    await openModal('Добавить платёж', body, {
+    await openModal('Добавить транзакцию', body, {
       primaryLabel: 'Добавить',
       onSubmit: async () => {
         const amount = Number(amountI.value);
@@ -2347,12 +2375,14 @@ export async function renderCashbox(main) {
         }
         await api.create('payments', {
           amount,
+          kind: kindI.value,
+          commission: commissionI.value ? Number(commissionI.value) : null,
           method: methodI.value || null,
           reference: referenceI.value || null,
           order_id: orderI.value ? Number(orderI.value) : null,
           notes: notesI.value || null,
         });
-        toast('Платёж добавлен, ждёт подтверждения', 'success');
+        toast('Транзакция добавлена, ждёт подтверждения', 'success');
         reload();
       },
     });
@@ -2363,7 +2393,7 @@ export async function renderCashbox(main) {
       'div',
       { class: 'page-header' },
       el('h1', { class: 'page-title' }, 'Касса'),
-      el('button', { class: 'btn btn-primary', onClick: openAddPayment }, 'Добавить платёж'),
+      el('button', { class: 'btn btn-primary', onClick: openAddPayment }, 'Добавить транзакцию'),
     ),
     summaryArea,
     el('h3', { class: 'page-subtitle', style: { marginTop: '16px', marginBottom: '8px' } }, 'Платежи'),

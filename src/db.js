@@ -464,6 +464,9 @@ export async function ensureInitialized() {
       await pool.query('ALTER TABLE orders ADD COLUMN IF NOT EXISTS avito_dialog_url TEXT');
       await pool.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS access_blocks TEXT');
       await pool.query('ALTER TABLE products ADD COLUMN IF NOT EXISTS supplier TEXT');
+      // Касса: комиссия площадки и тип транзакции (income/expense), привязка авто-транзакции к заказу.
+      await pool.query('ALTER TABLE payments ADD COLUMN IF NOT EXISTS commission REAL');
+      await pool.query("ALTER TABLE payments ADD COLUMN IF NOT EXISTS kind TEXT DEFAULT 'income'");
       // Обновляем CHECK роли (добавлены rop, aus, finance) — для users и invitations.
       await pool.query('ALTER TABLE users DROP CONSTRAINT IF EXISTS users_role_check');
       await pool.query(

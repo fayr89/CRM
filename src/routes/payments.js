@@ -13,6 +13,8 @@ const router = Router();
 const METHODS = ['cash', 'card', 'bank_transfer', 'other'];
 const STATUSES = ['pending', 'confirmed', 'rejected'];
 
+const KINDS = ['income', 'expense'];
+
 const createSchema = z.object({
   amount: z.number().positive(),
   currency: z.string().length(3).optional().default('RUB'),
@@ -20,6 +22,8 @@ const createSchema = z.object({
   reference: z.string().optional().nullable(),
   order_id: z.number().int().positive().optional().nullable(),
   notes: z.string().optional().nullable(),
+  commission: z.number().nonnegative().optional().nullable(),
+  kind: z.enum(KINDS).optional().default('income'),
 });
 
 const updateSchema = z.object({
@@ -29,6 +33,8 @@ const updateSchema = z.object({
   reference: z.string().optional().nullable(),
   order_id: z.number().int().positive().optional().nullable(),
   notes: z.string().optional().nullable(),
+  commission: z.number().nonnegative().optional().nullable(),
+  kind: z.enum(KINDS).optional(),
 });
 
 router.use(authenticate);
@@ -39,9 +45,9 @@ router.use(authenticate);
 //   sales — свои
 //   warehouse — никакие (не видит платежи)
 async function paymentsScope(user, col = 'manager_id') {
-  if (user.role === 'admin') return { sql: '', params: [] };
-  if (user.role === 'warehouse') return { sql: '1=0', params: [] };
-  if (user.role === 'sales') {
+  if (user.role === 'admin' || user.role === 'finance') return { sql: '', params: [] };
+  if (user.role === 'warehouse' || user.role === 'aus') return { sql: '1=0', params: [] };
+  if (user.role === 'sales' || user.role === 'manager') {
     return { sql: `${col} = ?`, params: [user.id] };
   }
   const ids = await getAccessibleUserIds(user);
@@ -120,8 +126,8 @@ router.post(
       if (!order) throw BadRequest('Указанный заказ не найден');
     }
     const result = await db.run(
-      `INSERT INTO payments (manager_id, order_id, amount, currency, method, reference, notes)
-       VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING id`,
+      `INSERT INTO payments (manager_id, order_id, amount, currency, method, reference, notes, commission, kind)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
       req.user.id,
       data.order_id ?? null,
       data.amount,
@@ -129,6 +135,8 @@ router.post(
       data.method ?? null,
       data.reference ?? null,
       data.notes ?? null,
+      data.commission ?? null,
+      data.kind ?? 'income',
     );
     res
       .status(201)
@@ -142,15 +150,17 @@ router.patch(
     const data = updateSchema.parse(req.body);
     const payment = await db.get('SELECT * FROM payments WHERE id = ?', req.params.id);
     if (!payment) throw NotFound('Платёж не найден');
-    if (req.user.role !== 'admin' && payment.manager_id !== req.user.id) {
+    const isFinanceOrAdmin = req.user.role === 'admin' || req.user.role === 'finance';
+    if (!isFinanceOrAdmin && payment.manager_id !== req.user.id) {
       throw Forbidden();
     }
-    if (payment.status !== 'pending' && req.user.role !== 'admin') {
+    // Финансист/админ могут править (в т.ч. комиссию) на любом статусе; остальные — только pending.
+    if (payment.status !== 'pending' && !isFinanceOrAdmin) {
       throw BadRequest('Менять можно только платёж в статусе «на подтверждении»');
     }
     const updates = [];
     const params = [];
-    for (const key of ['amount', 'currency', 'method', 'reference', 'order_id', 'notes']) {
+    for (const key of ['amount', 'currency', 'method', 'reference', 'order_id', 'notes', 'commission', 'kind']) {
       if (data[key] !== undefined) {
         updates.push(`${key} = ?`);
         params.push(data[key] === '' ? null : data[key]);
@@ -166,7 +176,7 @@ router.patch(
 
 router.post(
   '/:id/confirm',
-  requireRole('admin'),
+  requireRole('admin', 'finance'),
   asyncHandler(async (req, res) => {
     const payment = await db.get('SELECT * FROM payments WHERE id = ?', req.params.id);
     if (!payment) throw NotFound('Платёж не найден');
@@ -192,7 +202,7 @@ router.post(
 
 router.post(
   '/:id/reject',
-  requireRole('admin'),
+  requireRole('admin', 'finance'),
   asyncHandler(async (req, res) => {
     const reason = z.object({ reason: z.string().optional() }).parse(req.body || {}).reason;
     const payment = await db.get('SELECT * FROM payments WHERE id = ?', req.params.id);
