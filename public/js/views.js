@@ -2900,6 +2900,27 @@ function renderDashboardContent(container, stats, me) {
       el('div', { class: 'card' }, ...renderBars(dealsByStage, 'label', 'count')),
     ),
   );
+
+  // Прямые продажи (заказы) — для admin/rop/manager/sales.
+  const orders = stats.orders;
+  if (orders) {
+    const ordersByStatus = (orders.by_status || []).map((r) => ({
+      label: tr('order_status', r.status),
+      count: r.count,
+    }));
+    container.append(
+      el('div', { class: 'dashboard-grid' },
+        statCard('Прямые продажи', orders.total, 'всего заказов'),
+        statCard('Сумма заказов', fmtMoney(orders.total_amount), 'без отменённых'),
+        statCard('К отгрузке', (orders.by_status || []).find((r) => r.status === 'reserved')?.count || 0, 'в статусе «Зарезервирован»'),
+        statCard('Отгружено', (orders.by_status || []).find((r) => r.status === 'shipped')?.count || 0),
+      ),
+      el('div', { class: 'dashboard-section' },
+        el('h3', {}, 'Прямые продажи по статусу'),
+        el('div', { class: 'card' }, ...renderBars(ordersByStatus, 'label', 'count')),
+      ),
+    );
+  }
 }
 
 function statCard(label, value, sub) {

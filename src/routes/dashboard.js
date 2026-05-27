@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { ownerScopeClause } from '../access.js';
+import { ownerScopeClause, getAccessibleUserIds } from '../access.js';
 import { authenticate } from '../auth.js';
 import { db } from '../db.js';
 import { asyncHandler } from '../errors.js';
@@ -96,6 +96,22 @@ router.get(
       ...aParams,
     );
 
+    // Прямые продажи (заказы): фильтр по доступным менеджерам (admin/finance — все).
+    const ordIds = await getAccessibleUserIds(req.user);
+    const ordWhere = ordIds === null ? '' : 'WHERE manager_id = ANY(?)';
+    const ordParams = ordIds === null ? [] : [ordIds];
+    const ordersByStatus = await db
+      .all(
+        `SELECT status, COUNT(*)::int AS count, COALESCE(SUM(total_amount), 0)::float AS amount
+         FROM orders ${ordWhere} GROUP BY status`,
+        ...ordParams,
+      )
+      .catch(() => []);
+    const ordersTotal = ordersByStatus.reduce((s, r) => s + r.count, 0);
+    const ordersAmount = ordersByStatus
+      .filter((r) => !['cancelled'].includes(r.status))
+      .reduce((s, r) => s + r.amount, 0);
+
     res.json({
       totals,
       leads: { by_status: leadsByStatus },
@@ -106,6 +122,11 @@ router.get(
         won: { count: wonDeals.count, amount: Number(wonDeals.amount) },
         lost: { count: lostDeals.count, amount: Number(lostDeals.amount) },
         win_rate: Number(winRate.toFixed(4)),
+      },
+      orders: {
+        by_status: ordersByStatus,
+        total: ordersTotal,
+        total_amount: ordersAmount,
       },
       activities: {
         upcoming: upcoming.n,
