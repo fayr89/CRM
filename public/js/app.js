@@ -160,21 +160,22 @@ function renderLogin() {
   );
 }
 
+// Переключение роли просмотра (имперсонация). role='admin' — вернуться к себе.
+async function switchRole(role) {
+  try {
+    const r = await api.impersonate(role);
+    setSession(r.token, r.user);
+    location.hash = '#/dashboard';
+    renderApp();
+  } catch (e) {
+    toast(e.message || 'Ошибка', 'error');
+  }
+}
+
 // Переключение роли для просмотра (только админ). Возвращает null для остальных.
 function buildRoleSwitcher(user) {
   const isAdmin = user.role === 'admin' || user.impersonating;
   if (!isAdmin) return null;
-
-  const switchRole = async (role) => {
-    try {
-      const r = await api.impersonate(role);
-      setSession(r.token, r.user);
-      location.hash = '#/dashboard';
-      renderApp();
-    } catch (e) {
-      toast(e.message || 'Ошибка', 'error');
-    }
-  };
 
   if (user.impersonating) {
     return el(
@@ -299,6 +300,19 @@ function renderShell() {
   sidebar.querySelectorAll('.sidebar-nav a').forEach((a) => a.addEventListener('click', closeMenu));
 
   root.append(el('div', { class: 'shell' }, sidebar, overlay, main), menuBtn);
+
+  // При имперсонации — плавающая кнопка возврата вверху (всегда доступна, не зависит от scroll меню).
+  if (user.impersonating) {
+    root.append(
+      el(
+        'div',
+        { class: 'impersonation-bar' },
+        el('span', {}, `👁 Просмотр как ${tr('role', user.role) || user.role}`),
+        el('button', { onClick: () => switchRole('admin') }, '← Вернуться к админу'),
+      ),
+    );
+  }
+
   startNotificationsPolling(bellCounter);
   return main;
 }

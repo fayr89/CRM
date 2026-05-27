@@ -73,6 +73,19 @@ a:hover { text-decoration: underline; }
 }
 .role-impersonating { color: #fbbf24; font-weight: 600; margin-bottom: 4px; }
 .role-back-btn { width: 100%; }
+/* Плавающая панель имперсонации — всегда доступна вверху */
+.impersonation-bar {
+  position: fixed; top: 10px; right: 10px; z-index: 250;
+  display: flex; align-items: center; gap: 10px;
+  background: #d97706; color: #fff; padding: 6px 12px;
+  border-radius: 8px; font-size: 13px; font-weight: 600;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.25); max-width: calc(100vw - 80px);
+}
+.impersonation-bar button {
+  background: #fff; color: #d97706; border: none; min-height: 0;
+  padding: 4px 10px; border-radius: 6px; font-weight: 600;
+  cursor: pointer; font-size: 12px; white-space: nowrap;
+}
 
 .main {
   flex: 1; overflow-y: auto;
