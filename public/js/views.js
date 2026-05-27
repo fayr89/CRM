@@ -2200,18 +2200,24 @@ export async function renderCashbox(main) {
 
   function renderSummary(cashbox) {
     clear(summaryArea);
+    // Две крупные суммы рядом: подтверждённый баланс и ожидающий подтверждения.
     summaryArea.append(
       el(
         'div',
-        { class: 'balance-card' },
-        el('div', { class: 'label' }, 'Баланс кассы'),
-        el('div', { class: 'value' }, fmtMoney(cashbox.balance, 'RUB')),
+        { class: 'balance-cards' },
         el(
           'div',
-          { class: 'sub' },
-          `Подтверждено платежей: ${cashbox.confirmed.count} (${fmtMoney(cashbox.confirmed.sum, 'RUB')})  ·  ` +
-            `На подтверждении: ${cashbox.pending.count} (${fmtMoney(cashbox.pending.sum, 'RUB')})  ·  ` +
-            `Отклонено: ${cashbox.rejected.count}`,
+          { class: 'balance-card confirmed' },
+          el('div', { class: 'label' }, '✅ Подтверждённый баланс'),
+          el('div', { class: 'value' }, fmtMoney(cashbox.balance, 'RUB')),
+          el('div', { class: 'sub' }, `${cashbox.confirmed.count} транзакций · комиссия ${fmtMoney(cashbox.confirmed.commission || 0, 'RUB')}`),
+        ),
+        el(
+          'div',
+          { class: 'balance-card pending' },
+          el('div', { class: 'label' }, '⏳ Ожидает подтверждения'),
+          el('div', { class: 'value' }, fmtMoney(cashbox.pending.sum, 'RUB')),
+          el('div', { class: 'sub' }, `${cashbox.pending.count} транзакций · отклонено ${cashbox.rejected.count}`),
         ),
       ),
     );
@@ -2247,8 +2253,8 @@ export async function renderCashbox(main) {
         el(
           'td',
           {},
-          // Комиссию финансист может проставить/изменить прямо в таблице.
-          canConfirm
+          // Комиссию вводит менеджер (своя транзакция) или финансист/админ (любая).
+          (canConfirm || p.manager_id === me.id)
             ? (() => {
                 const ci = el('input', { type: 'number', min: '0', step: 'any', value: p.commission ?? '', style: { width: '90px' }, placeholder: '—' });
                 ci.addEventListener('change', async () => {
@@ -4662,13 +4668,16 @@ async function openMoyskladImport(onDone) {
 }
 
 async function openMoyskladStock(onDone) {
+  const tokenStatus = await api.moyskladTokenStatus().catch(() => ({ hasToken: false }));
   const tokenI = el('input', { type: 'password', placeholder: 'Bearer-токен МойСклад' });
   const statusEl = el('div', { class: 'import-status' });
   const body = el(
     'div',
     {},
-    el('p', {}, 'Быстро обновит только остатки у уже импортированных товаров — без повторной выгрузки каталога. Нужен тот же токен МойСклад.'),
-    el('div', { class: 'form-row' }, el('label', {}, 'Токен'), tokenI),
+    el('p', {}, 'Быстро обновит только остатки у уже импортированных товаров — без повторной выгрузки каталога.'),
+    tokenStatus.hasToken
+      ? el('p', { class: 'hint' }, '✓ Токен сохранён в Интеграциях — поле можно не заполнять.')
+      : el('div', { class: 'form-row' }, el('label', {}, 'Токен'), tokenI),
     statusEl,
   );
   await openModal('Обновить остатки из МойСклад', body, {
@@ -4690,6 +4699,7 @@ async function openMoyskladStock(onDone) {
 }
 
 async function openMoyskladStores(onDone) {
+  const tokenStatus = await api.moyskladTokenStatus().catch(() => ({ hasToken: false }));
   const tokenI = el('input', { type: 'password', placeholder: 'Bearer-токен МойСклад' });
   const statusEl = el('div', { class: 'import-status' });
   let isLoading = false;
@@ -4697,15 +4707,17 @@ async function openMoyskladStores(onDone) {
     'div',
     {},
     el('p', {}, 'Загрузит остатки по складам (на каком складе сколько). Для большого каталога грузится частями — подождите завершения, не закрывайте окно.'),
-    el('div', { class: 'form-row' }, el('label', {}, 'Токен'), tokenI),
+    tokenStatus.hasToken
+      ? el('p', { class: 'hint' }, '✓ Токен сохранён в Интеграциях — поле можно не заполнять.')
+      : el('div', { class: 'form-row' }, el('label', {}, 'Токен'), tokenI),
     statusEl,
   );
   await openModal('Остатки по складам', body, {
     primaryLabel: 'Загрузить склады',
     onSubmit: async () => {
       const token = tokenI.value.trim();
-      if (!token) {
-        statusEl.innerHTML = '❌ Введите токен';
+      if (!token && !tokenStatus.hasToken) {
+        statusEl.innerHTML = '❌ Введите токен или сохраните его в Интеграциях';
         return false;
       }
       isLoading = true;

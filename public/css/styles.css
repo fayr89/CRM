@@ -200,6 +200,10 @@ table.data tbody tr:last-child td { border-bottom: none; }
 .items-editor .remove-btn { background: transparent; border: none; color: var(--danger); cursor: pointer; font-size: 16px; }
 .items-editor tfoot td { padding-top: 8px; font-weight: 600; }
 
+.balance-cards { display: flex; gap: 12px; margin-bottom: 16px; flex-wrap: wrap; }
+.balance-cards .balance-card { flex: 1; min-width: 220px; margin-bottom: 0; }
+.balance-card.confirmed { background: linear-gradient(135deg, #16a34a, #15803d); }
+.balance-card.pending { background: linear-gradient(135deg, #d97706, #b45309); }
 .balance-card {
   background: linear-gradient(135deg, #2563eb, #1d4ed8); color: #fff;
   padding: 24px; border-radius: var(--radius); margin-bottom: 16px;
