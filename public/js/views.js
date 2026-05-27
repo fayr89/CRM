@@ -892,25 +892,6 @@ function itemsEditor(initialItems = [], { getMarketplace, onChange, hiddenSet = 
     }
   }
 
-  function setRowFromProduct(row, product, marketplacePrice) {
-    const i = row._inputs;
-    i.sku.value = product.sku || '';
-    i.name.value = product.name;
-    const price = marketplacePrice ?? product.cost_price ?? 0;
-    i.unit_price.value = price;
-    row._meta.product_id = product.id;
-    row._meta.image_url = product.image_url || null;
-    row._meta.catalog_price = marketplacePrice ?? null;
-    row._meta.stock_by_store = product.stock_by_store ?? null;
-    i.imageCell.innerHTML = '';
-    if (product.image_url) {
-      i.imageCell.append(el('img', { src: product.image_url, class: 'item-thumb', alt: '' }));
-    }
-    updatePriceHint(row);
-    updateStoresHint(row);
-    recalc();
-  }
-
   function addRow(item = {}) {
     const meta = {
       product_id: item.product_id || null,
@@ -949,22 +930,6 @@ function itemsEditor(initialItems = [], { getMarketplace, onChange, hiddenSet = 
       recalc();
     }));
 
-    const pickBtn = el(
-      'button',
-      {
-        type: 'button',
-        class: 'btn btn-sm pick-product',
-        onClick: async () => {
-          const product = await openProductPicker(getMarketplace?.() || '', hiddenSet);
-          if (product) {
-            setRowFromProduct(row, product, product.marketplace_price);
-          }
-        },
-        title: 'Выбрать товар из каталога',
-      },
-      '📦',
-    );
-
     const removeBtn = el(
       'button',
       {
@@ -982,7 +947,7 @@ function itemsEditor(initialItems = [], { getMarketplace, onChange, hiddenSet = 
       'tr',
       {},
       imageCell,
-      el('td', {}, pickBtn, skuI),
+      el('td', {}, skuI),
       el('td', {}, nameI, storesHint),
       el('td', {}, qtyI),
       el('td', {}, priceI, priceHint),

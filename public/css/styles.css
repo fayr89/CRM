@@ -578,7 +578,6 @@ table.data tbody tr:last-child td { border-bottom: none; }
 
 /* ===== Пикер товара ===== */
 .product-picker-modal { max-width: 640px; }
-.pick-product { padding: 3px 6px; margin-right: 4px; font-size: 14px; }
 .picker-marketplace-tag {
   background: #dbeafe; color: #1e40af;
   padding: 2px 8px; border-radius: 999px;
