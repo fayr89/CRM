@@ -250,7 +250,7 @@ const RESOURCES = {
     form: () => [
       { name: 'title', label: 'Название', required: true },
       { name: 'amount', label: 'Сумма', type: 'number', default: 0 },
-      { name: 'currency', label: 'Валюта', default: 'USD' },
+      { name: 'currency', label: 'Валюта', default: 'RUB' },
       {
         name: 'stage',
         label: 'Стадия',
@@ -907,6 +907,7 @@ function itemsEditor(initialItems = [], { getMarketplace, onChange } = {}) {
       image_url: product.image_url,
       catalog_price: product.marketplace_price ?? null,
     });
+    toast(`Товар добавлен: ${product.name}`, 'success');
   }
 
   // Поле поиска с autocomplete-выпадашкой
@@ -3591,13 +3592,15 @@ export async function renderProducts(main) {
               el('span', {}, 'Себестоимость '),
               el('strong', {}, fmtMoney(p.cost_price, 'RUB')),
             ),
-            el(
-              'div',
-              { class: 'product-card-pricelists' },
-              p.price_count > 0
-                ? `${p.price_count} прайс${p.price_count === 1 ? '' : 'а/ов'}`
-                : el('span', { class: 'no-prices' }, 'нет прайсов'),
-            ),
+            Array.isArray(p.prices) && p.prices.length
+              ? el(
+                  'div',
+                  { class: 'product-card-pricelists' },
+                  ...p.prices.map((pr) =>
+                    el('div', { class: 'price-channel' }, `${pr.marketplace}: ${fmtMoney(pr.price, 'RUB')}`),
+                  ),
+                )
+              : el('div', { class: 'product-card-pricelists' }, el('span', { class: 'no-prices' }, 'нет прайсов')),
           ),
           (() => {
             const sv = computeStoreView(p.stock_by_store, hiddenSet);
@@ -3670,7 +3673,7 @@ export async function renderProducts(main) {
             el('th', {}, 'Себестоимость'),
             el('th', {}, 'Остаток'),
             el('th', {}, 'Склады'),
-            el('th', {}, 'Прайсы'),
+            el('th', {}, 'Канал — цена'),
             el('th', {}, 'Статус'),
           ),
         ),
@@ -3724,8 +3727,10 @@ export async function renderProducts(main) {
               })(),
               el(
                 'td',
-                {},
-                p.price_count > 0 ? String(p.price_count) : el('span', { class: 'no-prices' }, 'нет'),
+                { class: 'prices-cell' },
+                Array.isArray(p.prices) && p.prices.length
+                  ? p.prices.map((pr) => `${pr.marketplace}: ${fmtMoney(pr.price, 'RUB')}`).join(', ')
+                  : el('span', { class: 'no-prices' }, 'нет'),
               ),
               el('td', {}, p.active ? 'Активен' : el('span', { class: 'muted' }, 'Архив')),
             ),
@@ -4025,6 +4030,35 @@ async function openProductForm(product, onSaved) {
         descI,
       ),
     ),
+    isEdit && Array.isArray(cur.stock_by_store) && cur.stock_by_store.length
+      ? (() => {
+          const visible = cur.stock_by_store.filter((s) => (Number(s.stock) || 0) !== 0 || (Number(s.reserve) || 0) !== 0);
+          const totalStock = visible.reduce((sum, s) => sum + (Number(s.stock) || 0), 0);
+          const totalReserve = visible.reduce((sum, s) => sum + (Number(s.reserve) || 0), 0);
+          return el(
+            'div',
+            { class: 'form-row', style: { gridColumn: '1 / -1', marginTop: '16px' } },
+            el('label', {}, `Остатки по складам (всего: ${totalStock}${totalReserve > 0 ? `, резерв: ${totalReserve}` : ''})`),
+            visible.length
+              ? el(
+                  'div',
+                  { class: 'product-stores-table' },
+                  ...visible.map((s) =>
+                    el(
+                      'div',
+                      { class: 'product-store-row' },
+                      el('span', { class: 'store-name' }, s.store),
+                      el('span', { class: 'store-stock' }, `${Number(s.stock) || 0} шт`),
+                      (Number(s.reserve) || 0) > 0
+                        ? el('span', { class: 'store-reserve' }, `резерв: ${Number(s.reserve)}`)
+                        : null,
+                    ),
+                  ),
+                )
+              : el('div', { class: 'hint' }, 'Нет остатков ни на одном складе.'),
+          );
+        })()
+      : null,
     isEdit
       ? el(
           'div',

@@ -15,7 +15,7 @@ const OPEN_STAGES = ['new', 'qualified', 'proposal', 'negotiation'];
 const baseSchema = z.object({
   title: z.string().min(1),
   amount: z.number().nonnegative().optional().default(0),
-  currency: z.string().length(3).optional().default('USD'),
+  currency: z.string().length(3).optional().default('RUB'),
   stage: z.enum(STAGES).optional().default('new'),
   probability: z.number().int().min(0).max(100).optional(),
   expected_close_date: z.string().optional().nullable(),
@@ -161,7 +161,7 @@ router.post(
        (title, amount, currency, stage, probability, expected_close_date,
         contact_id, company_id, owner_id, description)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
-      data.title, data.amount ?? 0, data.currency ?? 'USD', data.stage, probability,
+      data.title, data.amount ?? 0, data.currency ?? 'RUB', data.stage, probability,
       data.expected_close_date ?? null, data.contact_id ?? null, data.company_id ?? null,
       ownerId, data.description ?? null,
     );

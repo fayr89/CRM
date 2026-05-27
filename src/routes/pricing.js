@@ -14,6 +14,7 @@ const DEFAULT_PAYMENT_METHODS = [
   { key: 'cash_card', label: 'Наличные / Перевод на карту', percent: 0 },
   { key: 'rs_no_vat', label: 'На РС (Без НДС)', percent: 0 },
   { key: 'rs_vat', label: 'На РС (С НДС)', percent: 0 },
+  { key: 'avito_delivery', label: 'Авито доставка', percent: 0 },
 ];
 const DEFAULT_ORDER_TIERS = [];
 

@@ -36,7 +36,7 @@ export function fmtDateTime(s) {
   return d.toLocaleString('ru-RU');
 }
 
-export function fmtMoney(amount, currency = 'USD') {
+export function fmtMoney(amount, currency = 'RUB') {
   if (amount == null) return '—';
   try {
     return new Intl.NumberFormat('ru-RU', {
