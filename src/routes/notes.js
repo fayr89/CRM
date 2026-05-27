@@ -4,6 +4,7 @@ import { authenticate } from '../auth.js';
 import { db } from '../db.js';
 import { Forbidden, NotFound, asyncHandler } from '../errors.js';
 import { parsePagination, paginated } from '../query.js';
+import { canAccessUser, ownerScopeClause } from '../access.js';
 
 const router = Router();
 
@@ -28,6 +29,12 @@ router.get(
 
     const where = [];
     const params = [];
+    // Видимость заметок — по автору в рамках иерархии (admin видит все).
+    const scope = await ownerScopeClause(req.user, 'author_id');
+    if (scope.sql) {
+      where.push(scope.sql);
+      params.push(...scope.params);
+    }
     if (req.query.related_to_type) {
       where.push('related_to_type = ?');
       params.push(req.query.related_to_type);
@@ -68,6 +75,9 @@ router.get(
       req.params.id,
     );
     if (!note) throw NotFound('Заметка не найдена');
+    if (!(await canAccessUser(req.user, note.author_id))) {
+      throw Forbidden('Нет доступа к этой заметке');
+    }
     res.json(note);
   }),
 );

@@ -479,6 +479,10 @@ export async function ensureInitialized() {
       await pool.query("ALTER TABLE product_prices ADD COLUMN IF NOT EXISTS warehouse TEXT NOT NULL DEFAULT ''");
       await pool.query('ALTER TABLE product_prices DROP CONSTRAINT IF EXISTS product_prices_product_id_marketplace_key');
       await pool.query('CREATE UNIQUE INDEX IF NOT EXISTS uniq_product_prices_pmw ON product_prices (product_id, marketplace, warehouse)');
+      // Индексы под частые фильтры/сортировки (ускоряют списки заказов/возвратов и каталог).
+      await pool.query('CREATE INDEX IF NOT EXISTS idx_orders_created_at ON orders(created_at DESC)');
+      await pool.query('CREATE INDEX IF NOT EXISTS idx_orders_return_status ON orders(return_status) WHERE return_status IS NOT NULL');
+      await pool.query('CREATE INDEX IF NOT EXISTS idx_products_supplier ON products(supplier)');
       // Строгая модель «канал+склад»: цены без склада недопустимы — чистим их на каждом
       // холодном старте (самовосстановление, если что-то просочилось из старого клиента).
       await pool.query("DELETE FROM product_prices WHERE warehouse IS NULL OR warehouse = ''");

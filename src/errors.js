@@ -28,8 +28,8 @@ export function errorHandler(err, req, res, _next) {
       })),
     });
   }
-  if (err?.code === 'SQLITE_CONSTRAINT_UNIQUE') {
-    return res.status(409).json({ error: 'Duplicate value', details: err.message });
+  if (err?.code === '23505' || err?.code === 'SQLITE_CONSTRAINT_UNIQUE') {
+    return res.status(409).json({ error: 'Запись с такими данными уже существует' });
   }
   // eslint-disable-next-line no-console
   console.error('[error]', err);

@@ -4982,12 +4982,14 @@ async function openMoyskladImport(onDone) {
       statusEl.textContent = '⏳ Импортируем, это может занять до минуты…';
       try {
         const r = await api.importMoysklad(tokenI.value.trim() || undefined);
+        // Данные из МойСклад (название/артикул поставщика) экранируем — это внешний источник.
+        const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
         const parts = [`создано ${r.created}`, `обновлено ${r.updated}`, `всего получено из МойСклад ${r.total}`];
         if (r.skipped) parts.push(`пропущено ${r.skipped}`);
         statusEl.innerHTML = `✅ Готово: ${parts.join(', ')}`;
-        statusEl.innerHTML += `<div style="margin-top:6px;font-size:.85em;color:#64748b">Поставщики: у ${r.withSupplier ?? 0} товаров${r.supplierSample ? ` (напр.: ${r.supplierSample})` : ' — поле supplier пустое в МойСклад'}</div>`;
+        statusEl.innerHTML += `<div style="margin-top:6px;font-size:.85em;color:#64748b">Поставщики: у ${r.withSupplier ?? 0} товаров${r.supplierSample ? ` (напр.: ${esc(r.supplierSample)})` : ' — поле supplier пустое в МойСклад'}</div>`;
         if (r.skipped && r.skipped_details?.length) {
-          const sample = r.skipped_details.slice(0, 3).map((s) => `• ${s.name}${s.sku ? ` (${s.sku})` : ''}: ${s.error}`).join('<br>');
+          const sample = r.skipped_details.slice(0, 3).map((s) => `• ${esc(s.name)}${s.sku ? ` (${esc(s.sku)})` : ''}: ${esc(s.error)}`).join('<br>');
           statusEl.innerHTML += `<div style="margin-top:8px;font-size:.9em;opacity:.8">${sample}${r.skipped_details.length > 3 ? `<br>… ещё ${r.skipped_details.length - 3}` : ''}</div>`;
         }
         toast('Импорт завершён', 'success');
