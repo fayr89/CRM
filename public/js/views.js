@@ -1399,22 +1399,13 @@ async function openOrderForm(order, onSaved) {
     return m ? Number(m.percent) || 0 : 0;
   }
   let applyTierDiscount = true; // менеджер может отклонить скидку по объёму
+  let items = null; // редактор позиций; объявлен заранее, чтобы renderPricingPanel не падал
   function tierPctFor(subtotal) {
     let pct = 0;
     for (const t of orderTiers) {
       if (subtotal >= Number(t.threshold)) pct = Number(t.percent) || 0;
     }
     return pct;
-  }
-  // Доступный по сумме процент (без учёта применён/нет) — для предложения скидки.
-  function availableTierPct() {
-    const payPct = currentPaymentPct();
-    let base = 0;
-    for (const it of items.getItems()) {
-      const unit = it.catalog_price != null ? it.catalog_price : it.unit_price;
-      base += unit * (1 + payPct / 100) * it.quantity;
-    }
-    return tierPctFor(base);
   }
   // Рекомендованная цена = цена канала × (1 + % оплаты) × (1 + % по объёму).
   // Порог по объёму берётся от суммы заказа по прайсу с учётом оплаты.
@@ -1425,7 +1416,8 @@ async function openOrderForm(order, onSaved) {
       const unit = it.catalog_price != null ? it.catalog_price : it.unit_price;
       baseForTier += unit * (1 + payPct / 100) * it.quantity;
     }
-    const tierPct = applyTierDiscount ? tierPctFor(baseForTier) : 0;
+    const availTierPct = tierPctFor(baseForTier); // доступный по сумме (для предложения скидки)
+    const tierPct = applyTierDiscount ? availTierPct : 0;
     let recommendedTotal = 0;
     let actualTotal = 0;
     let hasRule = false;
@@ -1441,6 +1433,7 @@ async function openOrderForm(order, onSaved) {
     return {
       payPct,
       tierPct,
+      availTierPct,
       recommendedTotal: round2(recommendedTotal),
       actualTotal: round2(actualTotal),
       deviation: round2(actualTotal - recommendedTotal),
@@ -1448,7 +1441,9 @@ async function openOrderForm(order, onSaved) {
     };
   }
   function renderPricingPanel(list) {
-    const p = computePricing(list || items.getItems());
+    // items может быть ещё не инициализирован при первом вызове из itemsEditor — безопасно берём [].
+    const safeList = list || (items && items.getItems ? items.getItems() : []);
+    const p = computePricing(safeList);
     clear(pricingPanel);
     if (!p.hasRule && !orderTiers.length && !paymentMethods.length) return;
     pricingPanel.append(
@@ -1478,7 +1473,7 @@ async function openOrderForm(order, onSaved) {
       );
     }
     // Предложение скидки по сумме: если порог достигнут — показываем с возможностью отклонить.
-    const avail = availableTierPct();
+    const avail = p.availTierPct;
     if (avail < 0) {
       const cb = el('input', { type: 'checkbox' });
       cb.checked = applyTierDiscount;
@@ -1500,7 +1495,7 @@ async function openOrderForm(order, onSaved) {
     }
   }
 
-  const items = itemsEditor(cur.items || [], {
+  items = itemsEditor(cur.items || [], {
     getMarketplace: () => marketI.value,
     onChange: renderPricingPanel,
   });
