@@ -3,6 +3,7 @@ import express from 'express';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { errorHandler } from './errors.js';
+import { db } from './db.js';
 import authRoutes from './routes/auth.js';
 import usersRoutes from './routes/users.js';
 import companiesRoutes from './routes/companies.js';
@@ -66,6 +67,21 @@ export function createApp({ serveStatic = true } = {}) {
 
   app.get('/health', (_req, res) => {
     res.json({ status: 'ok', timestamp: new Date().toISOString() });
+  });
+
+  // TEMP-диагностика прайсов (без авторизации, только агрегаты) — удалить после отладки.
+  app.get('/health/prices', async (_req, res) => {
+    try {
+      const total = await db.get('SELECT COUNT(*)::int AS n FROM product_prices');
+      const nullWh = await db.get('SELECT COUNT(*)::int AS n FROM product_prices WHERE warehouse IS NULL');
+      const emptyWh = await db.get("SELECT COUNT(*)::int AS n FROM product_prices WHERE warehouse = ''");
+      const byWh = await db.all(
+        "SELECT COALESCE(warehouse, '<NULL>') AS wh, length(warehouse) AS len, COUNT(*)::int AS n FROM product_prices GROUP BY warehouse ORDER BY n DESC LIMIT 30",
+      );
+      res.json({ total: total.n, nullWarehouse: nullWh.n, emptyWarehouse: emptyWh.n, byWarehouse: byWh });
+    } catch (e) {
+      res.status(500).json({ error: e.message });
+    }
   });
 
   app.get('/api', (_req, res) => {
