@@ -850,6 +850,11 @@ table.data tbody tr:last-child td { border-bottom: none; }
 .warehouse-toggle-actions { display: flex; align-items: center; gap: 12px; margin-top: 8px; }
 .save-status { font-size: 13px; color: var(--text-muted); }
 .product-card-reserve { color: var(--warning); font-size: 12px; font-weight: 600; }
+.help-row { margin-bottom: 12px; }
+.help-btn { color: var(--primary); border: 1px solid var(--border); }
+.help-steps { margin: 0; padding-left: 22px; line-height: 1.7; }
+.help-steps li { margin-bottom: 8px; }
+.help-modal { font-size: 14px; }
 .qr-preview { margin-top: 8px; }
 .qr-preview img { border: 1px solid var(--border); }
 .opp-discount {
