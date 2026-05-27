@@ -851,9 +851,9 @@ table.data tbody tr:last-child td { border-bottom: none; }
 .opp-discount {
   margin-top: 8px; padding: 8px 10px; border-radius: var(--radius);
   background: #fffbeb; border: 1px solid #fde68a;
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  font-size: 13px; font-weight: 600; color: #92400e; flex-wrap: wrap;
 }
-.opp-discount-label { display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 13px; font-weight: 600; color: #92400e; }
-.opp-discount-label input { width: auto; margin: 0; }
 
 /* Управление площадками */
 .marketplace-list { display: flex; flex-direction: column; gap: 4px; margin: 12px 0; }

@@ -904,6 +904,17 @@ function itemsEditor(initialItems = [], { getMarketplace, onChange } = {}) {
     return out;
   }
 
+  // Умножает цены всех позиций на factor (для применения скидки/наценки по сумме).
+  function applyPriceFactor(factor) {
+    for (const row of tbody.children) {
+      const i = row._inputs;
+      const cur = Number(i.unit_price.value) || 0;
+      if (cur > 0) i.unit_price.value = Math.round((cur * factor + Number.EPSILON) * 100) / 100;
+      updatePriceHint(row);
+    }
+    recalc();
+  }
+
   // При смене площадки — переподтягиваем catalog_price для уже выбранных товаров,
   // но unit_price НЕ трогаем (если расходится — увидите подсветку).
   async function refreshCatalogPrices() {
@@ -1187,7 +1198,7 @@ function itemsEditor(initialItems = [], { getMarketplace, onChange } = {}) {
     await Promise.all([refreshCatalogPrices(), refreshPopular()]);
   }
 
-  return { node: wrap, getItems, refreshCatalogPrices: refreshAll };
+  return { node: wrap, getItems, refreshCatalogPrices: refreshAll, applyPriceFactor };
 }
 
 // Пикер товара: открывает модалку со списком, фильтрация по поиску.
@@ -1472,20 +1483,22 @@ async function openOrderForm(order, onSaved) {
         ),
       );
     }
-    // Предложение скидки/наценки по сумме: если порог достигнут — показываем с возможностью отклонить.
+    // Предложение скидки/наценки по сумме: если порог достигнут — кнопка применения к ценам.
     const avail = p.availTierPct;
     if (avail !== 0) {
       const isDiscount = avail < 0;
-      const cb = el('input', { type: 'checkbox' });
-      cb.checked = applyTierDiscount;
-      cb.addEventListener('change', () => {
-        applyTierDiscount = cb.checked;
-        renderPricingPanel();
-      });
+      const applyBtn = el('button', {
+        type: 'button',
+        class: 'btn btn-sm btn-primary',
+        onClick: () => {
+          items.applyPriceFactor(1 + avail / 100);
+          toast(`${isDiscount ? 'Скидка' : 'Наценка'} ${Math.abs(avail)}% применена к ценам`, 'success');
+        },
+      }, `Применить ${isDiscount ? 'скидку' : 'наценку'} ${Math.abs(avail)}%`);
       pricingPanel.append(
         el('div', { class: 'opp-discount' },
-          el('label', { class: 'opp-discount-label' }, cb,
-            el('span', {}, `🎯 Достигнут порог — ${isDiscount ? 'скидка' : 'наценка'} ${Math.abs(avail)}% (применить к цене)`)),
+          el('span', {}, `🎯 Достигнут порог суммы — можно ${isDiscount ? 'дать скидку' : 'применить наценку'} ${Math.abs(avail)}% клиенту`),
+          applyBtn,
         ),
       );
     } else if (orderTiers.length) {
