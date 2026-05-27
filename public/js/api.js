@@ -80,6 +80,7 @@ export const api = {
   // Avito / прямые продажи
   reserveOrder: (id) => request('POST', `/api/orders/${id}/reserve`),
   shipOrder: (id) => request('POST', `/api/orders/${id}/ship`),
+  shipBulk: (ids) => request('POST', '/api/orders/ship-bulk', { body: { ids } }),
   completeOrder: (id) => request('POST', `/api/orders/${id}/complete`),
   cancelOrder: (id, reason) =>
     request('POST', `/api/orders/${id}/cancel`, { body: { reason } }),

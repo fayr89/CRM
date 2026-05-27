@@ -30,6 +30,7 @@ const pricingMeta = {
   payment_method: z.string().optional().nullable(),
   price_deviation: z.number().optional().nullable(),
   recommended_total: z.number().optional().nullable(),
+  shipment_qr: z.string().optional().nullable(),
 };
 
 const createSchema = z.object({
@@ -60,17 +61,19 @@ async function saveOrderPricingMeta(orderId, data) {
   if (
     data.payment_method === undefined &&
     data.price_deviation === undefined &&
-    data.recommended_total === undefined
+    data.recommended_total === undefined &&
+    data.shipment_qr === undefined
   ) {
     return;
   }
   try {
     await db.run(
       `UPDATE orders SET payment_method = ?, price_deviation = ?, recommended_total = ?,
-       updated_at = NOW() WHERE id = ?`,
+       shipment_qr = ?, updated_at = NOW() WHERE id = ?`,
       data.payment_method ?? null,
       data.price_deviation ?? null,
       data.recommended_total ?? null,
+      data.shipment_qr ?? null,
       orderId,
     );
   } catch (e) {
@@ -220,6 +223,8 @@ router.get(
       { key: 'client_classification', label: 'Класс клиента' },
       { key: 'client_name', label: 'Клиент' },
       { key: 'status', label: 'Статус' },
+      { key: 'payment_method', label: 'Способ оплаты' },
+      { key: 'shipment_qr', label: 'QR код отгрузки' },
       { key: 'manager_name', label: 'Менеджер' },
       { key: 'warehouse_user_name', label: 'Склад' },
       { key: 'reserved_at', label: 'Зарезервирован', format: csvDate },
@@ -255,6 +260,7 @@ router.get(
     const orders = await db.all(
       `SELECT o.id, o.reference_number, o.marketplace, o.client_name,
               o.total_amount, o.currency, o.manager_id, o.reserved_at,
+              o.payment_method, o.shipment_qr,
               u.name AS manager_name,
               (SELECT COUNT(*)::int FROM order_items WHERE order_id = o.id) AS items_count
        FROM orders o
@@ -434,12 +440,17 @@ router.patch(
 router.post(
   '/:id/reserve',
   asyncHandler(async (req, res) => {
-    if (!['warehouse', 'admin'].includes(req.user.role)) {
-      throw Forbidden('Резервировать может только склад или админ');
-    }
     const order = await db.get('SELECT * FROM orders WHERE id = ?', req.params.id);
     if (!order) throw NotFound('Заказ не найден');
+    // Резервирует менеджер-владелец заказа (или РОП/админ/склад).
+    if (!(await canAccessOrder(req.user, order))) {
+      throw Forbidden('Нет прав на этот заказ');
+    }
     if (order.status !== 'new') throw BadRequest('Зарезервировать можно только новый заказ');
+    // QR обязателен для Avito + «Авито доставка» — отсутствие допустимо только в статусе «новый».
+    if (order.marketplace === 'Avito' && order.payment_method === 'avito_delivery' && !order.shipment_qr) {
+      throw BadRequest('Для площадки Avito и способа «Авито доставка» нужен QR код отгрузки. Добавьте его в заказ.');
+    }
     await db.run(
       `UPDATE orders SET status = 'reserved', warehouse_user_id = ?,
        reserved_at = NOW(), updated_at = NOW() WHERE id = ?`,
@@ -485,6 +496,42 @@ router.post(
     );
     emitEvent('order.shipped', updated);
     res.json(updated);
+  }),
+);
+
+// Массовое подтверждение отгрузки (склад выбирает заказы и отгружает разом).
+router.post(
+  '/ship-bulk',
+  asyncHandler(async (req, res) => {
+    if (!['warehouse', 'admin'].includes(req.user.role)) {
+      throw Forbidden('Отгружать может только склад или админ');
+    }
+    const ids = z.array(z.number().int().positive()).min(1).max(1000).parse(req.body?.ids || []);
+    const orders = await db.all(
+      `SELECT * FROM orders WHERE id = ANY(?) AND status = 'reserved'`,
+      ids,
+    );
+    if (!orders.length) {
+      return res.json({ ok: true, shipped: 0, skipped: ids.length });
+    }
+    const shippedIds = orders.map((o) => o.id);
+    await db.run(
+      `UPDATE orders SET status = 'shipped', shipped_at = NOW(), updated_at = NOW()
+       WHERE id = ANY(?)`,
+      shippedIds,
+    );
+    // Уведомляем менеджеров каждого заказа.
+    for (const order of orders) {
+      await notify(
+        order.manager_id,
+        'order.shipped',
+        'Заказ отгружен',
+        `${order.client_name || order.reference_number || '#' + order.id} · можно завершать`,
+        '#/orders',
+      );
+      emitEvent('order.shipped', { ...order, status: 'shipped' });
+    }
+    res.json({ ok: true, shipped: shippedIds.length, skipped: ids.length - shippedIds.length });
   }),
 );
 

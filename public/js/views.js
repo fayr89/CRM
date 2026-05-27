@@ -1325,6 +1325,7 @@ async function openOrderForm(order, onSaved) {
   const clientI = el('input', { type: 'text', value: cur.client_name || '' });
   const currencyI = el('input', { type: 'text', value: cur.currency || 'RUB', maxlength: '3', style: { width: '80px' } });
   const notesI = el('textarea', {}, cur.notes || '');
+  const qrI = el('input', { type: 'text', value: cur.shipment_qr || '', placeholder: 'QR код отгрузки (обязателен для Avito + Авито доставка)' });
 
   const payI = paymentMethods.length
     ? el(
@@ -1443,6 +1444,7 @@ async function openOrderForm(order, onSaved) {
       el('div', { class: 'form-row' }, el('label', {}, 'Клиент'), clientI),
       payI ? el('div', { class: 'form-row' }, el('label', {}, 'Способ оплаты'), payI) : null,
       el('div', { class: 'form-row' }, el('label', {}, 'Валюта'), currencyI),
+      el('div', { class: 'form-row', style: { gridColumn: '1 / -1' } }, el('label', {}, 'QR код отгрузки'), qrI),
       el('div', { class: 'form-row' }, el('label', {}, 'Заметки'), notesI),
     ),
     el('div', { class: 'form-row' }, el('label', {}, 'Позиции заказа *'), items.node),
@@ -1481,6 +1483,7 @@ async function openOrderForm(order, onSaved) {
         payment_method: payI ? payI.value || null : cur.payment_method ?? null,
         price_deviation: p.hasRule ? p.deviation : null,
         recommended_total: p.hasRule ? p.recommendedTotal : null,
+        shipment_qr: qrI.value.trim() || null,
       };
       if (isEdit) {
         await api.update('orders', cur.id, payload);
@@ -5228,69 +5231,107 @@ function renderContent(container, schedule, readyList, canEdit, reload) {
   // Список заказов готовых к отгрузке
   const orders = readyList.data || [];
   if (orders.length > 0) {
+    const selected = new Set();
+
+    const shipSelected = async (ids) => {
+      if (!ids.length) {
+        toast('Выберите заказы', 'error');
+        return;
+      }
+      if (!(await confirm(`Подтвердить отгрузку ${ids.length} заказов?`))) return;
+      try {
+        const r = await api.shipBulk(ids);
+        toast(`Отгружено: ${r.shipped}`, 'success');
+        load();
+      } catch (e) {
+        toast(e.message, 'error');
+      }
+    };
+
+    const actions = el('div', { class: 'shipping-actions', style: { marginBottom: '12px' } });
+    actions.append(
+      el(
+        'button',
+        {
+          class: 'btn',
+          onClick: async () => {
+            try {
+              await api.downloadOrdersCsv({ status: 'reserved' });
+              toast('Excel-файл сохранён', 'success');
+            } catch (e) {
+              toast(e.message, 'error');
+            }
+          },
+        },
+        '⬇ Выгрузить в Excel',
+      ),
+    );
+    if (canEdit) {
+      actions.append(
+        el('button', { class: 'btn btn-primary', onClick: () => shipSelected([...selected]) }, '✓ Отгрузить выбранные'),
+        el('button', { class: 'btn', onClick: () => shipSelected(orders.map((o) => o.id)) }, '✓ Отгрузить все'),
+      );
+    }
+
+    const headRow = el('tr', {});
+    if (canEdit) {
+      const selectAll = el('input', { type: 'checkbox' });
+      selectAll.addEventListener('change', () => {
+        document.querySelectorAll('.ship-row-cb').forEach((cb) => {
+          cb.checked = selectAll.checked;
+          const id = Number(cb.dataset.id);
+          if (selectAll.checked) selected.add(id);
+          else selected.delete(id);
+        });
+      });
+      headRow.append(el('th', { style: { width: '36px' } }, selectAll));
+    }
+    headRow.append(
+      el('th', {}, '№'),
+      el('th', {}, 'Площадка'),
+      el('th', {}, 'Клиент'),
+      el('th', {}, 'Способ оплаты'),
+      el('th', {}, 'QR'),
+      el('th', {}, 'Менеджер'),
+      el('th', {}, 'Зарезервирован'),
+      el('th', {}, 'Сумма'),
+    );
+
+    const rowsEls = orders.map((o) => {
+      const rowEl = el('tr', {});
+      if (canEdit) {
+        const cb = el('input', { type: 'checkbox', class: 'ship-row-cb' });
+        cb.dataset.id = String(o.id);
+        cb.addEventListener('change', () => {
+          if (cb.checked) selected.add(o.id);
+          else selected.delete(o.id);
+        });
+        rowEl.append(el('td', {}, cb));
+      }
+      const needQr = o.marketplace === 'Avito' && o.payment_method === 'avito_delivery';
+      rowEl.append(
+        el('td', {}, '#' + o.id),
+        el('td', {}, o.marketplace || '—'),
+        el('td', {}, o.client_name || '—'),
+        el('td', {}, o.payment_method || '—'),
+        el('td', {}, o.shipment_qr ? el('span', { title: o.shipment_qr }, '✓ есть') : (needQr ? el('span', { class: 'dev-down' }, '✗ нет!') : '—')),
+        el('td', {}, o.manager_name || '—'),
+        el('td', {}, fmtDateTime(o.reserved_at)),
+        el('td', {}, fmtMoney(o.total_amount, o.currency)),
+      );
+      return rowEl;
+    });
+
     container.append(
-      el('h3', { style: { marginTop: '20px' } }, 'Заказы к отгрузке'),
+      el('h3', { style: { marginTop: '20px' } }, `Заказы к отгрузке (${orders.length})`),
       el(
         'div',
         { class: 'card' },
-        el(
-          'div',
-          { style: { marginBottom: '12px' } },
-          el(
-            'button',
-            {
-              class: 'btn btn-primary',
-              onClick: async () => {
-                try {
-                  await api.downloadOrdersCsv({ status: 'reserved' });
-                  toast('Excel-файл сохранён', 'success');
-                } catch (e) {
-                  toast(e.message, 'error');
-                }
-              },
-            },
-            '⬇ Выгрузить в Excel',
-          ),
-        ),
+        actions,
         el(
           'div',
           { class: 'table-wrap' },
-          el(
-            'table',
-            { class: 'data' },
-            el(
-              'thead',
-              {},
-              el(
-                'tr',
-                {},
-                el('th', {}, '№'),
-                el('th', {}, 'Площадка'),
-                el('th', {}, 'Клиент'),
-                el('th', {}, 'Менеджер'),
-                el('th', {}, 'Зарезервирован'),
-                el('th', {}, 'Сумма'),
-                el('th', {}, 'Позиций'),
-              ),
-            ),
-            el(
-              'tbody',
-              {},
-              ...orders.map((o) =>
-                el(
-                  'tr',
-                  {},
-                  el('td', {}, '#' + o.id),
-                  el('td', {}, o.marketplace || '—'),
-                  el('td', {}, o.client_name || '—'),
-                  el('td', {}, o.manager_name || '—'),
-                  el('td', {}, fmtDateTime(o.reserved_at)),
-                  el('td', {}, fmtMoney(o.total_amount, o.currency)),
-                  el('td', {}, o.items_count),
-                ),
-              ),
-            ),
-          ),
+          el('table', { class: 'data' }, el('thead', {}, headRow), el('tbody', {}, ...rowsEls)),
         ),
       ),
     );

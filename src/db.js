@@ -327,6 +327,8 @@ CREATE INDEX IF NOT EXISTS idx_order_items_product ON order_items(product_id);
 ALTER TABLE orders ADD COLUMN IF NOT EXISTS payment_method TEXT;
 ALTER TABLE orders ADD COLUMN IF NOT EXISTS price_deviation REAL;
 ALTER TABLE orders ADD COLUMN IF NOT EXISTS recommended_total REAL;
+-- QR код отгрузки (обязателен для Avito + Авито доставка при резервировании)
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS shipment_qr TEXT;
 
 -- Расписание отгрузок: глобальная единственная запись (id всегда 1).
 -- days = comma-separated weekdays: mon,tue,wed,thu,fri,sat,sun
@@ -456,6 +458,7 @@ export async function ensureInitialized() {
       await pool.query('ALTER TABLE orders ADD COLUMN IF NOT EXISTS payment_method TEXT');
       await pool.query('ALTER TABLE orders ADD COLUMN IF NOT EXISTS price_deviation REAL');
       await pool.query('ALTER TABLE orders ADD COLUMN IF NOT EXISTS recommended_total REAL');
+      await pool.query('ALTER TABLE orders ADD COLUMN IF NOT EXISTS shipment_qr TEXT');
       globalThis.__crmInitialized = true;
       return;
     } catch (e) {
