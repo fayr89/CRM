@@ -943,7 +943,7 @@ function itemsEditor(initialItems = [], { getMarketplace, onChange, hiddenSet = 
         type: 'button',
         class: 'btn btn-sm pick-product',
         onClick: async () => {
-          const product = await openProductPicker(getMarketplace?.() || '');
+          const product = await openProductPicker(getMarketplace?.() || '', hiddenSet);
           if (product) {
             setRowFromProduct(row, product, product.marketplace_price);
           }
@@ -1120,7 +1120,13 @@ function itemsEditor(initialItems = [], { getMarketplace, onChange, hiddenSet = 
             el(
               'div',
               { class: 'qa-meta' },
-              p.sku ? `Арт: ${p.sku}` : 'Без артикула',
+              (p.sku ? `Арт: ${p.sku}` : 'Без артикула') + (() => {
+                const sv = computeStoreView(p.stock_by_store, hiddenSet);
+                const hasStores = Array.isArray(p.stock_by_store) && p.stock_by_store.length;
+                const total = hasStores ? sv.totalStock : p.stock;
+                if (total == null) return '';
+                return total > 0 ? ` · 📦 ${total} шт` : ' · ⚠️ нет в наличии';
+              })(),
             ),
           ),
           el(
@@ -1207,7 +1213,7 @@ function itemsEditor(initialItems = [], { getMarketplace, onChange, hiddenSet = 
       type: 'button',
       class: 'btn btn-sm',
       onClick: async () => {
-        const product = await openProductPicker(getMarketplace?.() || '');
+        const product = await openProductPicker(getMarketplace?.() || '', hiddenSet);
         if (product) addProductRow(product);
       },
       title: 'Открыть полный каталог',
@@ -1260,6 +1266,15 @@ function itemsEditor(initialItems = [], { getMarketplace, onChange, hiddenSet = 
                 ? `${p.marketplace_price.toLocaleString('ru-RU')} ₽`
                 : el('span', { class: 'popular-no-price' }, 'нет в прайсе'),
             ),
+            (() => {
+              // Наличие по видимым складам (сумма), иначе общий остаток.
+              const sv = computeStoreView(p.stock_by_store, hiddenSet);
+              const hasStores = Array.isArray(p.stock_by_store) && p.stock_by_store.length;
+              const total = hasStores ? sv.totalStock : p.stock;
+              if (total == null) return null;
+              return el('div', { class: `popular-card-stock${total <= 0 ? ' out' : ''}` },
+                total > 0 ? `📦 ${total} шт` : '⚠️ нет');
+            })(),
             p.recent_usage > 0
               ? el('div', { class: 'popular-card-badge' }, `× ${p.recent_usage}`)
               : null,
@@ -1315,7 +1330,7 @@ function itemsEditor(initialItems = [], { getMarketplace, onChange, hiddenSet = 
 
 // Пикер товара: открывает модалку со списком, фильтрация по поиску.
 // Если задана площадка — показывает цену из её прайса.
-async function openProductPicker(marketplace) {
+async function openProductPicker(marketplace, hiddenSet = new Set()) {
   return new Promise((resolve) => {
     const searchI = el('input', {
       type: 'search',
@@ -1376,6 +1391,13 @@ async function openProductPicker(marketplace) {
                 ' · себестоимость ',
                 p.cost_price.toLocaleString('ru-RU'),
                 ' ₽',
+                (() => {
+                  const sv = computeStoreView(p.stock_by_store, hiddenSet);
+                  const hasStores = Array.isArray(p.stock_by_store) && p.stock_by_store.length;
+                  const total = hasStores ? sv.totalStock : p.stock;
+                  if (total == null) return '';
+                  return total > 0 ? ` · 📦 ${total} шт` : ' · ⚠️ нет в наличии';
+                })(),
               ),
             ),
             el(
