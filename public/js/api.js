@@ -138,6 +138,8 @@ export const api = {
     request('PUT', '/api/products/warehouses/hidden', { body: { hidden } }),
   setDefaultWarehouse: (warehouse) =>
     request('PUT', '/api/products/warehouses/default', { body: { warehouse } }),
+  setDefaultMarketplace: (marketplace) =>
+    request('PUT', '/api/products/marketplaces/default', { body: { marketplace } }),
   marketplacesList: () => request('GET', '/api/products/marketplaces/list'),
   setMarketplaces: (marketplaces) =>
     request('PUT', '/api/products/marketplaces', { body: { marketplaces } }),

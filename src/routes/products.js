@@ -642,7 +642,11 @@ router.get(
       .get(`SELECT value FROM app_settings WHERE key = 'warehouses.default_writeoff'`)
       .catch(() => null);
     const default_writeoff = defSetting?.value || '';
-    res.json({ all, hidden, default_writeoff });
+    const defMarketSetting = await db
+      .get(`SELECT value FROM app_settings WHERE key = 'marketplaces.default'`)
+      .catch(() => null);
+    const default_marketplace = defMarketSetting?.value || '';
+    res.json({ all, hidden, default_writeoff, default_marketplace });
   }),
 );
 
@@ -660,6 +664,23 @@ router.put(
       req.user.id,
     );
     res.json({ ok: true, default_writeoff: warehouse || '' });
+  }),
+);
+
+// Канал по умолчанию (подставляется в форму заказа). Меняет только админ.
+router.put(
+  '/marketplaces/default',
+  requireRole('admin'),
+  asyncHandler(async (req, res) => {
+    const marketplace = z.object({ marketplace: z.string() }).parse(req.body || {}).marketplace;
+    await db.run(
+      `INSERT INTO app_settings (key, value, updated_by, updated_at)
+       VALUES ('marketplaces.default', ?::jsonb, ?, NOW())
+       ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_by = EXCLUDED.updated_by, updated_at = NOW()`,
+      JSON.stringify(marketplace || ''),
+      req.user.id,
+    );
+    res.json({ ok: true, default_marketplace: marketplace || '' });
   }),
 );
 

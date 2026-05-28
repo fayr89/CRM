@@ -1458,11 +1458,13 @@ async function openOrderForm(order, onSaved) {
   let hiddenSet = new Set();
   let allWarehouses = [];
   let defaultWarehouse = '';
+  let defaultMarketplace = '';
   try {
     const w = await api.warehousesList();
     hiddenSet = new Set(w.hidden || []);
     allWarehouses = (w.all || []).filter((s) => !hiddenSet.has(s));
     defaultWarehouse = w.default_writeoff || '';
+    defaultMarketplace = w.default_marketplace || '';
   } catch {
     /* нет настройки — покажем все склады */
   }
@@ -1476,11 +1478,13 @@ async function openOrderForm(order, onSaved) {
     ),
   );
 
+  // Дефолт площадки: cur.marketplace (для редактирования) или канал по умолчанию (для нового заказа).
+  const initialMarketplace = cur.marketplace || defaultMarketplace || '';
   const marketI = el(
     'select',
     {},
     ...MARKETPLACES.map((m) =>
-      el('option', { value: m.value, selected: m.value === cur.marketplace ? true : false }, m.label),
+      el('option', { value: m.value, selected: m.value === initialMarketplace ? true : false }, m.label),
     ),
   );
   // Классификация клиента: B2C по умолчанию, при B2B — обязательны данные клиента.
@@ -3700,6 +3704,35 @@ async function renderWarehousesSection(area) {
     }, 'Сохранить');
     area.append(el('div', { class: 'form-row' }, el('label', {}, 'Склад'), defSel));
     area.append(el('div', { class: 'warehouse-toggle-actions' }, defSaveBtn, defStatus));
+
+    // Канал по умолчанию — подставляется в форму заказа (нужен для подбора цены канал+склад).
+    area.append(el('div', { class: 'section-header', style: { marginTop: '20px' } }, el('h2', {}, '🛒 Канал по умолчанию')));
+    area.append(el('p', { class: 'page-subtitle' },
+      'Этот канал будет автоматически выбираться в форме нового заказа. Без канала прайс в заказ не подставится (модель «канал + склад»).'));
+    const mktSel = el(
+      'select',
+      {},
+      el('option', { value: '' }, '— не задан —'),
+      ...MARKETPLACES.filter((m) => m.value).map((m) =>
+        el('option', { value: m.value, selected: m.value === (data.default_marketplace || '') ? true : false }, m.label),
+      ),
+    );
+    const mktStatus = el('span', { class: 'save-status' });
+    const mktSaveBtn = el('button', {
+      class: 'btn btn-primary',
+      onClick: async () => {
+        mktStatus.textContent = 'Сохраняю…';
+        try {
+          await api.setDefaultMarketplace(mktSel.value);
+          mktStatus.textContent = '✅ Сохранено';
+          toast('Канал по умолчанию сохранён', 'success');
+        } catch (e) {
+          mktStatus.textContent = `❌ ${e.message}`;
+        }
+      },
+    }, 'Сохранить');
+    area.append(el('div', { class: 'form-row' }, el('label', {}, 'Канал'), mktSel));
+    area.append(el('div', { class: 'warehouse-toggle-actions' }, mktSaveBtn, mktStatus));
   } else {
     area.append(el('p', { class: 'muted' }, 'Менять настройку может только администратор.'));
   }
