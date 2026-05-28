@@ -5245,11 +5245,13 @@ export async function renderProducts(main) {
       ),
     ),
     el('div', { class: 'help-row' }, helpButton('products')),
+    // null нельзя — main.append(null) рендерит 'null' как текст. Используем
+    // пустой фрагмент.
     markdownFilter
       ? el('div', { class: 'help-banner', style: { background: '#fef3c7', borderColor: '#fde68a', color: '#92400e' } },
           '🏷️ Показаны уценённые товары. Проставьте цену в карточке (раздел «Прайсы»). ',
           el('a', { href: '#/products', style: { color: 'var(--primary)' } }, 'Снять фильтр'))
-      : null,
+      : document.createDocumentFragment(),
     toolbar,
     tableArea,
   );

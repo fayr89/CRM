@@ -397,21 +397,28 @@ async function handleMarkdownResolution(order) {
     order.id,
   );
   const markdownIds = [];
+  // Стотик уценочного склада — тот же что использует markdownCreateHandler в МС.
+  // Заполняем stock_by_store сразу при создании, чтобы каталог отобразил остаток
+  // без ожидания импорта остатков из МС (МС лагает между POST product и появлением
+  // в /report/stock/bystore; импорт может пройти и не увидеть товар).
+  const MARKDOWN_STORE = 'Склад МСК (Электросталь) УЦЕНКА';
   for (const it of items) {
     if (!it.product_id) continue; // позиция без привязки — пропускаем
     const sku = it.orig_sku ? `${it.orig_sku}-MD-${order.id}-${it.item_id}` : `MD-${order.id}-${it.item_id}`;
     const name = `${it.name} (УЦЕНКА #${order.id})`;
+    const stockByStore = JSON.stringify([{ store: MARKDOWN_STORE, stock: it.quantity, reserve: 0 }]);
     const r = await db.run(
       `INSERT INTO products
-       (sku, name, cost_price, supplier, image_url, stock, active,
+       (sku, name, cost_price, supplier, image_url, stock, stock_by_store, active,
         is_markdown, markdown_of_product_id, markdown_order_id)
-       VALUES (?, ?, ?, ?, ?, ?, TRUE, TRUE, ?, ?) RETURNING id`,
+       VALUES (?, ?, ?, ?, ?, ?, ?::jsonb, TRUE, TRUE, ?, ?) RETURNING id`,
       sku,
       name,
       it.cost_price ?? 0,
       it.supplier ?? null,
       it.image_url ?? null,
       it.quantity,
+      stockByStore,
       it.product_id,
       order.id,
     );
