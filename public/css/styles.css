@@ -42,23 +42,30 @@ a:hover { text-decoration: underline; }
 }
 /* Скроллится ТОЛЬКО nav, user-блок прибит к низу. */
 .sidebar-brand, .sidebar-search, .sidebar-bell { flex-shrink: 0; }
-.sidebar-nav { flex: 1 1 0; overflow-y: auto; min-height: 0; }
+.sidebar-nav {
+  flex: 1 1 0; overflow-y: auto; min-height: 0;
+  /* Светлая полоса меню между тёмной шапкой и тёмным блоком пользователя. */
+  background: #ffffff; color: var(--text);
+  margin: 8px 0;
+}
 .sidebar-user { flex-shrink: 0; }
 .sidebar-brand {
   padding: 0 20px 16px; font-weight: 700; font-size: 16px; color: #fff;
   border-bottom: 1px solid #1f2937; margin-bottom: 12px;
 }
-.sidebar-nav { flex: 1; }
 .sidebar-group-title {
   padding: 14px 20px 4px; font-size: 11px; font-weight: 700;
-  text-transform: uppercase; letter-spacing: 0.6px; color: #6b7280;
+  text-transform: uppercase; letter-spacing: 0.6px; color: var(--text-muted);
 }
 .sidebar-nav a {
-  display: block; padding: 8px 20px; color: #d1d5db;
+  display: flex; align-items: center; justify-content: space-between; gap: 6px;
+  padding: 8px 20px; color: var(--text);
   border-left: 3px solid transparent;
 }
-.sidebar-nav a:hover { background: #1f2937; text-decoration: none; }
-.sidebar-nav a.active { background: #1f2937; border-left-color: var(--primary); color: #fff; }
+.sidebar-nav a:hover { background: #eef1f5; text-decoration: none; color: var(--text); }
+.sidebar-nav a.active {
+  background: #dbeafe; border-left-color: var(--primary); color: var(--primary); font-weight: 600;
+}
 .sidebar-user {
   padding: 12px 20px; border-top: 1px solid #1f2937;
   font-size: 12px; color: #9ca3af;
@@ -443,7 +450,6 @@ table.data tbody tr:last-child td { border-bottom: none; }
   border-radius: 999px; padding: 1px 7px;
   font-size: 10px; font-weight: 700;
 }
-.sidebar-nav a { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
 .nav-counter {
   background: var(--danger); color: #fff;
   border-radius: 999px; padding: 1px 7px;
