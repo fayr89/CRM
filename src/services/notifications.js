@@ -24,6 +24,13 @@ export async function notifyAdminsAndManagers(type, title, body, link) {
   await notifyMany(rows.map((r) => r.id), type, title, body, link);
 }
 
+export async function notifyAdmins(type, title, body, link) {
+  const rows = await db.all(
+    `SELECT id FROM users WHERE role = 'admin' AND active = TRUE`,
+  );
+  await notifyMany(rows.map((r) => r.id), type, title, body, link);
+}
+
 export async function notifyWarehouse(type, title, body, link) {
   const rows = await db.all(
     `SELECT id FROM users WHERE role = 'warehouse' AND active = TRUE`,

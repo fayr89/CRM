@@ -4,6 +4,7 @@ import { authenticate, requireRole } from '../auth.js';
 import { db } from '../db.js';
 import { BadRequest, NotFound, asyncHandler } from '../errors.js';
 import { parsePagination, paginated } from '../query.js';
+import { notifyAdmins } from '../services/notifications.js';
 
 const router = Router();
 
@@ -40,6 +41,19 @@ router.post(
        FROM feedback f LEFT JOIN users u ON u.id = f.user_id WHERE f.id = ?`,
       r.lastInsertRowid,
     );
+    // Уведомляем всех админов о новом обращении (для бейджа на колокольчике).
+    try {
+      const catLabel = { bug: 'Баг', question: 'Вопрос', suggestion: 'Предложение', other: 'Сообщение' }[data.category] || 'Сообщение';
+      await notifyAdmins(
+        'feedback.new',
+        `📮 ${catLabel}: ${data.subject}`,
+        `${row.user_name || 'Пользователь'} (${row.user_role || '—'}): ${data.message.slice(0, 200)}`,
+        '#/feedback',
+      );
+    } catch (e) {
+      // eslint-disable-next-line no-console
+      console.error('[feedback] notify:', e.message);
+    }
     res.status(201).json(row);
   }),
 );
