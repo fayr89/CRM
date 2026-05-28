@@ -3667,9 +3667,16 @@ async function renderMoyskladSyncSection(area) {
   const jobsBox = el('div', { class: 'card', style: { marginTop: '14px' } });
   area.append(statusBox, controlsBox, warnBox, jobsBox);
 
-  function actionLabel(a) {
+  function actionLabel(job) {
+    const a = job.action;
+    const p = job.payload || {};
+    if (a === 'customer_order.upsert') {
+      const isUndo = p.undo_of ? ' (откат)' : '';
+      return p.reserve_mode === 'full'
+        ? '🔒 Резерв' + isUndo
+        : '🔓 Снятие резерва' + isUndo;
+    }
     const map = {
-      'customer_order.upsert': '🔁 Заказ покупателя',
       'demand.create': '🚚 Отгрузка',
       'demand.delete': '↩️ Откат отгрузки',
       'customerreturn.create': '↩️ Возврат',
@@ -3723,18 +3730,37 @@ async function renderMoyskladSyncSection(area) {
       const retryBtn = j.status === 'failed'
         ? el('button', {
             class: 'btn btn-xs',
+            title: 'Повторить задачу',
             onClick: async () => {
               try { await api.msRetryJob(j.id); toast('Повторяем…', 'success'); await refresh(); }
               catch (e) { toast(e.message, 'error'); }
             },
           }, '🔄')
         : null;
+      // «Отменить в МС» — для done customer_order.upsert ставит обратную задачу.
+      // Это меняет ТОЛЬКО МС, статус заказа в CRM остаётся прежним.
+      const canUndo = j.status === 'done' && j.action === 'customer_order.upsert' && !j.payload?.undo_of;
+      const undoBtn = canUndo
+        ? el('button', {
+            class: 'btn btn-xs',
+            title: 'Откатить это действие в МойСклад (статус заказа в CRM не меняется)',
+            onClick: async () => {
+              const wasReserve = j.payload?.reserve_mode === 'full';
+              const msg = wasReserve
+                ? 'Снять резерв в МС? (статус заказа в CRM не изменится)'
+                : 'Восстановить резерв в МС? (статус заказа в CRM не изменится)';
+              if (!confirm(msg)) return;
+              try { await api.msUndoJob(j.id); toast('Откат в МС поставлен в очередь', 'success'); await refresh(); }
+              catch (e) { toast(e.message, 'error'); }
+            },
+          }, '↩')
+        : null;
       return el('tr', {},
         el('td', {}, '#' + j.id),
         el('td', { style: { whiteSpace: 'nowrap', fontSize: '12px' } }, fmtDateTime(j.updated_at || j.created_at)),
-        el('td', {}, actionLabel(j.action)),
+        el('td', {}, actionLabel(j)),
         el('td', {}, j.order_id ? `#${j.order_id}${j.order_reference ? ' / ' + j.order_reference : ''}` : '—'),
-        el('td', {}, jobStatusBadge(j.status), ' ', retryBtn),
+        el('td', {}, jobStatusBadge(j.status), ' ', retryBtn, ' ', undoBtn),
         el('td', {}, String(j.attempts)),
         el('td', { style: { fontSize: '11px', fontFamily: 'monospace', wordBreak: 'break-all' } }, j.ms_document_id || '—'),
         el('td', { style: { fontSize: '11px', color: 'var(--danger)', maxWidth: '300px' } }, j.last_error || '—'),

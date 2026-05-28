@@ -122,6 +122,7 @@ export const api = {
   msInit: (body) => request('POST', '/api/admin/ms/init', { body }),
   msListJobs: (query) => request('GET', '/api/admin/ms/jobs', { query }),
   msRetryJob: (id) => request('POST', `/api/admin/ms/jobs/${id}/retry`),
+  msUndoJob: (id) => request('POST', `/api/admin/ms/jobs/${id}/undo`),
   msRunNow: () => request('POST', '/api/admin/ms/jobs/run-now'),
   search: (q) => request('GET', '/api/search', { query: { q } }),
 

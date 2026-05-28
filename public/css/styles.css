@@ -38,10 +38,11 @@ a:hover { text-decoration: underline; }
   width: 220px; background: #111827; color: #d1d5db;
   display: flex; flex-direction: column;
   padding: 16px 0;
-  overflow-y: auto;
+  height: 100vh;
 }
-/* sidebar-user всегда внизу, даже если nav прокручивается */
-.sidebar-nav { flex: 1 1 auto; min-height: 0; }
+/* Скроллится ТОЛЬКО nav, user-блок прибит к низу. */
+.sidebar-brand, .sidebar-search, .sidebar-bell { flex-shrink: 0; }
+.sidebar-nav { flex: 1 1 0; overflow-y: auto; min-height: 0; }
 .sidebar-user { flex-shrink: 0; }
 .sidebar-brand {
   padding: 0 20px 16px; font-weight: 700; font-size: 16px; color: #fff;

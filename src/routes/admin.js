@@ -8,7 +8,7 @@ import {
 } from '../services/moysklad.js';
 import {
   getMoyskladToken, getMsConfig, setMsSetting,
-  listMsJobs, retryMsJob, runPendingMsJobs,
+  listMsJobs, retryMsJob, runPendingMsJobs, enqueueMsJob,
 } from '../services/ms-jobs.js';
 
 const router = Router();
@@ -155,6 +155,32 @@ router.post(
     if (!row) throw NotFound('Задача не найдена');
     await retryMsJob(id);
     res.json({ ok: true });
+  }),
+);
+
+// Отменить действие в МС: ставит обратную задачу (только в МС, статус заказа в CRM
+// не меняется). Например, для «Резерв» (reserve_mode=full) делаем «Снятие резерва»
+// (reserve_mode=none). Полезно если админ сделал лишнее действие и хочет откатить
+// эффект в МС, не меняя статус заказа в CRM.
+router.post(
+  '/ms/jobs/:id/undo',
+  requireRole('admin'),
+  asyncHandler(async (req, res) => {
+    const id = Number(req.params.id);
+    const row = await db.get('SELECT * FROM ms_jobs WHERE id = ?', id);
+    if (!row) throw NotFound('Задача не найдена');
+    if (row.status !== 'done') throw BadRequest('Отменить можно только успешно выполненную задачу (status=done)');
+
+    if (row.action === 'customer_order.upsert') {
+      const reverseMode = row.payload?.reserve_mode === 'full' ? 'none' : 'full';
+      await enqueueMsJob(row.order_id, 'customer_order.upsert', {
+        reserve_mode: reverseMode,
+        undo_of: id,
+      });
+      res.json({ ok: true, reverse_mode: reverseMode });
+    } else {
+      throw BadRequest(`Отмена действия «${row.action}» пока не поддерживается`);
+    }
   }),
 );
 
