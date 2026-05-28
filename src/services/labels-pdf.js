@@ -67,14 +67,17 @@ export async function generateLabelsPdf(orders) {
       continue;
     }
 
-    const barcodeW = PAGE_W - 4 * MM;
-    const barcodeH = 16 * MM;
-    doc.image(barcodePng, 2 * MM, 2 * MM, { width: barcodeW, height: barcodeH });
+    // -5% от полной ширины (был 4mm отступа, теперь чуть больше).
+    const barcodeW = (PAGE_W - 4 * MM) * 0.95;
+    const barcodeH = 16 * MM * 0.95;
+    const barcodeX = (PAGE_W - barcodeW) / 2; // центрируем по горизонтали
+    const barcodeY = 2 * MM;
+    doc.image(barcodePng, barcodeX, barcodeY, { width: barcodeW, height: barcodeH });
 
     // Текст самого трек-номера под штрихом (мелким шрифтом).
     doc.fillColor('black')
       .fontSize(7)
-      .text(track, 2 * MM, 2 * MM + barcodeH + 0.5 * MM, {
+      .text(track, barcodeX, barcodeY + barcodeH + 0.5 * MM, {
         width: barcodeW,
         align: 'center',
       });
