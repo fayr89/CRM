@@ -203,10 +203,12 @@ table.data tbody tr:last-child td { border-bottom: none; }
 
 /* Order items editor */
 .items-editor { border: 1px solid var(--border); border-radius: var(--radius); padding: 8px; margin-top: 6px; }
-.items-editor table { width: 100%; border-collapse: collapse; font-size: 12px; }
-.items-editor th, .items-editor td { padding: 4px 6px; }
+.items-editor table { width: 100%; border-collapse: collapse; font-size: 12px; table-layout: fixed; }
+.items-editor th, .items-editor td { padding: 4px 6px; vertical-align: top; }
 .items-editor th { color: var(--text-muted); font-weight: 600; text-align: left; }
-.items-editor td input { width: 100%; padding: 4px 6px; border: 1px solid var(--border); border-radius: 4px; font-size: 12px; }
+.items-editor td input { width: 100%; padding: 4px 6px; border: 1px solid var(--border); border-radius: 4px; font-size: 12px; box-sizing: border-box; }
+.items-editor td input[type="number"]::-webkit-outer-spin-button,
+.items-editor td input[type="number"]::-webkit-inner-spin-button { margin: 0; }
 .items-editor .remove-btn { background: transparent; border: none; color: var(--danger); cursor: pointer; font-size: 16px; }
 .items-editor tfoot td { padding-top: 8px; font-weight: 600; }
 
