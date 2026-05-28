@@ -2129,11 +2129,13 @@ export async function renderOrders(main) {
       return false; // диалог сам отменит заказ и перезагрузит — caller не показывает свой toast
     }
     if (src === 'new' && dst === 'reserved') {
-      if (!confirm('Перевести заказ в «Зарезервирован»? Товар будет зарезервирован в МойСклад на складе списания.')) return false;
+      const ok = await confirm('Перевести заказ в «Зарезервирован»? Товар будет зарезервирован в МойСклад на складе списания.');
+      if (!ok) return false;
       return api.reserveOrder(id);
     }
     if (src === 'reserved' && dst === 'new') {
-      if (!confirm('Снять резерв? Резерв в МойСклад снимется, незаконченная транзакция в кассе удалится.')) return false;
+      const ok = await confirm('Снять резерв? Резерв в МойСклад снимется, незаконченная транзакция в кассе удалится.');
+      if (!ok) return false;
       return api.unreserveOrder(id);
     }
     if (src === 'new' && dst === 'waiting_stock') return api.markOrderWaiting(id);
