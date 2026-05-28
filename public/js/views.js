@@ -3745,12 +3745,13 @@ async function renderMoyskladSyncSection(area) {
       el('th', {}, 'Ошибка'),
     );
     const tbody = el('tbody', {}, ...data.rows.map((j) => {
-      // Retry показываем для failed (повторить упавшую) И running (сбросить
-      // зависшую — например после кода-релиза, который чинит ошибку).
-      const retryBtn = (j.status === 'failed' || j.status === 'running')
+      // Retry показываем во всех состояниях кроме done. Пользователь может
+      // вручную «пнуть» задачу: pending с retries (в backoff после ошибки),
+      // running (зависшая после крэша лямбды), failed (выработала попытки).
+      const retryBtn = j.status !== 'done'
         ? el('button', {
             class: 'btn btn-xs',
-            title: j.status === 'failed' ? 'Повторить упавшую задачу' : 'Сбросить зависшую задачу обратно в pending',
+            title: 'Сбросить attempts и запустить сейчас',
             onClick: async () => {
               try { await api.msRetryJob(j.id); toast('Повторяем…', 'success'); await refresh(); }
               catch (e) { toast(e.message, 'error'); }

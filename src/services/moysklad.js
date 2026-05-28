@@ -230,8 +230,10 @@ export async function fetchMoyskladStockByStorePage(token, offset = 0, limit = 5
 // ============= Write-API для интеграции списания/прихода =============
 
 // Низкоуровневый JSON-запрос: GET/POST/PUT/DELETE.
-// Таймаут 10 сек — write-операции делаются в реал-тайме при ответе пользователю.
-// Если МС зависает дольше — задача остаётся в очереди и retry'ится позже.
+// Таймаут 25 сек — write-операции делаются в реал-тайме при ответе пользователю,
+// но МС иногда лагает (особенно при создании нескольких товаров под уценку).
+// inline-await в enqueueMsJob ограничен 12 сек — этот таймаут защищает воркер,
+// который вызывается в фоне.
 async function msRequest(method, endpoint, token, body) {
   const headers = { ...authHeader(token), 'Content-Type': 'application/json' };
   const url = `${BASE}${endpoint}`;
@@ -240,7 +242,7 @@ async function msRequest(method, endpoint, token, body) {
       method,
       headers,
       body: body ? JSON.stringify(body) : undefined,
-      signal: AbortSignal.timeout(10000),
+      signal: AbortSignal.timeout(25000),
     });
     if ((res.status !== 429 && res.status !== 503) || attempt >= 4) {
       if (!res.ok) {
