@@ -6757,7 +6757,13 @@ export async function renderFeedback(main) {
     clear(tableArea);
     const rows = r.data || [];
     if (rows.length === 0) {
-      tableArea.append(el('div', { class: 'card' }, 'Обращений нет.'));
+      tableArea.append(emptyState({
+        icon: '📮',
+        title: state.status ? 'В этом фильтре пусто' : 'Обращений пока нет',
+        description: state.status
+          ? 'Снимите фильтр или подождите новых обращений.'
+          : 'Как только кто-то отправит сообщение через кнопку «📮 Помощь / Баг» в сайдбаре — оно появится здесь.',
+      }));
       return;
     }
     const headRow = el('tr', {},
