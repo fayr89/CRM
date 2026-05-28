@@ -10,7 +10,8 @@
     "start": "node src/server.js",
     "dev": "node --watch src/server.js",
     "test": "node --test tests/*.test.js",
-    "seed": "node src/db/seed.js"
+    "seed": "node src/db/seed.js",
+    "build": "node scripts/minify.mjs"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",
@@ -22,6 +23,7 @@
     "zod": "^3.23.8"
   },
   "devDependencies": {
+    "esbuild": "^0.24.2",
     "supertest": "^7.0.0"
   }
 }
