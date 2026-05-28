@@ -84,21 +84,15 @@ export async function generateLabelsPdf(orders) {
 
     // Порядковый номер крупно слева внизу.
     doc.fontSize(20)
-      .text(`№ ${seq}`, 2 * MM, PAGE_H - 13 * MM, {
+      .text(`№ ${seq}`, 2 * MM, PAGE_H - 12 * MM, {
         width: PAGE_W / 2 - 2 * MM,
         align: 'left',
       });
 
-    // Справа внизу — две строки: служба доставки и способ отправки.
-    const deliveryName = mapDeliveryMethodName(order.delivery_method);
-    const shipMethod = mapPaymentMethodName(order.payment_method);
-    doc.fontSize(9)
-      .text(deliveryName, PAGE_W / 2, PAGE_H - 13 * MM, {
-        width: PAGE_W / 2 - 2 * MM,
-        align: 'right',
-      });
-    doc.fontSize(8)
-      .text(shipMethod, PAGE_W / 2, PAGE_H - 8 * MM, {
+    // Способ отправки справа внизу: приоритет delivery_method, иначе marketplace.
+    const shipMethod = resolveShipMethod(order);
+    doc.fontSize(11)
+      .text(shipMethod, PAGE_W / 2, PAGE_H - 10 * MM, {
         width: PAGE_W / 2 - 2 * MM,
         align: 'right',
       });
@@ -109,31 +103,33 @@ export async function generateLabelsPdf(orders) {
   return Buffer.concat(chunks);
 }
 
-function mapDeliveryMethodName(code) {
-  if (!code) return '—';
-  const map = {
-    sdek: 'СДЭК',
-    cdek: 'СДЭК',
-    pochta: 'Почта России',
-    boxberry: 'Boxberry',
-    yandex: 'Я.Доставка',
-    avito_delivery: 'Avito Доставка',
-    pickup: 'Самовывоз',
-    courier: 'Курьер',
-  };
-  const lower = String(code).toLowerCase();
-  return map[lower] || code;
-}
-
-function mapPaymentMethodName(code) {
-  if (!code) return '—';
-  const map = {
-    cash: 'Наличные',
-    card: 'Карта',
-    bank_transfer: 'Банк. перевод',
-    avito_delivery: 'Avito (нал. при пол.)',
-    other: 'Другое',
-  };
-  const lower = String(code).toLowerCase();
-  return map[lower] || code;
+// Способ отправки на этикетке: предпочтительно delivery_method, иначе marketplace
+// (если у заказа delivery_method пуст). Маппинг кодов на человеческие названия.
+function resolveShipMethod(order) {
+  const dm = String(order.delivery_method || '').trim().toLowerCase();
+  if (dm) {
+    const map = {
+      sdek: 'СДЭК',
+      cdek: 'СДЭК',
+      pochta: 'Почта России',
+      'pochta_russia': 'Почта России',
+      boxberry: 'Boxberry',
+      yandex: 'Я.Доставка',
+      avito_delivery: 'Avito Доставка',
+      avito: 'Avito Доставка',
+      pickup: 'Самовывоз',
+      courier: 'Курьер',
+    };
+    return map[dm] || order.delivery_method;
+  }
+  const mp = String(order.marketplace || '').trim();
+  if (mp) {
+    const lower = mp.toLowerCase();
+    if (lower === 'avito') return 'Avito';
+    if (lower === 'wildberries' || lower === 'wb') return 'Wildberries';
+    if (lower === 'ozon') return 'Ozon';
+    if (lower === 'yandex' || lower === 'yandex_market') return 'Я.Маркет';
+    return mp;
+  }
+  return '—';
 }
