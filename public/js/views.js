@@ -1487,6 +1487,12 @@ async function openOrderForm(order, onSaved) {
       el('option', { value: m.value, selected: m.value === initialMarketplace ? true : false }, m.label),
     ),
   );
+  // Стартовый статус заказа — только при создании. Дефолт «Новый»; «Ожидает товара» — если товара ещё нет.
+  const statusI = !isEdit
+    ? el('select', {},
+        el('option', { value: 'new', selected: true }, 'Новый'),
+        el('option', { value: 'waiting_stock' }, 'Ожидает товара'))
+    : null;
   // Классификация клиента: B2C по умолчанию, при B2B — обязательны данные клиента.
   const classI = el(
     'select',
@@ -1679,6 +1685,7 @@ async function openOrderForm(order, onSaved) {
       { class: 'form-grid' },
       el('div', { class: 'form-row' }, el('label', {}, 'Площадка'), marketI),
       el('div', { class: 'form-row' }, el('label', {}, 'Склад списания'), warehouseI),
+      statusI ? el('div', { class: 'form-row' }, el('label', {}, 'Стартовый статус'), statusI) : null,
       el('div', { class: 'form-row' }, el('label', {}, 'Классификация клиента'), classI),
       el('div', { class: 'form-row' }, el('label', {}, 'Клиент / компания'), clientI),
       el('div', { class: 'form-row' }, el('label', {}, 'Телефон клиента'), clientPhoneI),
@@ -1739,6 +1746,7 @@ async function openOrderForm(order, onSaved) {
         delivery_method: deliveryI.value || null,
         avito_dialog_url: avitoDialogI.value.trim() || null,
         warehouse: warehouseI.value || null,
+        ...(statusI ? { status: statusI.value } : {}),
       };
       if (isEdit) {
         await api.update('orders', cur.id, payload);
@@ -1793,6 +1801,55 @@ async function openCancelDialog(orderId, onDone) {
   });
 }
 
+// Разделение заказа: отделить часть позиций в новый заказ (товар не нашли на складе и т.п.).
+async function openSplitDialog(order, onDone) {
+  const items = order.items || [];
+  if (!items.length) { toast('У заказа нет позиций', 'error'); return; }
+  if (items.length < 2) { toast('Чтобы разделить, нужно минимум 2 позиции', 'error'); return; }
+
+  // Чекбоксы по позициям.
+  const rows = items.map((it) => {
+    const cb = el('input', { type: 'checkbox', value: String(it.id) });
+    return { it, cb, row: el('label', { class: 'split-row' },
+      cb,
+      el('span', { class: 'split-name' }, it.name),
+      el('span', { class: 'split-meta' }, `${it.quantity} × ${fmtMoney(it.unit_price, order.currency)} = ${fmtMoney(it.line_total, order.currency)}`),
+    ) };
+  });
+  const list = el('div', { class: 'split-list' }, ...rows.map((r) => r.row));
+
+  const statusSel = el('select', {},
+    el('option', { value: 'new', selected: true }, 'Новый'),
+    el('option', { value: 'waiting_stock' }, 'Ожидает товара'),
+  );
+
+  const body = el('div', {},
+    el('p', {}, 'Выберите позиции, которые уйдут в НОВЫЙ заказ. Оставшиеся останутся в исходном.'),
+    list,
+    el('div', { class: 'form-row' }, el('label', {}, 'Статус нового заказа'), statusSel),
+  );
+
+  await openModal(`Разделить заказ #${order.id}`, body, {
+    primaryLabel: 'Создать новый заказ',
+    onSubmit: async () => {
+      const chosen = rows.filter((r) => r.cb.checked).map((r) => r.it.id);
+      if (!chosen.length) { toast('Отметьте хотя бы одну позицию', 'error'); return false; }
+      if (chosen.length === items.length) {
+        toast('Нельзя отделить ВСЕ позиции — оставьте хотя бы одну в исходном', 'error');
+        return false;
+      }
+      try {
+        const r = await api.splitOrder(order.id, { item_ids: chosen, new_status: statusSel.value });
+        toast(`Создан заказ #${r.new_order?.id}`, 'success');
+        await onDone?.();
+      } catch (e) {
+        toast(e.message, 'error');
+        return false;
+      }
+    },
+  });
+}
+
 export async function renderOrders(main) {
   await loadLookups();
   const me = JSON.parse(localStorage.getItem('crm_user') || '{}');
@@ -1823,7 +1880,7 @@ export async function renderOrders(main) {
   function renderOrdersKanban(result) {
     clear(tableArea);
     const rows = result.data || [];
-    const stages = ['new', 'reserved', 'shipped', 'completed', 'cancelled'];
+    const stages = ['waiting_stock', 'new', 'reserved', 'shipped', 'completed', 'cancelled'];
 
     tableArea.append(
       el(
@@ -1938,11 +1995,13 @@ export async function renderOrders(main) {
       await openCancelDialog(id, reload);
       return null; // диалог сам отменит заказ и перезагрузит
     }
+    if (src === 'new' && dst === 'waiting_stock') return api.markOrderWaiting(id);
+    if (src === 'waiting_stock' && dst === 'new') return api.markOrderReady(id);
     if (src === 'new' && dst === 'reserved') return api.reserveOrder(id);
     if (src === 'reserved' && dst === 'shipped') return api.shipOrder(id);
     if (src === 'shipped' && dst === 'completed') return api.completeOrder(id);
     throw new Error(
-      `Нельзя перевести из «${tr('order_status', src)}» в «${tr('order_status', dst)}». Допустимые шаги: новый→зарезервирован→отгружен→завершён.`,
+      `Нельзя перевести из «${tr('order_status', src)}» в «${tr('order_status', dst)}». Допустимые шаги: ожидает товара ↔ новый → зарезервирован → отгружен → завершён.`,
     );
   }
 
@@ -2225,7 +2284,16 @@ async function showOrderDetails(order, reload) {
   // Отменять может: админ/склад (любой активный статус), менеджер-владелец (только новый).
   const canCancel =
     !['completed', 'cancelled'].includes(order.status) &&
-    (['admin', 'warehouse'].includes(me.role) || (me.id === order.manager_id && ['new', 'reserved'].includes(order.status)));
+    (['admin', 'warehouse'].includes(me.role) || (me.id === order.manager_id && ['new', 'reserved', 'waiting_stock'].includes(order.status)));
+  // Разделять можно из 'new' и 'reserved' — владелец/админ.
+  const canSplit =
+    ['new', 'reserved'].includes(order.status) &&
+    (me.role === 'admin' || me.id === order.manager_id) &&
+    (order.items || []).length >= 2;
+  // «Товар поступил» — из waiting_stock в new (владелец/админ/склад).
+  const canMarkReady =
+    order.status === 'waiting_stock' &&
+    (['admin', 'warehouse'].includes(me.role) || me.id === order.manager_id);
 
   const itemsTable = el(
     'table',
@@ -2285,12 +2353,33 @@ async function showOrderDetails(order, reload) {
   const body = el(
     'div',
     {},
-    canCancel
-      ? el('div', { style: { marginBottom: '12px' } },
-          el('button', {
-            class: 'btn btn-danger btn-sm',
-            onClick: () => openCancelDialog(order.id, () => { reload?.(); }),
-          }, '🚫 Отменить заказ'))
+    (canCancel || canSplit || canMarkReady)
+      ? el('div', { style: { marginBottom: '12px', display: 'flex', gap: '8px', flexWrap: 'wrap' } },
+          canMarkReady
+            ? el('button', {
+                class: 'btn btn-sm btn-primary',
+                onClick: async () => {
+                  try {
+                    await api.markOrderReady(order.id);
+                    toast('Заказ переведён в «Новый»', 'success');
+                    reload?.();
+                  } catch (e) { toast(e.message, 'error'); }
+                },
+              }, '✅ Товар поступил')
+            : null,
+          canSplit
+            ? el('button', {
+                class: 'btn btn-sm',
+                onClick: () => openSplitDialog(order, () => { reload?.(); }),
+              }, '✂️ Разделить заказ')
+            : null,
+          canCancel
+            ? el('button', {
+                class: 'btn btn-danger btn-sm',
+                onClick: () => openCancelDialog(order.id, () => { reload?.(); }),
+              }, '🚫 Отменить заказ')
+            : null,
+        )
       : null,
     el(
       'div',
@@ -2301,6 +2390,10 @@ async function showOrderDetails(order, reload) {
       el('div', {}, order.marketplace || '—'),
       el('div', { class: 'k' }, 'Внешний номер'),
       el('div', {}, order.reference_number || '—'),
+      ...(order.parent_order_id ? [
+        el('div', { class: 'k' }, 'Создан разделением'),
+        el('div', {}, `из заказа #${order.parent_order_id}`),
+      ] : []),
       el('div', { class: 'k' }, 'Классификация'),
       el('div', {}, order.client_classification || '—'),
       el('div', { class: 'k' }, 'Клиент'),

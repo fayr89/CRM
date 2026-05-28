@@ -103,6 +103,7 @@ export const T = {
     deal: 'сделка',
   },
   order_status: {
+    waiting_stock: 'Ожидает товара',
     new: 'Новый',
     reserved: 'Зарезервирован',
     shipped: 'Отгружен',

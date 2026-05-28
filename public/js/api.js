@@ -79,6 +79,9 @@ export const api = {
   recent: (query) => request('GET', '/api/dashboard/recent', { query }),
 
   // Avito / прямые продажи
+  markOrderWaiting: (id) => request('POST', `/api/orders/${id}/mark-waiting`),
+  markOrderReady: (id) => request('POST', `/api/orders/${id}/mark-ready`),
+  splitOrder: (id, body) => request('POST', `/api/orders/${id}/split`, { body }),
   reserveOrder: (id) => request('POST', `/api/orders/${id}/reserve`),
   shipOrder: (id) => request('POST', `/api/orders/${id}/ship`),
   shipBulk: (ids) => request('POST', '/api/orders/ship-bulk', { body: { ids } }),

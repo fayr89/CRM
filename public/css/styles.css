@@ -133,6 +133,11 @@ a:hover { text-decoration: underline; }
 .btn-warning { background: var(--warning); color: #fff; border-color: var(--warning); }
 .btn-warning:hover { filter: brightness(0.92); }
 .filter-bar { display: flex; gap: 8px; flex-wrap: wrap; }
+.split-list { display: flex; flex-direction: column; gap: 6px; margin: 8px 0 12px; max-height: 320px; overflow-y: auto; border: 1px solid var(--border); border-radius: 8px; padding: 8px; }
+.split-row { display: grid; grid-template-columns: 22px 1fr auto; align-items: center; gap: 10px; padding: 6px 8px; border-radius: 6px; cursor: pointer; }
+.split-row:hover { background: var(--bg); }
+.split-name { font-weight: 500; }
+.split-meta { color: var(--text-muted); font-size: 13px; white-space: nowrap; }
 .btn-sm { padding: 3px 8px; font-size: 12px; }
 .btn-ghost { background: transparent; border-color: transparent; }
 .btn-ghost:hover { background: #f3f4f6; }

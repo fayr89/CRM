@@ -13,7 +13,7 @@ import { nextShippingDate, getSchedule } from '../services/shippingSchedule.js';
 const router = Router();
 
 const SORT_COLUMNS = ['id', 'created_at', 'status', 'total_amount', 'marketplace'];
-const STATUSES = ['new', 'reserved', 'shipped', 'completed', 'cancelled'];
+const STATUSES = ['waiting_stock', 'new', 'reserved', 'shipped', 'completed', 'cancelled'];
 
 const itemSchema = z.object({
   sku: z.string().optional().nullable(),
@@ -45,6 +45,8 @@ const createSchema = z.object({
   currency: z.string().length(3).optional().default('RUB'),
   notes: z.string().optional().nullable(),
   items: z.array(itemSchema).min(1, 'В заказе должна быть хотя бы одна позиция'),
+  // Менеджер может создать заказ сразу в статусе «Ожидает товара» (товара ещё нет на складе).
+  status: z.enum(['new', 'waiting_stock']).optional(),
   ...pricingMeta,
 });
 
@@ -436,8 +438,8 @@ router.post(
       const r = await tx.run(
         `INSERT INTO orders
          (reference_number, marketplace, client_classification, client_name,
-          total_amount, currency, manager_id, notes)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
+          total_amount, currency, manager_id, notes, status)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
         data.reference_number ?? null,
         data.marketplace ?? null,
         data.client_classification ?? null,
@@ -446,6 +448,7 @@ router.post(
         data.currency ?? 'RUB',
         req.user.id,
         data.notes ?? null,
+        data.status ?? 'new',
       );
       const orderId = r.lastInsertRowid;
       for (const item of data.items) {
@@ -730,16 +733,18 @@ router.post(
     if (['completed', 'cancelled'].includes(order.status)) {
       throw BadRequest('Заказ уже закрыт');
     }
-    if (!isAdminOrWarehouse && !['new', 'reserved'].includes(order.status)) {
-      throw BadRequest('Менеджер может отменить только новый или зарезервированный заказ');
+    if (!isAdminOrWarehouse && !['new', 'reserved', 'waiting_stock'].includes(order.status)) {
+      throw BadRequest('Менеджер может отменить только новый, зарезервированный или ожидающий товара заказ');
     }
     // Если товар был зарезервирован/отгружён — заказ попадает в «Возвраты» на обработку складом.
+    // Для waiting_stock и new возврата нет — товар не списывался.
     const needsReturn = ['reserved', 'shipped'].includes(order.status);
     await db.run(
       `UPDATE orders SET status = 'cancelled', cancel_reason = ?,
-       return_status = ?, cancelled_at = NOW(), updated_at = NOW() WHERE id = ?`,
+       return_status = ?, cancelled_from_status = ?, cancelled_at = NOW(), updated_at = NOW() WHERE id = ?`,
       reason ?? null,
       needsReturn ? 'pending' : null,
+      order.status,
       order.id,
     );
     const updated = await db.get('SELECT * FROM orders WHERE id = ?', order.id);
@@ -773,6 +778,130 @@ router.post(
     }
     emitEvent('order.cancelled', updated);
     res.json(updated);
+  }),
+);
+
+// Перевести заказ в «Ожидает товара» (товара ещё нет на складе). Только из 'new'.
+router.post(
+  '/:id/mark-waiting',
+  asyncHandler(async (req, res) => {
+    const order = await db.get('SELECT * FROM orders WHERE id = ?', req.params.id);
+    if (!order) throw NotFound('Заказ не найден');
+    if (!(await canAccessOrder(req.user, order))) throw Forbidden();
+    if (order.status !== 'new') {
+      throw BadRequest('Перевести в «Ожидает товара» можно только новый заказ');
+    }
+    await db.run(
+      `UPDATE orders SET status = 'waiting_stock', updated_at = NOW() WHERE id = ?`,
+      order.id,
+    );
+    const updated = await db.get('SELECT * FROM orders WHERE id = ?', order.id);
+    emitEvent('order.updated', updated);
+    res.json(updated);
+  }),
+);
+
+// Перевести «Ожидает товара» → «Новый» (товар поступил, готов к резерву).
+router.post(
+  '/:id/mark-ready',
+  asyncHandler(async (req, res) => {
+    const order = await db.get('SELECT * FROM orders WHERE id = ?', req.params.id);
+    if (!order) throw NotFound('Заказ не найден');
+    if (!(await canAccessOrder(req.user, order))) throw Forbidden();
+    if (order.status !== 'waiting_stock') {
+      throw BadRequest('Этот заказ не в статусе «Ожидает товара»');
+    }
+    await db.run(
+      `UPDATE orders SET status = 'new', updated_at = NOW() WHERE id = ?`,
+      order.id,
+    );
+    const updated = await db.get('SELECT * FROM orders WHERE id = ?', order.id);
+    emitEvent('order.updated', updated);
+    res.json(updated);
+  }),
+);
+
+// Разделить заказ: отделить часть позиций в новый заказ.
+// Разрешено в статусах 'new' и 'reserved'. Нельзя отделить все позиции.
+const splitSchema = z.object({
+  item_ids: z.array(z.number().int().positive()).min(1),
+  new_status: z.enum(['new', 'waiting_stock']).optional().default('new'),
+});
+router.post(
+  '/:id/split',
+  asyncHandler(async (req, res) => {
+    const { item_ids, new_status } = splitSchema.parse(req.body || {});
+    const order = await db.get('SELECT * FROM orders WHERE id = ?', req.params.id);
+    if (!order) throw NotFound('Заказ не найден');
+    if (!(await canAccessOrder(req.user, order))) throw Forbidden();
+    if (!['new', 'reserved'].includes(order.status)) {
+      throw BadRequest('Разделять можно только новый или зарезервированный заказ');
+    }
+    // Все позиции этого заказа.
+    const allItems = await db.all(
+      'SELECT * FROM order_items WHERE order_id = ? ORDER BY id',
+      order.id,
+    );
+    if (!allItems.length) throw BadRequest('У заказа нет позиций');
+    const idSet = new Set(item_ids);
+    const moving = allItems.filter((i) => idSet.has(i.id));
+    if (moving.length !== item_ids.length) {
+      throw BadRequest('Какая-то из выбранных позиций не принадлежит этому заказу');
+    }
+    if (moving.length === allItems.length) {
+      throw BadRequest('Нельзя отделить все позиции — оставьте хотя бы одну в исходном заказе');
+    }
+    const remaining = allItems.filter((i) => !idSet.has(i.id));
+    const movingTotal = moving.reduce((s, i) => s + (i.line_total || 0), 0);
+    const remainingTotal = remaining.reduce((s, i) => s + (i.line_total || 0), 0);
+
+    const newId = await db.withTransaction(async (tx) => {
+      // Создаём новый заказ с метаданными исходного.
+      const r = await tx.run(
+        `INSERT INTO orders
+         (reference_number, marketplace, client_classification, client_name, client_phone,
+          total_amount, currency, manager_id, notes, status, warehouse, payment_method,
+          delivery_method, avito_dialog_url, parent_order_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
+        order.reference_number ? `${order.reference_number}-split` : null,
+        order.marketplace ?? null,
+        order.client_classification ?? null,
+        order.client_name ?? null,
+        order.client_phone ?? null,
+        movingTotal,
+        order.currency ?? 'RUB',
+        order.manager_id,
+        `Создан разделением из заказа #${order.id}`,
+        new_status,
+        order.warehouse ?? null,
+        order.payment_method ?? null,
+        order.delivery_method ?? null,
+        order.avito_dialog_url ?? null,
+        order.id,
+      );
+      const splitId = r.lastInsertRowid;
+      // Переносим выбранные позиции на новый заказ.
+      await tx.run(
+        `UPDATE order_items SET order_id = ? WHERE order_id = ? AND id = ANY(?)`,
+        splitId,
+        order.id,
+        item_ids,
+      );
+      // Пересчитываем сумму исходного заказа.
+      await tx.run(
+        'UPDATE orders SET total_amount = ?, updated_at = NOW() WHERE id = ?',
+        remainingTotal,
+        order.id,
+      );
+      return splitId;
+    });
+
+    const newOrder = await db.get('SELECT * FROM orders WHERE id = ?', newId);
+    const newItems = await db.all('SELECT * FROM order_items WHERE order_id = ? ORDER BY id', newId);
+    const updatedOriginal = await db.get('SELECT * FROM orders WHERE id = ?', order.id);
+    emitEvent('order.updated', updatedOriginal);
+    emitEvent('order.created', { ...newOrder, items: newItems });
+    res.status(201).json({ new_order: { ...newOrder, items: newItems }, original: updatedOriginal });
   }),
 );
 

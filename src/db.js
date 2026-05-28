@@ -475,6 +475,10 @@ export async function ensureInitialized() {
       // Склад списания заказа (для МойСклад) + потерянные товары (аннулирование админом).
       await pool.query('ALTER TABLE orders ADD COLUMN IF NOT EXISTS warehouse TEXT');
       await pool.query('ALTER TABLE orders ADD COLUMN IF NOT EXISTS loss_voided BOOLEAN DEFAULT FALSE');
+      // Из какого статуса был отменён заказ (для статистики «отказ до поступления»).
+      await pool.query('ALTER TABLE orders ADD COLUMN IF NOT EXISTS cancelled_from_status TEXT');
+      // Связь с родительским заказом, если этот создан разделением.
+      await pool.query('ALTER TABLE orders ADD COLUMN IF NOT EXISTS parent_order_id INTEGER');
       // Прайс с привязкой к складу: товар × канал × склад. Старое UNIQUE(product,market) снимаем.
       await pool.query("ALTER TABLE product_prices ADD COLUMN IF NOT EXISTS warehouse TEXT NOT NULL DEFAULT ''");
       await pool.query('ALTER TABLE product_prices DROP CONSTRAINT IF EXISTS product_prices_product_id_marketplace_key');
