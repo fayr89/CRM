@@ -81,15 +81,21 @@ export async function generateLabelsPdf(orders) {
 
     // Порядковый номер крупно слева внизу.
     doc.fontSize(20)
-      .text(`№ ${seq}`, 2 * MM, PAGE_H - 12 * MM, {
+      .text(`№ ${seq}`, 2 * MM, PAGE_H - 13 * MM, {
         width: PAGE_W / 2 - 2 * MM,
         align: 'left',
       });
 
-    // Служба доставки справа внизу.
+    // Справа внизу — две строки: служба доставки и способ отправки.
     const deliveryName = mapDeliveryMethodName(order.delivery_method);
-    doc.fontSize(10)
-      .text(deliveryName, PAGE_W / 2, PAGE_H - 10 * MM, {
+    const shipMethod = mapPaymentMethodName(order.payment_method);
+    doc.fontSize(9)
+      .text(deliveryName, PAGE_W / 2, PAGE_H - 13 * MM, {
+        width: PAGE_W / 2 - 2 * MM,
+        align: 'right',
+      });
+    doc.fontSize(8)
+      .text(shipMethod, PAGE_W / 2, PAGE_H - 8 * MM, {
         width: PAGE_W / 2 - 2 * MM,
         align: 'right',
       });
@@ -111,6 +117,19 @@ function mapDeliveryMethodName(code) {
     avito_delivery: 'Avito Доставка',
     pickup: 'Самовывоз',
     courier: 'Курьер',
+  };
+  const lower = String(code).toLowerCase();
+  return map[lower] || code;
+}
+
+function mapPaymentMethodName(code) {
+  if (!code) return '—';
+  const map = {
+    cash: 'Наличные',
+    card: 'Карта',
+    bank_transfer: 'Банк. перевод',
+    avito_delivery: 'Avito (нал. при пол.)',
+    other: 'Другое',
   };
   const lower = String(code).toLowerCase();
   return map[lower] || code;

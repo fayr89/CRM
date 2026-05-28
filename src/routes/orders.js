@@ -306,7 +306,7 @@ router.get(
       const ids = idsRaw.split(',').map((s) => Number(s.trim())).filter((n) => Number.isFinite(n) && n > 0);
       if (!ids.length) throw BadRequest('Некорректный параметр ids');
       orders = await db.all(
-        `SELECT id, reference_number, shipment_qr, delivery_method
+        `SELECT id, reference_number, shipment_qr, delivery_method, payment_method, marketplace
          FROM orders WHERE id = ANY(?) ORDER BY array_position(?::int[], id)`,
         ids,
         ids,
@@ -321,7 +321,7 @@ router.get(
         params.push(...scope.params);
       }
       orders = await db.all(
-        `SELECT id, reference_number, shipment_qr, delivery_method
+        `SELECT id, reference_number, shipment_qr, delivery_method, payment_method, marketplace
          FROM orders WHERE ${where.join(' AND ')} ORDER BY reserved_at`,
         ...params,
       );
