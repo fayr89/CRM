@@ -3605,6 +3605,7 @@ export async function renderIntegrations(main) {
   main.append(el('div', { class: 'help-row' }, helpButton('integrations')));
 
   const msTokenArea = el('div', { class: 'integration-section' });
+  const msSyncArea = el('div', { class: 'integration-section' });
   const marketplacesArea = el('div', { class: 'integration-section' });
   const deliveryArea = el('div', { class: 'integration-section' });
   const cancelReasonsArea = el('div', { class: 'integration-section' });
@@ -3613,9 +3614,10 @@ export async function renderIntegrations(main) {
   const webhooksArea = el('div', { class: 'integration-section' });
   const docsArea = el('div', { class: 'integration-section' });
 
-  main.append(msTokenArea, marketplacesArea, deliveryArea, cancelReasonsArea, warehousesArea, tokensArea, webhooksArea, docsArea);
+  main.append(msTokenArea, msSyncArea, marketplacesArea, deliveryArea, cancelReasonsArea, warehousesArea, tokensArea, webhooksArea, docsArea);
 
   await renderMoyskladTokenSection(msTokenArea);
+  await renderMoyskladSyncSection(msSyncArea);
   await renderMarketplacesSection(marketplacesArea);
   await renderDeliveryMethodsSection(deliveryArea);
   await renderListSettingSection(cancelReasonsArea, {
@@ -3629,6 +3631,88 @@ export async function renderIntegrations(main) {
   await renderTokensSection(tokensArea);
   await renderWebhooksSection(webhooksArea);
   renderDocsSection(docsArea);
+}
+
+// МС-интеграция: списание/приход. Этап 1 — инициализация и видимость очереди.
+async function renderMoyskladSyncSection(area) {
+  clear(area);
+  const me = JSON.parse(localStorage.getItem('crm_user') || '{}');
+  if (me.role !== 'admin') return;
+  area.append(el('div', { class: 'section-header' }, el('h2', {}, '🔁 МойСклад — синхронизация документов')));
+  area.append(el('p', {},
+    'Записывает в МС: отгрузки, возвраты, потери, резервы. Работает асинхронно через очередь — ' +
+    'если МС упал, задачи долетят позже. Подробности — в карте сценариев.'));
+
+  const statusBox = el('div', { class: 'card', style: { marginTop: '10px' } });
+  area.append(statusBox);
+
+  async function refresh() {
+    clear(statusBox);
+    let st;
+    try { st = await api.msStatus(); }
+    catch (e) { statusBox.append(el('div', {}, 'Не удалось загрузить статус: ' + e.message)); return; }
+
+    const storeNames = Object.keys(st.store_map || {});
+    const ready = !!(st.has_token && st.organization_id && st.counterparty_id && storeNames.length);
+
+    statusBox.append(
+      el('div', { class: 'detail-grid' },
+        el('div', { class: 'k' }, 'Токен МС'),
+        el('div', {}, st.has_token ? '✓ задан' : '❌ не задан (см. секцию выше)'),
+        el('div', { class: 'k' }, 'Инициализация'),
+        el('div', {}, st.init_completed_at ? `✓ ${fmtDateTime(st.init_completed_at)}` : '— не выполнена'),
+        el('div', { class: 'k' }, 'Организация (uuid)'),
+        el('div', {}, st.organization_id || '—'),
+        el('div', { class: 'k' }, 'Контрагент (uuid)'),
+        el('div', {}, st.counterparty_id || '—'),
+        el('div', { class: 'k' }, 'Склады из МС'),
+        el('div', {}, storeNames.length ? storeNames.join(', ') : '—'),
+        el('div', { class: 'k' }, 'Очередь'),
+        el('div', {},
+          `pending: ${st.job_counts?.pending || 0}, running: ${st.job_counts?.running || 0}, ` +
+          `done: ${st.job_counts?.done || 0}, failed: ${st.job_counts?.failed || 0}`,
+        ),
+      ),
+    );
+
+    const cpInput = el('input', { type: 'text', value: 'Розничный покупатель', placeholder: 'Имя контрагента в МС' });
+    const initBtn = el('button', {
+      class: 'btn btn-primary btn-sm',
+      onClick: async () => {
+        if (!st.has_token) { toast('Сначала сохраните токен МС в секции выше.', 'error'); return; }
+        try {
+          await api.msInit({ counterparty_name: cpInput.value.trim() || 'Розничный покупатель' });
+          toast('Инициализация выполнена', 'success');
+          await refresh();
+        } catch (e) { toast(e.message, 'error'); }
+      },
+    }, ready ? '🔄 Переинициализировать' : '🚀 Инициализировать');
+
+    const runBtn = el('button', {
+      class: 'btn btn-sm',
+      onClick: async () => {
+        try {
+          const r = await api.msRunNow();
+          toast(`Обработано задач: ${r.processed}`, 'success');
+          await refresh();
+        } catch (e) { toast(e.message, 'error'); }
+      },
+    }, '▶ Запустить очередь сейчас');
+
+    area.appendChild(el('div', { style: { marginTop: '12px', display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' } },
+      el('label', { style: { display: 'flex', alignItems: 'center', gap: '6px' } }, 'Контрагент:', cpInput),
+      initBtn,
+      runBtn,
+    ));
+
+    if (st.job_counts?.failed) {
+      area.appendChild(el('div', { class: 'help-banner', style: { marginTop: '10px' } },
+        `⚠️ В очереди ${st.job_counts.failed} неудачных задач. ` +
+        'Откройте логи Vercel или используйте /api/admin/ms/jobs?status=failed.'));
+    }
+  }
+
+  await refresh();
 }
 
 // Токен МойСклад: хранится в БД (шифрованно), используется для импорта и автообновления остатков.

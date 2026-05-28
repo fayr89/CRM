@@ -226,3 +226,79 @@ export async function fetchMoyskladStockByStorePage(token, offset = 0, limit = 5
 
   return { byId, bySku, samples, size: data.meta?.size ?? offset + rows.length, fetched: rows.length, rowCount: rows.length };
 }
+
+// ============= Write-API для интеграции списания/прихода =============
+
+// Низкоуровневый JSON-запрос: GET/POST/PUT/DELETE.
+async function msRequest(method, endpoint, token, body) {
+  const headers = { ...authHeader(token), 'Content-Type': 'application/json' };
+  const url = `${BASE}${endpoint}`;
+  for (let attempt = 0; ; attempt += 1) {
+    const res = await fetch(url, {
+      method,
+      headers,
+      body: body ? JSON.stringify(body) : undefined,
+      signal: AbortSignal.timeout(60000),
+    });
+    if ((res.status !== 429 && res.status !== 503) || attempt >= 4) {
+      if (!res.ok) {
+        const text = await res.text().catch(() => '');
+        throw msError(res.status, text);
+      }
+      // DELETE возвращает 200 без тела.
+      const text = await res.text();
+      return text ? JSON.parse(text) : null;
+    }
+    const retryAfter = parseInt(res.headers.get('retry-after') || '', 10);
+    const waitMs = Number.isFinite(retryAfter)
+      ? Math.min(10000, retryAfter * 1000)
+      : Math.min(6000, 600 * 2 ** attempt);
+    await res.text().catch(() => {});
+    await new Promise((r) => setTimeout(r, waitMs));
+  }
+}
+
+// Список складов МС: [{id, name}]. Используем для маппинга orders.warehouse → uuid.
+export async function msFetchStores(token) {
+  const rows = await fetchAll('/entity/store', token);
+  return rows.map((s) => ({ id: s.id, name: s.name, archived: !!s.archived }));
+}
+
+// Активные организации в МС. Первая обычно — твоя компания.
+export async function msFetchOrganizations(token) {
+  const rows = await fetchAll('/entity/organization', token);
+  return rows.filter((o) => !o.archived).map((o) => ({ id: o.id, name: o.name }));
+}
+
+// Поиск контрагента по имени (точный матч). Для «Розничный покупатель».
+export async function msFindCounterpartyByName(token, name) {
+  const enc = encodeURIComponent(name);
+  const rows = await fetchAll(`/entity/counterparty?filter=name=${enc}`, token);
+  return rows.map((c) => ({ id: c.id, name: c.name }));
+}
+
+// Хелпер: ссылка на сущность МС по UUID для использования в meta-полях документов.
+export function msHref(entity, id) {
+  return {
+    meta: {
+      href: `${BASE}/entity/${entity}/${id}`,
+      type: entity,
+      mediaType: 'application/json',
+    },
+  };
+}
+
+// Generic POST для создания документа (customerorder, demand, customerreturn, loss).
+export async function msCreate(token, entity, body) {
+  return await msRequest('POST', `/entity/${entity}`, token, body);
+}
+
+// Generic PUT для обновления.
+export async function msUpdate(token, entity, id, body) {
+  return await msRequest('PUT', `/entity/${entity}/${id}`, token, body);
+}
+
+// Generic DELETE.
+export async function msDelete(token, entity, id) {
+  return await msRequest('DELETE', `/entity/${entity}/${id}`, token);
+}

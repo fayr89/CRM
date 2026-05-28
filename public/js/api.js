@@ -116,6 +116,12 @@ export const api = {
   listFeedback: (query) => request('GET', '/api/feedback', { query }),
   feedbackOpenCount: () => request('GET', '/api/feedback/open-count'),
   updateFeedback: (id, body) => request('PATCH', `/api/feedback/${id}`, { body }),
+  // МойСклад: интеграция списания/прихода
+  msStatus: () => request('GET', '/api/admin/ms/status'),
+  msInit: (body) => request('POST', '/api/admin/ms/init', { body }),
+  msListJobs: (query) => request('GET', '/api/admin/ms/jobs', { query }),
+  msRetryJob: (id) => request('POST', `/api/admin/ms/jobs/${id}/retry`),
+  msRunNow: () => request('POST', '/api/admin/ms/jobs/run-now'),
   search: (q) => request('GET', '/api/search', { query: { q } }),
 
   apiTokens: () => request('GET', '/api/api-tokens'),

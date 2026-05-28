@@ -3,6 +3,7 @@ import express from 'express';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { errorHandler } from './errors.js';
+import { tickMsQueue } from './services/ms-jobs.js';
 import authRoutes from './routes/auth.js';
 import usersRoutes from './routes/users.js';
 import companiesRoutes from './routes/companies.js';
@@ -61,6 +62,8 @@ export function createApp({ serveStatic = true } = {}) {
   // API не кэшируем — иначе повторные GET отдают 304 (фронт трактует как ошибку).
   app.use('/api', (_req, res, next) => {
     res.set('Cache-Control', 'no-store');
+    // Бедный воркер МС-очереди: дёргается при каждом /api-запросе, но не чаще раз в 30 сек.
+    tickMsQueue();
     next();
   });
   if (serveStatic) app.use(express.static(PUBLIC_DIR));

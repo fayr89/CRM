@@ -499,6 +499,32 @@ export async function ensureInitialized() {
       await pool.query('ALTER TABLE orders ADD COLUMN IF NOT EXISTS cancelled_from_status TEXT');
       // Связь с родительским заказом, если этот создан разделением.
       await pool.query('ALTER TABLE orders ADD COLUMN IF NOT EXISTS parent_order_id INTEGER');
+      // МойСклад: ID документов в МС, чтобы знать что и где обновлять/удалять.
+      await pool.query('ALTER TABLE orders ADD COLUMN IF NOT EXISTS ms_customer_order_id TEXT');
+      await pool.query('ALTER TABLE orders ADD COLUMN IF NOT EXISTS ms_demand_id TEXT');
+      await pool.query('ALTER TABLE orders ADD COLUMN IF NOT EXISTS ms_return_id TEXT');
+      await pool.query('ALTER TABLE orders ADD COLUMN IF NOT EXISTS ms_loss_id TEXT');
+      // Очередь задач для синхронизации с МС (асинхронно с ретраями).
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS ms_jobs (
+          id SERIAL PRIMARY KEY,
+          order_id INTEGER REFERENCES orders(id) ON DELETE CASCADE,
+          action TEXT NOT NULL,
+          payload JSONB NOT NULL DEFAULT '{}',
+          status TEXT NOT NULL DEFAULT 'pending'
+            CHECK(status IN ('pending','running','done','failed')),
+          attempts INTEGER NOT NULL DEFAULT 0,
+          last_error TEXT,
+          ms_document_id TEXT,
+          scheduled_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+      `);
+      await pool.query(
+        'CREATE INDEX IF NOT EXISTS idx_ms_jobs_pending ON ms_jobs(scheduled_at) WHERE status = \'pending\'',
+      );
+      await pool.query('CREATE INDEX IF NOT EXISTS idx_ms_jobs_order ON ms_jobs(order_id)');
       // Обратная связь от пользователей (вопросы / баги / предложения).
       await pool.query(`
         CREATE TABLE IF NOT EXISTS feedback (
