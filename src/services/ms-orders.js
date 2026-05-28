@@ -375,7 +375,8 @@ export async function markdownCreateHandler(job) {
     description: `Уценка из CRM #${order.id}. Фото-пруф в CRM.`,
     positions,
   };
-  if (order.ms_demand_id) body.demand = msHref('demand', order.ms_demand_id);
+  // ВАЖНО: НЕ привязываем к demand — позиции новые (markdown-копии), которых
+  // не было в исходной отгрузке. МС иначе валит 412 «позиция не соответствует».
 
   const result = await msCreate(token, 'salesreturn', body);
   await db.run('UPDATE orders SET ms_return_id = ? WHERE id = ?', result.id, order.id);

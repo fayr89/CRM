@@ -70,6 +70,10 @@ router.get(
     } else if (req.query.priced === 'without') {
       where.push('NOT EXISTS (SELECT 1 FROM product_prices pp WHERE pp.product_id = p.id)');
     }
+    // Уценённые товары (требуют ручного проставления цены админом).
+    if (req.query.markdown === '1') {
+      where.push('p.is_markdown = TRUE');
+    }
     const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
 
     const rows = await db.all(

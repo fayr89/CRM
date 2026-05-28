@@ -4838,7 +4838,10 @@ export async function renderProducts(main) {
     // нет поставщиков
   }
 
-  let state = { page: 1, search: '', stock: '', warehouse: '', supplier: '', priced: '' };
+  // Если в URL #/products?markdown=1 — фильтр уценённых без цены.
+  const hashQs = new URLSearchParams((location.hash.split('?')[1] || ''));
+  const markdownFilter = hashQs.get('markdown') === '1';
+  let state = { page: 1, search: '', stock: '', warehouse: '', supplier: '', priced: '', markdown: markdownFilter ? '1' : '' };
   let view = localStorage.getItem('products_view') === 'list' ? 'list' : 'grid';
   let lastResult = null;
   const tableArea = el('div');
@@ -5234,6 +5237,11 @@ export async function renderProducts(main) {
       ),
     ),
     el('div', { class: 'help-row' }, helpButton('products')),
+    markdownFilter
+      ? el('div', { class: 'help-banner', style: { background: '#fef3c7', borderColor: '#fde68a', color: '#92400e' } },
+          '🏷️ Показаны уценённые товары. Проставьте цену в карточке (раздел «Прайсы»). ',
+          el('a', { href: '#/products', style: { color: 'var(--primary)' } }, 'Снять фильтр'))
+      : null,
     toolbar,
     tableArea,
   );
@@ -6389,9 +6397,11 @@ export async function renderReturns(main) {
           ? el('span', { class: 'badge pending' }, 'Ждёт обработки')
           : o.return_status === 'restocked'
             ? el('span', { class: 'badge confirmed' }, 'Возвращён в сток')
-            : o.return_status === 'lost'
-              ? el('span', { class: 'badge pending' }, 'Потерян')
-              : el('span', { class: 'badge rejected' }, 'Списан');
+            : o.return_status === 'markdown'
+              ? el('span', { class: 'badge proposal' }, '🏷️ Возвращён в уценку')
+              : o.return_status === 'lost'
+                ? el('span', { class: 'badge pending' }, 'Потерян')
+                : el('span', { class: 'badge rejected' }, 'Списан');
         const actions = el('td', { style: { textAlign: 'right' } });
         if (canResolve && o.return_status === 'pending') {
           actions.append(
