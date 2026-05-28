@@ -1041,6 +1041,15 @@ function itemsEditor(initialItems = [], { getMarketplace, getWarehouse, onChange
       const ok = await confirm(`«${product.name}» нет в наличии (остаток ${available}). Всё равно добавить в заказ?`);
       if (!ok) return;
     }
+    // Убираем пустые строки-заглушки: если в таблице есть строки без артикула, названия и
+    // привязки к товару — они только мешают.
+    for (const row of [...tbody.children]) {
+      const i = row._inputs;
+      const m = row._meta;
+      if (!m?.product_id && !i?.sku?.value && !i?.name?.value) {
+        row.remove();
+      }
+    }
     addRow({
       sku: product.sku,
       name: product.name,
@@ -2044,6 +2053,11 @@ export async function renderOrders(main) {
               r.items_preview
                 ? el('div', { class: 'order-card-items', title: r.items_preview }, '📦 ' + r.items_preview)
                 : null,
+              r.parent_order_id
+                ? el('div', { class: 'order-card-split', title: 'Создан разделением' }, `🔀 из #${r.parent_order_id}`)
+                : (r.notes && /Разделён → создан заказ #(\d+)/.test(r.notes))
+                  ? el('div', { class: 'order-card-split', title: 'Был разделён' }, '🔀 разделён')
+                  : null,
               r.price_deviation != null && Math.abs(r.price_deviation) >= 1
                 ? el(
                     'div',
