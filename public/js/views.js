@@ -3644,10 +3644,14 @@ async function renderMoyskladSyncSection(area) {
     'если МС упал, задачи долетят позже. Подробности — в карте сценариев.'));
 
   const statusBox = el('div', { class: 'card', style: { marginTop: '10px' } });
-  area.append(statusBox);
+  const controlsBox = el('div', { style: { marginTop: '12px', display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' } });
+  const warnBox = el('div');
+  area.append(statusBox, controlsBox, warnBox);
 
   async function refresh() {
     clear(statusBox);
+    clear(controlsBox);
+    clear(warnBox);
     let st;
     try { st = await api.msStatus(); }
     catch (e) { statusBox.append(el('div', {}, 'Не удалось загрузить статус: ' + e.message)); return; }
@@ -3699,16 +3703,16 @@ async function renderMoyskladSyncSection(area) {
       },
     }, '▶ Запустить очередь сейчас');
 
-    area.appendChild(el('div', { style: { marginTop: '12px', display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' } },
+    controlsBox.append(
       el('label', { style: { display: 'flex', alignItems: 'center', gap: '6px' } }, 'Контрагент:', cpInput),
       initBtn,
       runBtn,
-    ));
+    );
 
     if (st.job_counts?.failed) {
-      area.appendChild(el('div', { class: 'help-banner', style: { marginTop: '10px' } },
+      warnBox.append(el('div', { class: 'help-banner', style: { marginTop: '10px' } },
         `⚠️ В очереди ${st.job_counts.failed} неудачных задач. ` +
-        'Откройте логи Vercel или используйте /api/admin/ms/jobs?status=failed.'));
+        'Откройте /api/admin/ms/jobs?status=failed для деталей.'));
     }
   }
 
