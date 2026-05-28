@@ -438,6 +438,12 @@ table.data tbody tr:last-child td { border-bottom: none; }
   border-radius: 999px; padding: 1px 7px;
   font-size: 10px; font-weight: 700;
 }
+.sidebar-nav a { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+.nav-counter {
+  background: var(--danger); color: #fff;
+  border-radius: 999px; padding: 1px 7px;
+  font-size: 10px; font-weight: 700;
+}
 
 /* ===== Дропдаун уведомлений ===== */
 .notif-dropdown {

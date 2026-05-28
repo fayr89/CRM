@@ -611,19 +611,18 @@ router.post(
     if (!order.shipment_qr || !String(order.shipment_qr).trim()) {
       throw BadRequest('Заполните «Номер отправления» в заказе — он обязателен при резерве.');
     }
-    await db.run(
-      `UPDATE orders SET status = 'reserved', warehouse_user_id = ?,
-       reserved_at = NOW(), updated_at = NOW() WHERE id = ?`,
-      req.user.id,
-      order.id,
-    );
-    const updated = await db.get('SELECT * FROM orders WHERE id = ?', order.id);
-    // Касса: при резерве заказ попадает в кассу транзакцией прихода (на подтверждение),
-    // если по этому заказу транзакции ещё нет.
-    try {
-      const existing = await db.get('SELECT id FROM payments WHERE order_id = ?', order.id);
+    // Смена статуса + создание кассового прихода — в одной БД-транзакции, чтобы
+    // не было рассинхрона: либо заказ зарезервирован И транзакция создана, либо ничего.
+    await db.withTransaction(async (tx) => {
+      await tx.run(
+        `UPDATE orders SET status = 'reserved', warehouse_user_id = ?,
+         reserved_at = NOW(), updated_at = NOW() WHERE id = ?`,
+        req.user.id,
+        order.id,
+      );
+      const existing = await tx.get('SELECT id FROM payments WHERE order_id = ?', order.id);
       if (!existing && (order.total_amount || 0) > 0) {
-        await db.run(
+        await tx.run(
           `INSERT INTO payments (manager_id, order_id, amount, currency, kind, status, notes, created_at, updated_at)
            VALUES (?, ?, ?, ?, 'income', 'pending', ?, NOW(), NOW())`,
           order.manager_id,
@@ -633,10 +632,8 @@ router.post(
           `Заказ #${order.id}${order.marketplace ? ' · ' + order.marketplace : ''}`,
         );
       }
-    } catch (e) {
-      // eslint-disable-next-line no-console
-      console.error('[orders] касса при резерве:', e.message);
-    }
+    });
+    const updated = await db.get('SELECT * FROM orders WHERE id = ?', order.id);
     await notify(
       order.manager_id,
       'order.reserved',
@@ -753,29 +750,27 @@ router.post(
     // Если товар был зарезервирован/отгружён — заказ попадает в «Возвраты» на обработку складом.
     // Для waiting_stock и new возврата нет — товар не списывался.
     const needsReturn = ['reserved', 'shipped'].includes(order.status);
-    await db.run(
-      `UPDATE orders SET status = 'cancelled', cancel_reason = ?,
-       return_status = ?, cancelled_from_status = ?, cancelled_at = NOW(), updated_at = NOW() WHERE id = ?`,
-      reason ?? null,
-      needsReturn ? 'pending' : null,
-      order.status,
-      order.id,
-    );
-    const updated = await db.get('SELECT * FROM orders WHERE id = ?', order.id);
-    // Касса: если по заказу была транзакция прихода — отражаем отмену компенсирующим
-    // расходом (возврат). Так оборот по отменённому заказу обнуляется и виден в кассе.
-    try {
-      const income = await db.get(
+    // Смена статуса + компенсирующая кассовая транзакция — в одной БД-транзакции.
+    await db.withTransaction(async (tx) => {
+      await tx.run(
+        `UPDATE orders SET status = 'cancelled', cancel_reason = ?,
+         return_status = ?, cancelled_from_status = ?, cancelled_at = NOW(), updated_at = NOW() WHERE id = ?`,
+        reason ?? null,
+        needsReturn ? 'pending' : null,
+        order.status,
+        order.id,
+      );
+      const income = await tx.get(
         `SELECT * FROM payments WHERE order_id = ? AND kind = 'income' ORDER BY id DESC LIMIT 1`,
         order.id,
       );
       if (income) {
-        const alreadyReversed = await db.get(
+        const alreadyReversed = await tx.get(
           `SELECT id FROM payments WHERE order_id = ? AND kind = 'expense'`,
           order.id,
         );
         if (!alreadyReversed) {
-          await db.run(
+          await tx.run(
             `INSERT INTO payments (manager_id, order_id, amount, currency, kind, status, notes, created_at, updated_at)
              VALUES (?, ?, ?, ?, 'expense', 'pending', ?, NOW(), NOW())`,
             income.manager_id,
@@ -786,10 +781,8 @@ router.post(
           );
         }
       }
-    } catch (e) {
-      // eslint-disable-next-line no-console
-      console.error('[orders] касса при отмене:', e.message);
-    }
+    });
+    const updated = await db.get('SELECT * FROM orders WHERE id = ?', order.id);
     emitEvent('order.cancelled', updated);
     res.json(updated);
   }),

@@ -237,13 +237,17 @@ function renderShell() {
 
   // Строим навигацию по группам: показываем только видимые пункты и непустые группы.
   const navChildren = [];
+  // Бейдж с числом открытых обращений — рядом с пунктом «Обращения».
+  const feedbackCounter = el('span', { class: 'nav-counter', style: { display: 'none' } });
   for (const group of NAV_GROUPS) {
     const items = group.items.filter((it) => navItemVisible(user, it));
     if (!items.length) continue;
     if (group.title) navChildren.push(el('div', { class: 'sidebar-group-title' }, group.title));
     for (const it of items) {
+      const extras = it.hash === '#/feedback' ? [feedbackCounter] : [];
       navChildren.push(
-        el('a', { href: it.hash, class: path.startsWith(it.hash) ? 'active' : '' }, it.label),
+        el('a', { href: it.hash, class: path.startsWith(it.hash) ? 'active' : '' },
+          el('span', {}, it.label), ...extras),
       );
     }
   }
@@ -353,6 +357,7 @@ function renderShell() {
   }
 
   startNotificationsPolling(bellCounter);
+  if (user.role === 'admin') startFeedbackPolling(feedbackCounter);
   return main;
 }
 
@@ -365,6 +370,8 @@ function stopNotificationsPolling() {
   if (notifTimer) clearInterval(notifTimer);
   notifTimer = null;
   lastUnread = 0;
+  if (feedbackTimer) clearInterval(feedbackTimer);
+  feedbackTimer = null;
 }
 
 function startNotificationsPolling(counter) {
@@ -391,6 +398,25 @@ function startNotificationsPolling(counter) {
   };
   tick();
   notifTimer = setInterval(tick, 20000);
+}
+
+let feedbackTimer = null;
+function startFeedbackPolling(counter) {
+  if (feedbackTimer) clearInterval(feedbackTimer);
+  const tick = async () => {
+    try {
+      const r = await api.feedbackOpenCount();
+      const open = r.count || 0;
+      if (open > 0) {
+        counter.textContent = String(open);
+        counter.style.display = 'inline-block';
+      } else {
+        counter.style.display = 'none';
+      }
+    } catch { /* ignore */ }
+  };
+  tick();
+  feedbackTimer = setInterval(tick, 60000);
 }
 
 function openNotificationsDropdown(anchor, counter) {
