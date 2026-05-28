@@ -983,15 +983,17 @@ function itemsEditor(initialItems = [], { getMarketplace, getWarehouse, onChange
       '×',
     );
 
+    // data-label нужен для мобильной адаптации (CSS превращает табл. в карточки).
+    imageCell.setAttribute('data-label', 'Фото');
     const row = el(
       'tr',
       {},
       imageCell,
-      el('td', {}, skuI),
-      el('td', {}, nameI, storesHint),
-      el('td', {}, qtyI),
-      el('td', {}, priceI, priceHint),
-      el('td', {}, removeBtn),
+      el('td', { 'data-label': 'Артикул' }, skuI),
+      el('td', { 'data-label': 'Наименование' }, nameI, storesHint),
+      el('td', { 'data-label': 'Кол-во' }, qtyI),
+      el('td', { 'data-label': 'Цена' }, priceI, priceHint),
+      el('td', { 'data-label': '' }, removeBtn),
     );
     row._inputs = {
       sku: skuI, name: nameI, quantity: qtyI, unit_price: priceI,

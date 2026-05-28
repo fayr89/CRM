@@ -184,8 +184,13 @@ export function openModal(title, body, { primaryLabel = 'Сохранить', on
     const root = document.getElementById('modal-root');
     const close = (result) => {
       backdrop.remove();
+      document.removeEventListener('keydown', onKey);
       resolve(result);
     };
+    const onKey = (e) => {
+      if (e.key === 'Escape') close(null);
+    };
+    document.addEventListener('keydown', onKey);
 
     const footer = el(
       'div',
@@ -223,16 +228,9 @@ export function openModal(title, body, { primaryLabel = 'Сохранить', on
       footer,
     );
 
-    const backdrop = el(
-      'div',
-      {
-        class: 'modal-backdrop',
-        onClick: (e) => {
-          if (e.target === backdrop) close(null);
-        },
-      },
-      modal,
-    );
+    // Backdrop НЕ закрывает по клику — слишком легко промахнуться и потерять
+    // введённые данные. Закрытие только через '×', 'Отмена' или Esc.
+    const backdrop = el('div', { class: 'modal-backdrop' }, modal);
     root.append(backdrop);
   });
 }

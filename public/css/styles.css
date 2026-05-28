@@ -1035,3 +1035,107 @@ table.data tbody tr:last-child td { border-bottom: none; }
   th, td { padding: 6px 4px; }
   .product-image { height: 100px; }
 }
+
+/* ===== Дополнительная мобильная адаптация (от 768 и ниже) ===== */
+@media (max-width: 768px) {
+  /* Footer модалки — sticky внизу, всегда виден submit. */
+  .modal { display: flex; flex-direction: column; }
+  .modal-body { -webkit-overflow-scrolling: touch; }
+  .modal-footer {
+    position: sticky; bottom: 0; background: var(--surface);
+    border-top: 1px solid var(--border); padding: 10px 12px;
+  }
+  .modal-footer button { min-height: 44px; flex: 1; font-weight: 600; }
+
+  /* Любая таблица .data — горизонтальный скролл вместо обрезания. */
+  .table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  table.data { min-width: 480px; }
+
+  /* Items-editor (позиции заказа) — таблица не вмещается, делаем карточки. */
+  .items-editor table, .items-editor thead, .items-editor tbody,
+  .items-editor tfoot, .items-editor th, .items-editor td, .items-editor tr {
+    display: block; width: 100%;
+  }
+  .items-editor thead { display: none; }
+  .items-editor tbody tr {
+    border: 1px solid var(--border); border-radius: 8px;
+    padding: 10px; margin-bottom: 10px;
+    background: #fff;
+  }
+  .items-editor td { padding: 4px 0 !important; }
+  .items-editor td::before {
+    content: attr(data-label);
+    display: block; font-size: 11px; color: var(--text-muted);
+    text-transform: uppercase; letter-spacing: 0.3px; margin-bottom: 2px;
+  }
+  .items-editor td.item-image-cell { width: auto; }
+  .items-editor td input { width: 100%; }
+  .items-editor tfoot td { text-align: right !important; padding: 8px 0 !important; }
+  .items-editor tfoot td::before { display: none; }
+
+  /* Kanban: на маленьких — узкая горизонтальная лента, перетаскивать сложно,
+     но видно весь поток. По клику открываются детали. */
+  .pipeline.orders-kanban {
+    grid-template-columns: repeat(6, 80vw) !important;
+    overflow-x: auto;
+    scroll-snap-type: x mandatory;
+    -webkit-overflow-scrolling: touch;
+  }
+  .pipeline.orders-kanban .pipeline-column {
+    scroll-snap-align: start;
+    min-width: 80vw;
+  }
+
+  /* Тулбары и фильтры — двухколонные на узких; кнопки шире. */
+  .toolbar { gap: 6px; }
+  .toolbar input, .toolbar select { flex: 1 1 calc(50% - 6px); min-width: 0; }
+  .filter-bar { gap: 6px; }
+  .filter-bar > * { flex: 1 1 calc(50% - 6px); }
+
+  /* Page header — без огромной padding'и слева под бургер: 52px достаточно. */
+  .page-header h1, .page-title { word-break: break-word; }
+
+  /* Карта grid — продукт-карт сетка адаптивная (уже есть, но усилим). */
+  .product-grid { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)) !important; gap: 10px; }
+  .product-card-image { height: 110px; }
+
+  /* Help-banner короче. */
+  .help-banner { font-size: 12px; padding: 8px 10px; }
+
+  /* Сократить page padding для большего полезного пространства. */
+  .main { padding: 14px 10px 10px; }
+
+  /* Bell counter — поменьше */
+  .bell-counter { font-size: 9px; padding: 1px 5px; }
+
+  /* Detail-grid в деталях заказа — стопкой, не двумя колонками. */
+  .detail-grid { grid-template-columns: 1fr !important; gap: 4px 0; }
+  .detail-grid .k {
+    font-size: 11px; text-transform: uppercase; letter-spacing: 0.3px;
+    margin-top: 8px;
+  }
+
+  /* Form-grid (две колонки в форме) — одна колонка. */
+  .form-grid { grid-template-columns: 1fr !important; }
+
+  /* Pipeline cards стянуть. */
+  .pipeline-card { padding: 8px 10px; }
+  .pipeline-card .title { font-size: 13px; }
+  .pipeline-card .meta { font-size: 11px; }
+
+  /* Дашборд — карточки 2 колонки на phone, 1 на extra-small. */
+  .dashboard-grid { grid-template-columns: 1fr 1fr; }
+
+  /* Item-actions в строке позиции — кнопки видны полностью. */
+  .item-actions { display: flex; gap: 4px; flex-wrap: wrap; }
+}
+
+@media (max-width: 480px) {
+  .dashboard-grid { grid-template-columns: 1fr; }
+  .pipeline.orders-kanban {
+    grid-template-columns: repeat(6, 90vw) !important;
+  }
+  .pipeline.orders-kanban .pipeline-column { min-width: 90vw; }
+  /* Совсем узкие — одна колонка таблицы данных, ширина 100%. */
+  table.data { min-width: 100%; font-size: 11px; }
+}
