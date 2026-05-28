@@ -52,8 +52,9 @@ export { setSetting as setMsSetting };
 // Coalesce: если есть pending с тем же (order, action) — обновляем его payload
 // (последнее намерение выигрывает: reserve → unreserve → reserve = финальный full).
 // Если есть running — создаём новую pending, она выполнится после running.
-// Сразу после enqueue запускаем воркер (без throttle) — задача начинает обрабатываться
-// в ту же секунду, не ждёт следующего /api-запроса через 30 сек.
+// Сразу же AWAIT воркер: на Vercel-serverless фоновые setImmediate ненадёжны
+// (лямбда может заморозиться после res.send), поэтому исполняем синхронно
+// с таймаутом — если МС медленный, задача останется в pending для retry.
 export async function enqueueMsJob(orderId, action, payload = {}) {
   const pending = await db.get(
     `SELECT id FROM ms_jobs WHERE order_id = ? AND action = ? AND status = 'pending' LIMIT 1`,
@@ -78,10 +79,17 @@ export async function enqueueMsJob(orderId, action, payload = {}) {
     );
     result = { skipped: false, id: r.lastInsertRowid };
   }
-  // Без throttle — задача начинает обрабатываться сразу, fire-and-forget.
-  setImmediate(() => {
-    runPendingMsJobs(3).catch((e) => console.error('[ms] post-enqueue tick:', e.message));
-  });
+  // Жёсткий таймаут на синхронное исполнение, чтобы не задерживать ответ
+  // пользователю — если МС не ответил за 12 сек, ответ уходит, задача остаётся
+  // в очереди и подберётся следующим request'ом через middleware.
+  try {
+    await Promise.race([
+      runPendingMsJobs(3),
+      new Promise((resolve) => setTimeout(resolve, 12_000)),
+    ]);
+  } catch (e) {
+    console.warn('[ms] inline run after enqueue:', e.message);
+  }
   return result;
 }
 
@@ -137,6 +145,17 @@ async function claimNextJob() {
 
 // Запустить до N задач из очереди. Возвращает счётчик обработанных.
 export async function runPendingMsJobs(limit = 5) {
+  // Recovery: задачи, застрявшие в running >5 минут (лямбда упала / timeout),
+  // возвращаем в pending для повторной попытки.
+  try {
+    await db.run(
+      `UPDATE ms_jobs SET status = 'pending', last_error = 'recovered from stuck running',
+       scheduled_at = NOW(), updated_at = NOW()
+       WHERE status = 'running' AND updated_at < NOW() - INTERVAL '5 minutes'`,
+    );
+  } catch (e) {
+    console.error('[ms] recovery sweep:', e.message);
+  }
   let processed = 0;
   for (let i = 0; i < limit; i += 1) {
     const job = await claimNextJob();

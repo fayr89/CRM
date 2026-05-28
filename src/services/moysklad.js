@@ -230,6 +230,8 @@ export async function fetchMoyskladStockByStorePage(token, offset = 0, limit = 5
 // ============= Write-API для интеграции списания/прихода =============
 
 // Низкоуровневый JSON-запрос: GET/POST/PUT/DELETE.
+// Таймаут 10 сек — write-операции делаются в реал-тайме при ответе пользователю.
+// Если МС зависает дольше — задача остаётся в очереди и retry'ится позже.
 async function msRequest(method, endpoint, token, body) {
   const headers = { ...authHeader(token), 'Content-Type': 'application/json' };
   const url = `${BASE}${endpoint}`;
@@ -238,7 +240,7 @@ async function msRequest(method, endpoint, token, body) {
       method,
       headers,
       body: body ? JSON.stringify(body) : undefined,
-      signal: AbortSignal.timeout(60000),
+      signal: AbortSignal.timeout(10000),
     });
     if ((res.status !== 429 && res.status !== 503) || attempt >= 4) {
       if (!res.ok) {
