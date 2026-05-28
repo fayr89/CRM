@@ -3745,10 +3745,12 @@ async function renderMoyskladSyncSection(area) {
       el('th', {}, 'Ошибка'),
     );
     const tbody = el('tbody', {}, ...data.rows.map((j) => {
-      const retryBtn = j.status === 'failed'
+      // Retry показываем для failed (повторить упавшую) И running (сбросить
+      // зависшую — например после кода-релиза, который чинит ошибку).
+      const retryBtn = (j.status === 'failed' || j.status === 'running')
         ? el('button', {
             class: 'btn btn-xs',
-            title: 'Повторить задачу',
+            title: j.status === 'failed' ? 'Повторить упавшую задачу' : 'Сбросить зависшую задачу обратно в pending',
             onClick: async () => {
               try { await api.msRetryJob(j.id); toast('Повторяем…', 'success'); await refresh(); }
               catch (e) { toast(e.message, 'error'); }
