@@ -22,6 +22,55 @@ async function resolveMoyskladToken(bodyToken) {
 
 const SORT_COLUMNS = ['id', 'name', 'sku', 'cost_price', 'stock', 'created_at', 'updated_at'];
 
+// Proxy для картинок товаров из МойСклад. ЭНДПОИНТ ПУБЛИЧНЫЙ — <img src="..."> не
+// умеет слать Bearer-заголовок. URL содержит UUID товара (random 128 бит), плюс
+// CDN-кэш Vercel на 1 час. МС требует Bearer-токен на скачивание картинки,
+// поэтому мы храним в products.image_url = /api/products/external/{ms_uuid}/image,
+// а сам токен берётся серверный (app_settings).
+router.get(
+  '/external/:externalId/image',
+  asyncHandler(async (req, res) => {
+    const externalId = String(req.params.externalId);
+    if (!/^[0-9a-f-]{36}$/i.test(externalId)) {
+      return res.status(400).send('Bad uuid');
+    }
+    const token = await resolveMoyskladToken(null);
+    if (!token) return res.status(503).send('МС не настроен');
+    // Сначала список картинок — берём первую миниатюру.
+    let imagesList;
+    try {
+      const r = await fetch(`https://api.moysklad.ru/api/remap/1.2/entity/product/${externalId}/images`, {
+        headers: { Authorization: `Bearer ${token}` },
+        signal: AbortSignal.timeout(8000),
+      });
+      if (!r.ok) return res.status(404).send();
+      imagesList = await r.json();
+    } catch {
+      return res.status(502).send();
+    }
+    const first = imagesList?.rows?.[0];
+    const href = first?.miniature?.href || first?.tiny?.href;
+    if (!href) return res.status(404).send();
+    // Скачиваем сам файл.
+    let imgRes;
+    try {
+      imgRes = await fetch(href, {
+        headers: { Authorization: `Bearer ${token}` },
+        signal: AbortSignal.timeout(8000),
+      });
+    } catch {
+      return res.status(502).send();
+    }
+    if (!imgRes.ok) return res.status(404).send();
+    const ct = imgRes.headers.get('content-type') || 'image/jpeg';
+    const buf = Buffer.from(await imgRes.arrayBuffer());
+    res.setHeader('Content-Type', ct);
+    res.setHeader('Cache-Control', 'public, max-age=3600, s-maxage=3600');
+    res.end(buf);
+  }),
+);
+
+// Дальше — всё с авторизацией.
 router.use(authenticate);
 
 const productSchema = z.object({

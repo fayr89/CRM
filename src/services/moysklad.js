@@ -44,14 +44,16 @@ function msError(status, text) {
   return new Error(`МойСклад ответил ${status}: ${text.slice(0, 200)}`);
 }
 
-// Постранично выкачивает все строки с эндпоинта МойСклад (limit=1000, offset инкрементируется).
-async function fetchAll(endpoint, token) {
+// Постранично выкачивает все строки с эндпоинта МойСклад. По умолчанию limit=1000;
+// для запросов с expand можно указать меньшее значение (МС возвращает huge JSON
+// при сочетании limit=1000 + expand).
+async function fetchAll(endpoint, token, pageSize = PAGE_SIZE) {
   const headers = authHeader(token);
   const out = [];
   let offset = 0;
   for (;;) {
     const sep = endpoint.includes('?') ? '&' : '?';
-    const url = `${BASE}${endpoint}${sep}limit=${PAGE_SIZE}&offset=${offset}`;
+    const url = `${BASE}${endpoint}${sep}limit=${pageSize}&offset=${offset}`;
     const res = await msFetch(url, headers);
     if (!res.ok) {
       const text = await res.text();
@@ -60,15 +62,17 @@ async function fetchAll(endpoint, token) {
     const data = await res.json();
     const rows = data.rows || [];
     out.push(...rows);
-    if (rows.length < PAGE_SIZE) break;
-    offset += PAGE_SIZE;
+    if (rows.length < pageSize) break;
+    offset += pageSize;
   }
   return out;
 }
 
-function pickImage(images) {
-  const first = images?.rows?.[0];
-  return first?.miniature?.href || first?.tiny?.href || null;
+// Есть ли у товара изображение в МС. Сам URL мы НЕ сохраняем — он требует
+// Bearer-токен для скачивания. Вместо этого ставим image_url = путь к нашему
+// прокси-эндпоинту, который тянет картинку с МС через токен.
+function hasMsImage(images) {
+  return (images?.rows || []).length > 0;
 }
 
 function mapSalePrices(salePrices) {
@@ -89,7 +93,7 @@ function mapProduct(p, supplierMap) {
     costPrice: (p.buyPrice?.value || 0) / 100,
     defaultPrice: p.salePrices?.[0]?.value ? p.salePrices[0].value / 100 : 0,
     salePrices: mapSalePrices(p.salePrices),
-    imageUrl: pickImage(p.images),
+    imageUrl: hasMsImage(p.images) ? `/api/products/external/${p.id}/image` : null,
     unit: p.uom?.name || 'шт',
     description: p.description || null,
     supplier,
@@ -110,7 +114,7 @@ function mapVariant(v, productById) {
   const parent = parentId ? productById.get(parentId) : null;
 
   const ownSalePrices = mapSalePrices(v.salePrices);
-  const ownImage = pickImage(v.images);
+  const ownHasImage = hasMsImage(v.images);
   const buy = (v.buyPrice?.value || 0) / 100;
 
   // У модификации код по умолчанию равен родительскому → ловим коллизию по unique sku.
@@ -128,7 +132,9 @@ function mapVariant(v, productById) {
     costPrice: buy || parent?.costPrice || 0,
     defaultPrice: ownSalePrices[0]?.value ?? parent?.defaultPrice ?? 0,
     salePrices: ownSalePrices.length ? ownSalePrices : (parent?.salePrices || []),
-    imageUrl: ownImage || parent?.imageUrl || null,
+    // Для модификации: своя картинка → ссылка на /api/products/external/{v.id}/image.
+    // Иначе наследуем URL родителя (он уже /api/products/external/{parent.id}/image или null).
+    imageUrl: ownHasImage ? `/api/products/external/${v.id}/image` : (parent?.imageUrl || null),
     unit: parent?.unit || 'шт',
     description: parent?.description || null,
     supplier: parent?.supplier || null,
@@ -136,7 +142,8 @@ function mapVariant(v, productById) {
 }
 
 // Возвращает плоский массив товаров + модификаций из МойСклад.
-// МойСклад хранит цены в копейках — делим на 100.
+// МойСклад хранит цены в копейках — делим на 100. Для картинок передаём expand —
+// тогда product.images.rows содержит ссылки на скачивание (через Bearer).
 export async function fetchMoyskladProducts(token) {
   // Поставщики: expand игнорируется при limit>100, поэтому тянем контрагентов
   // отдельно и сопоставляем по ссылке product.supplier.meta.href → имя.
@@ -148,11 +155,13 @@ export async function fetchMoyskladProducts(token) {
     // не критично — товары импортируются без поставщика
   }
 
-  const productRows = await fetchAll('/entity/product', token);
+  // expand=images.miniature даёт inline images.rows с миниатюрами.
+  // Меньший pageSize (100), чтобы payload не разрастался.
+  const productRows = await fetchAll('/entity/product?expand=images.miniature', token, 100);
   const products = productRows.map((p) => mapProduct(p, supplierMap));
   const productById = new Map(products.map((p) => [p.externalId, p]));
 
-  const variantRows = await fetchAll('/entity/variant', token);
+  const variantRows = await fetchAll('/entity/variant?expand=images.miniature', token, 100);
   const variants = variantRows.map((v) => mapVariant(v, productById));
 
   return [...products, ...variants];
