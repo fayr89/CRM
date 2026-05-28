@@ -10,8 +10,11 @@ const router = Router();
 router.use(authenticate);
 
 // Сумма с учётом типа (расход вычитается) минус комиссия — «чистый» оборот.
+// Комиссия у расходов (возвратов) тоже идёт с обратным знаком — иначе при возврате
+// дохода 10 000 ₽ с комиссией 500 ₽ баланс показывал бы −10 500 (а должен −9500,
+// потому что комиссия 500 ₽ возвращается вместе с самой суммой).
 const NET = `COALESCE(SUM(CASE WHEN kind = 'expense' THEN -amount ELSE amount END), 0)::float`;
-const COMM = `COALESCE(SUM(commission), 0)::float`;
+const COMM = `COALESCE(SUM(CASE WHEN kind = 'expense' THEN -commission ELSE commission END), 0)::float`;
 
 // scopeSql/params — фильтр (manager_id = ? для менеджера, пусто для admin/finance — вся касса).
 async function cashboxSummary(scopeSql, params) {
