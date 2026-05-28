@@ -147,6 +147,8 @@ export const api = {
   msRetryJob: (id) => request('POST', `/api/admin/ms/jobs/${id}/retry`),
   msUndoJob: (id) => request('POST', `/api/admin/ms/jobs/${id}/undo`),
   msRunNow: () => request('POST', '/api/admin/ms/jobs/run-now'),
+  // Аудит-лог
+  listAudit: (query) => request('GET', '/api/admin/audit', { query }),
   search: (q) => request('GET', '/api/search', { query: { q } }),
 
   apiTokens: () => request('GET', '/api/api-tokens'),

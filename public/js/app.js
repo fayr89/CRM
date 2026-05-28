@@ -6,6 +6,7 @@ import {
   openGlobalSearch,
   renderAcceptInvite,
   renderAnalytics,
+  renderAudit,
   renderCashbox,
   renderDashboard,
   openFeedbackDialog,
@@ -71,6 +72,7 @@ const NAV_GROUPS = [
       { hash: '#/invitations', label: 'Приглашения', roles: ['admin', 'rop'] },
       { hash: '#/integrations', label: 'Настройки', roles: ['admin', 'aus'] },
       { hash: '#/feedback', label: 'Обращения', roles: ['admin'] },
+      { hash: '#/audit', label: 'История действий', roles: ['admin'] },
     ],
   },
 ];
@@ -518,6 +520,7 @@ const ROUTES = {
   '#/analytics': renderAnalytics,
   '#/integrations': renderIntegrations,
   '#/feedback': renderFeedback,
+  '#/audit': renderAudit,
 };
 
 function renderApp() {

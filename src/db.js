@@ -532,6 +532,25 @@ export async function ensureInitialized() {
       await pool.query('ALTER TABLE products ADD COLUMN IF NOT EXISTS markdown_of_product_id INTEGER REFERENCES products(id) ON DELETE SET NULL');
       await pool.query('ALTER TABLE products ADD COLUMN IF NOT EXISTS markdown_order_id INTEGER REFERENCES orders(id) ON DELETE SET NULL');
       await pool.query('CREATE INDEX IF NOT EXISTS idx_products_markdown ON products(is_markdown) WHERE is_markdown = TRUE');
+      // Аудит-лог действий пользователей (заказы, склад, прайс и т.п.) — для
+      // прозрачности и расследований («куда делся заказ?»).
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS audit_log (
+          id BIGSERIAL PRIMARY KEY,
+          user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+          user_name TEXT,
+          user_role TEXT,
+          action TEXT NOT NULL,
+          entity_type TEXT,
+          entity_id INTEGER,
+          details JSONB,
+          ip TEXT,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+      `);
+      await pool.query('CREATE INDEX IF NOT EXISTS idx_audit_created ON audit_log(created_at DESC)');
+      await pool.query('CREATE INDEX IF NOT EXISTS idx_audit_entity ON audit_log(entity_type, entity_id)');
+      await pool.query('CREATE INDEX IF NOT EXISTS idx_audit_user ON audit_log(user_id)');
       // Backfill stock_by_store у уже созданных markdown-товаров (фикс задним числом
       // для тех что создались до фикса, когда мы ещё не заполняли поле сразу).
       await pool.query(`

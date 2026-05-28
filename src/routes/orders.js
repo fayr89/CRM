@@ -11,6 +11,7 @@ import { toCsv, csvDate } from '../services/csv.js';
 import { nextShippingDate, getSchedule } from '../services/shippingSchedule.js';
 import { enqueueMsJob } from '../services/ms-jobs.js';
 import { notifyAdmins } from '../services/notifications.js';
+import { logAction } from '../services/audit.js';
 
 const router = Router();
 
@@ -446,6 +447,7 @@ router.post(
     } else if (resolution === 'markdown') {
       await handleMarkdownResolution(order);
     }
+    await logAction(req, { action: 'order.return_resolved', entity_type: 'order', entity_id: order.id, details: { resolution } });
     res.json(await db.get('SELECT * FROM orders WHERE id = ?', order.id));
   }),
 );
@@ -542,6 +544,7 @@ router.post(
     if (!order) throw NotFound('Заказ не найден');
     if (order.return_status !== 'lost') throw BadRequest('Заказ не в списке потерянных товаров');
     await db.run('UPDATE orders SET loss_voided = TRUE, updated_at = NOW() WHERE id = ?', order.id);
+    await logAction(req, { action: 'order.loss_voided', entity_type: 'order', entity_id: order.id });
     res.json(await db.get('SELECT * FROM orders WHERE id = ?', order.id));
   }),
 );
@@ -652,6 +655,7 @@ router.post(
       '#/orders',
     );
     emitEvent('order.created', { ...order, items });
+    await logAction(req, { action: 'order.created', entity_type: 'order', entity_id: newId, details: { marketplace: order.marketplace, status: order.status, total: order.total_amount } });
     res.status(201).json({ ...order, items });
   }),
 );
@@ -724,6 +728,7 @@ router.patch(
       'SELECT * FROM order_items WHERE order_id = ? ORDER BY id',
       order.id,
     );
+    await logAction(req, { action: 'order.updated', entity_type: 'order', entity_id: order.id, details: { fields: Object.keys(data) } });
     res.json({ ...updated, items });
   }),
 );
@@ -775,6 +780,7 @@ router.post(
       '#/orders',
     );
     emitEvent('order.reserved', updated);
+    await logAction(req, { action: 'order.reserved', entity_type: 'order', entity_id: order.id });
     res.json(updated);
   }),
 );
@@ -806,6 +812,7 @@ router.post(
       '#/orders',
     );
     emitEvent('order.shipped', updated);
+    await logAction(req, { action: 'order.shipped', entity_type: 'order', entity_id: order.id });
     res.json(updated);
   }),
 );
@@ -847,6 +854,7 @@ router.post(
         '#/orders',
       );
       emitEvent('order.shipped', { ...order, status: 'shipped' });
+      await logAction(req, { action: 'order.shipped', entity_type: 'order', entity_id: order.id, details: { bulk: true } });
     }
     res.json({ ok: true, shipped: shippedIds.length, skipped: ids.length - shippedIds.length });
   }),
@@ -868,6 +876,7 @@ router.post(
     );
     const updated = await db.get('SELECT * FROM orders WHERE id = ?', order.id);
     emitEvent('order.completed', updated);
+    await logAction(req, { action: 'order.completed', entity_type: 'order', entity_id: order.id });
     res.json(updated);
   }),
 );
@@ -930,6 +939,7 @@ router.post(
       await enqueueMsJob(order.id, 'customer_order.upsert', { reserve_mode: 'none' });
     }
     emitEvent('order.cancelled', updated);
+    await logAction(req, { action: 'order.cancelled', entity_type: 'order', entity_id: order.id, details: { reason, from_status: order.status } });
     res.json(updated);
   }),
 );
@@ -963,6 +973,7 @@ router.post(
     await enqueueMsJob(order.id, 'customer_order.upsert', { reserve_mode: 'none' });
     const updated = await db.get('SELECT * FROM orders WHERE id = ?', order.id);
     emitEvent('order.updated', updated);
+    await logAction(req, { action: 'order.unreserved', entity_type: 'order', entity_id: order.id });
     res.json(updated);
   }),
 );
@@ -994,6 +1005,7 @@ router.post(
     }
     const updated = await db.get('SELECT * FROM orders WHERE id = ?', order.id);
     emitEvent('order.updated', updated);
+    await logAction(req, { action: 'order.mark_waiting', entity_type: 'order', entity_id: order.id, details: { from_status: prevStatus } });
     res.json(updated);
   }),
 );
@@ -1018,6 +1030,7 @@ router.post(
     await enqueueMsJob(order.id, 'demand.delete');
     const updated = await db.get('SELECT * FROM orders WHERE id = ?', order.id);
     emitEvent('order.updated', updated);
+    await logAction(req, { action: 'order.unshipped', entity_type: 'order', entity_id: order.id });
     res.json(updated);
   }),
 );
@@ -1038,6 +1051,7 @@ router.post(
     );
     const updated = await db.get('SELECT * FROM orders WHERE id = ?', order.id);
     emitEvent('order.updated', updated);
+    await logAction(req, { action: 'order.mark_ready', entity_type: 'order', entity_id: order.id });
     res.json(updated);
   }),
 );
@@ -1168,6 +1182,7 @@ router.post(
     const updatedOriginal = await db.get('SELECT * FROM orders WHERE id = ?', order.id);
     emitEvent('order.updated', updatedOriginal);
     emitEvent('order.created', { ...newOrder, items: newItems });
+    await logAction(req, { action: 'order.split', entity_type: 'order', entity_id: order.id, details: { new_order_id: newId, new_status: new_status, items: items.length } });
     res.status(201).json({ new_order: { ...newOrder, items: newItems }, original: updatedOriginal });
   }),
 );
@@ -1221,6 +1236,12 @@ router.post(
     const updatedOriginal = await db.get('SELECT * FROM orders WHERE id = ?', order.id);
     emitEvent('order.updated', updatedOriginal);
     emitEvent(action === 'cancel' ? 'order.cancelled' : 'order.created', { ...newOrder, items: newItems });
+    await logAction(req, {
+      action: action === 'cancel' ? 'order.item_cancelled' : 'order.item_waiting',
+      entity_type: 'order',
+      entity_id: order.id,
+      details: { new_order_id: splitId, item_id: itemId, quantity: qty, reason: reason || null },
+    });
     res.status(201).json({ new_order: { ...newOrder, items: newItems }, original: updatedOriginal });
   }),
 );
@@ -1231,6 +1252,7 @@ router.delete(
   asyncHandler(async (req, res) => {
     const result = await db.run('DELETE FROM orders WHERE id = ?', req.params.id);
     if (result.changes === 0) throw NotFound('Заказ не найден');
+    await logAction(req, { action: 'order.deleted', entity_type: 'order', entity_id: Number(req.params.id) });
     res.status(204).send();
   }),
 );

@@ -7165,3 +7165,184 @@ export async function renderFeedback(main) {
   await reload();
 }
 
+// Аудит-лог: кто и что делал. Только админ. Фильтры по типу сущности / префиксу действия
+// / пользователю; пагинация. Детали в виде JSON открываются по клику на строку.
+export async function renderAudit(main) {
+  const me = JSON.parse(localStorage.getItem('crm_user') || '{}');
+  if (me.role !== 'admin') {
+    main.innerHTML = '';
+    main.append(el('div', { class: 'card' }, 'Раздел доступен только администратору.'));
+    return;
+  }
+
+  const PAGE = 100;
+  const state = { entity_type: '', action: '', user_id: '', offset: 0, total: 0 };
+  const tableArea = el('div');
+
+  const ACTION_LABELS = {
+    'order.created': '🆕 Создан заказ',
+    'order.updated': '✏️ Заказ изменён',
+    'order.reserved': '📦 Резерв',
+    'order.unreserved': '↩️ Снят резерв',
+    'order.shipped': '🚚 Отгрузка',
+    'order.unshipped': '↩️ Откат отгрузки',
+    'order.completed': '✅ Завершён',
+    'order.cancelled': '❌ Отменён',
+    'order.mark_waiting': '⏳ Ожидает товара',
+    'order.mark_ready': '✓ Готов',
+    'order.return_resolved': '↩ Возврат обработан',
+    'order.loss_voided': '🗑 Потеря аннулирована',
+    'order.split': '✂ Разделён',
+    'order.item_cancelled': '✂❌ Позиция отменена',
+    'order.item_waiting': '✂⏳ Позиция в ожидание',
+    'order.deleted': '🗑 Удалён',
+    'payment.created': '💰 Платёж создан',
+    'payment.updated': '✏️ Платёж изменён',
+    'payment.confirmed': '✅ Платёж подтверждён',
+    'payment.rejected': '❌ Платёж отклонён',
+    'payment.deleted': '🗑 Платёж удалён',
+    'user.created': '👤 Пользователь создан',
+    'user.updated': '✏️ Пользователь изменён',
+    'user.password_changed': '🔑 Пароль изменён',
+    'user.deleted': '🗑 Пользователь удалён',
+    'auth.login': '🔓 Вход',
+    'auth.login_failed': '⛔ Неуд. вход',
+    'auth.impersonate': '👁 Имперсонация',
+  };
+
+  function actionLabel(a) {
+    return ACTION_LABELS[a] || a;
+  }
+
+  function entityLink(row) {
+    if (!row.entity_type || !row.entity_id) return el('span', { class: 'muted' }, '—');
+    if (row.entity_type === 'order') {
+      return el('a', { href: `#/orders?id=${row.entity_id}` }, `Заказ #${row.entity_id}`);
+    }
+    if (row.entity_type === 'user') {
+      return el('a', { href: `#/users` }, `Пользователь #${row.entity_id}`);
+    }
+    if (row.entity_type === 'payment') {
+      return el('a', { href: `#/cashbox` }, `Платёж #${row.entity_id}`);
+    }
+    return el('span', {}, `${row.entity_type} #${row.entity_id}`);
+  }
+
+  function formatDetails(d) {
+    if (!d) return '';
+    try {
+      const obj = typeof d === 'string' ? JSON.parse(d) : d;
+      return JSON.stringify(obj, null, 2);
+    } catch {
+      return String(d);
+    }
+  }
+
+  async function openDetails(row) {
+    const body = el('div', {},
+      el('div', { class: 'detail-grid' },
+        el('div', { class: 'k' }, 'Действие'), el('div', {}, actionLabel(row.action), ' ', el('code', { style: { fontSize: '11px', color: 'var(--text-muted)' } }, row.action)),
+        el('div', { class: 'k' }, 'Кто'), el('div', {}, `${row.user_name || '—'} (${tr('role', row.user_role) || row.user_role || '—'})`),
+        el('div', { class: 'k' }, 'Объект'), el('div', {}, entityLink(row)),
+        el('div', { class: 'k' }, 'Когда'), el('div', {}, fmtDateTime(row.created_at)),
+        el('div', { class: 'k' }, 'IP'), el('div', {}, row.ip || '—'),
+      ),
+      row.details ? el('h4', { style: { marginTop: '16px' } }, 'Детали') : null,
+      row.details ? el('pre', { style: { background: '#f9fafb', padding: '10px', borderRadius: '6px', whiteSpace: 'pre-wrap', fontSize: '12px' } }, formatDetails(row.details)) : null,
+    );
+    await openModal(`Запись #${row.id}`, body, { primaryLabel: 'Закрыть', onSubmit: () => true });
+  }
+
+  function renderTable(r) {
+    clear(tableArea);
+    const rows = r.data || [];
+    state.total = r.total || 0;
+    if (rows.length === 0) {
+      tableArea.append(emptyState({
+        icon: '📜',
+        title: 'Записей не найдено',
+        description: 'Попробуйте сменить фильтры или подождите новых действий.',
+      }));
+      return;
+    }
+    const headRow = el('tr', {},
+      el('th', {}, 'Когда'),
+      el('th', {}, 'Кто'),
+      el('th', {}, 'Действие'),
+      el('th', {}, 'Объект'),
+      el('th', {}, 'IP'),
+    );
+    const tbody = el('tbody', {},
+      ...rows.map((it) => el('tr', {
+        style: { cursor: 'pointer' },
+        onClick: () => openDetails(it),
+      },
+        el('td', { 'data-label': 'Когда' }, fmtDateTime(it.created_at)),
+        el('td', { 'data-label': 'Кто' }, `${it.user_name || '—'} (${tr('role', it.user_role) || it.user_role || '—'})`),
+        el('td', { 'data-label': 'Действие' }, actionLabel(it.action)),
+        el('td', { 'data-label': 'Объект' }, entityLink(it)),
+        el('td', { 'data-label': 'IP' }, it.ip || '—'),
+      )),
+    );
+    const pageInfo = el('div', { class: 'page-info', style: { marginTop: '12px' } },
+      `Показано ${state.offset + 1}–${state.offset + rows.length} из ${state.total}`);
+    const prev = el('button', {
+      class: 'btn btn-sm',
+      disabled: state.offset <= 0 ? true : false,
+      onClick: () => { state.offset = Math.max(0, state.offset - PAGE); reload(); },
+    }, '‹ Назад');
+    const next = el('button', {
+      class: 'btn btn-sm',
+      disabled: state.offset + rows.length >= state.total ? true : false,
+      onClick: () => { state.offset += PAGE; reload(); },
+    }, 'Вперёд ›');
+    tableArea.append(el('div', { class: 'card' },
+      el('div', { class: 'table-wrap' }, el('table', { class: 'data' }, el('thead', {}, headRow), tbody)),
+      el('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '12px' } },
+        pageInfo, el('div', {}, prev, ' ', next),
+      ),
+    ));
+  }
+
+  async function reload() {
+    const q = { limit: String(PAGE), offset: String(state.offset) };
+    if (state.entity_type) q.entity_type = state.entity_type;
+    if (state.action) q.action = state.action;
+    if (state.user_id) q.user_id = state.user_id;
+    try {
+      const r = await api.listAudit(q);
+      renderTable(r);
+    } catch (e) {
+      tableArea.innerHTML = '';
+      tableArea.append(el('div', { class: 'card error' }, e.message || 'Ошибка загрузки'));
+    }
+  }
+
+  const entitySel = el('select', {},
+    el('option', { value: '' }, 'Все объекты'),
+    el('option', { value: 'order' }, 'Заказы'),
+    el('option', { value: 'payment' }, 'Платежи'),
+    el('option', { value: 'user' }, 'Пользователи'),
+  );
+  entitySel.addEventListener('change', () => { state.entity_type = entitySel.value; state.offset = 0; reload(); });
+
+  const actionInp = el('input', { type: 'text', placeholder: 'order.shipped, auth.', style: { width: '180px' } });
+  actionInp.addEventListener('change', () => { state.action = actionInp.value.trim(); state.offset = 0; reload(); });
+
+  const userInp = el('input', { type: 'number', placeholder: 'ID', style: { width: '90px' } });
+  userInp.addEventListener('change', () => { state.user_id = userInp.value.trim(); state.offset = 0; reload(); });
+
+  main.innerHTML = '';
+  main.append(
+    el('h1', { class: 'page-title' }, 'История действий'),
+    el('div', { class: 'page-subtitle' }, 'Кто и что делал с заказами, платежами и пользователями. Записи нельзя редактировать или удалять.'),
+    el('div', { class: 'filter-bar', style: { marginBottom: '12px' } },
+      el('label', {}, 'Объект: ', entitySel),
+      el('label', {}, 'Действие: ', actionInp),
+      el('label', {}, 'Пользователь: ', userInp),
+    ),
+    tableArea,
+  );
+  await reload();
+}
+

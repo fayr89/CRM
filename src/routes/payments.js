@@ -5,6 +5,7 @@ import { authenticate, requireRole } from '../auth.js';
 import { db } from '../db.js';
 import { BadRequest, Forbidden, NotFound, asyncHandler } from '../errors.js';
 import { parsePagination, paginated } from '../query.js';
+import { logAction } from '../services/audit.js';
 import { notify } from '../services/notifications.js';
 import { emitEvent } from '../services/webhooks.js';
 
@@ -138,6 +139,12 @@ router.post(
       data.commission ?? null,
       data.kind ?? 'income',
     );
+    await logAction(req, {
+      action: 'payment.created',
+      entity_type: 'payment',
+      entity_id: result.lastInsertRowid,
+      details: { order_id: data.order_id || null, amount: data.amount, kind: data.kind || 'income', method: data.method || null },
+    });
     res
       .status(201)
       .json(await db.get('SELECT * FROM payments WHERE id = ?', result.lastInsertRowid));
@@ -170,6 +177,7 @@ router.patch(
     updates.push('updated_at = NOW()');
     params.push(payment.id);
     await db.run(`UPDATE payments SET ${updates.join(', ')} WHERE id = ?`, ...params);
+    await logAction(req, { action: 'payment.updated', entity_type: 'payment', entity_id: payment.id, details: { fields: Object.keys(data) } });
     res.json(await db.get('SELECT * FROM payments WHERE id = ?', payment.id));
   }),
 );
@@ -196,6 +204,7 @@ router.post(
       '#/cashbox',
     );
     emitEvent('payment.confirmed', updated);
+    await logAction(req, { action: 'payment.confirmed', entity_type: 'payment', entity_id: payment.id, details: { amount: payment.amount, order_id: payment.order_id } });
     res.json(updated);
   }),
 );
@@ -224,6 +233,7 @@ router.post(
       '#/cashbox',
     );
     emitEvent('payment.rejected', updated);
+    await logAction(req, { action: 'payment.rejected', entity_type: 'payment', entity_id: payment.id, details: { reason: reason || null } });
     res.json(updated);
   }),
 );
@@ -234,6 +244,7 @@ router.delete(
   asyncHandler(async (req, res) => {
     const result = await db.run('DELETE FROM payments WHERE id = ?', req.params.id);
     if (result.changes === 0) throw NotFound('Платёж не найден');
+    await logAction(req, { action: 'payment.deleted', entity_type: 'payment', entity_id: Number(req.params.id) });
     res.status(204).send();
   }),
 );

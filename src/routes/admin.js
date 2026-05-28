@@ -198,4 +198,58 @@ router.post(
   }),
 );
 
+// =================== Аудит-лог ===================
+
+// Список записей с пагинацией и фильтрами. Только админ.
+// Фильтры: entity_type, action (LIKE), user_id, from, to (created_at).
+router.get(
+  '/audit',
+  requireRole('admin'),
+  asyncHandler(async (req, res) => {
+    const limit = Math.min(500, Math.max(1, Number(req.query.limit) || 100));
+    const offset = Math.max(0, Number(req.query.offset) || 0);
+
+    const where = [];
+    const params = [];
+    if (req.query.entity_type) {
+      where.push('entity_type = ?');
+      params.push(String(req.query.entity_type));
+    }
+    if (req.query.entity_id) {
+      where.push('entity_id = ?');
+      params.push(Number(req.query.entity_id));
+    }
+    if (req.query.action) {
+      // LIKE по префиксу (например, action=order. отдаст все order.*)
+      where.push('action LIKE ?');
+      params.push(`${req.query.action}%`);
+    }
+    if (req.query.user_id) {
+      where.push('user_id = ?');
+      params.push(Number(req.query.user_id));
+    }
+    if (req.query.from) {
+      where.push('created_at >= ?');
+      params.push(String(req.query.from));
+    }
+    if (req.query.to) {
+      where.push('created_at <= ?');
+      params.push(String(req.query.to));
+    }
+    const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
+
+    const rows = await db.all(
+      `SELECT id, user_id, user_name, user_role, action, entity_type, entity_id,
+              details, ip, created_at
+       FROM audit_log ${whereSql}
+       ORDER BY id DESC LIMIT ? OFFSET ?`,
+      ...params,
+      limit,
+      offset,
+    );
+    const total = await db.get(`SELECT COUNT(*)::int AS n FROM audit_log ${whereSql}`, ...params);
+    res.json({ data: rows, total: total?.n || 0, limit, offset });
+  }),
+);
+
 export default router;

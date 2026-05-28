@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { hashPassword, signToken, verifyPassword, authenticate } from '../auth.js';
 import { db } from '../db.js';
 import { BadRequest, Forbidden, Unauthorized, asyncHandler } from '../errors.js';
+import { logAction } from '../services/audit.js';
 
 const router = Router();
 
@@ -62,6 +63,12 @@ router.post(
     );
     if (!user || !user.active || !verifyPassword(password, user.password_hash)) {
       recordLoginAttempt(key);
+      // Логируем неудачную попытку (без передачи req.user — его нет на этом этапе).
+      // user_id = найденного пользователя, если есть; иначе null. Email — в details.
+      await logAction(
+        { headers: req.headers, ip, user: user ? { id: user.id, name: user.name, role: user.role } : null },
+        { action: 'auth.login_failed', entity_type: 'user', entity_id: user?.id || null, details: { email, reason: !user ? 'no_user' : !user.active ? 'inactive' : 'bad_password' } },
+      );
       throw Unauthorized('Неверный email или пароль');
     }
 
@@ -75,6 +82,10 @@ router.post(
       // колонки нет — не критично
     }
     const token = signToken(user);
+    await logAction(
+      { headers: req.headers, ip, user: { id: user.id, name: user.name, role: user.role } },
+      { action: 'auth.login', entity_type: 'user', entity_id: user.id },
+    );
     res.json({
       token,
       user: {
@@ -97,6 +108,7 @@ router.post(
     if (!IMPERSONATE_ROLES.includes(role)) throw BadRequest('Недопустимая роль');
     const base = { id: req.user.id, email: req.user.email, role: 'admin' };
     const token = role === 'admin' ? signToken(base) : signToken(base, role);
+    await logAction(req, { action: 'auth.impersonate', entity_type: 'user', entity_id: req.user.id, details: { role } });
     res.json({
       token,
       user: {

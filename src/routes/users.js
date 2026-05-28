@@ -5,6 +5,7 @@ import { authenticate, hashPassword, requireRole } from '../auth.js';
 import { db } from '../db.js';
 import { BadRequest, Forbidden, NotFound, asyncHandler } from '../errors.js';
 import { parsePagination, paginated } from '../query.js';
+import { logAction } from '../services/audit.js';
 
 const router = Router();
 
@@ -109,6 +110,12 @@ router.post(
       `SELECT id, email, name, role, active, manager_id, access_blocks, created_at FROM users WHERE id = ?`,
       result.lastInsertRowid,
     );
+    await logAction(req, {
+      action: 'user.created',
+      entity_type: 'user',
+      entity_id: user.id,
+      details: { email: user.email, name: user.name, role: user.role, manager_id: user.manager_id },
+    });
     res.status(201).json(user);
   }),
 );
@@ -176,6 +183,14 @@ router.patch(
       `SELECT id, email, name, role, active, manager_id, access_blocks, created_at, updated_at FROM users WHERE id = ?`,
       id,
     );
+    // Не пишем «password» в details — секрет даже в маркере «изменено» не нужен.
+    const loggedFields = Object.keys(data).filter((k) => k !== 'password');
+    await logAction(req, {
+      action: data.password ? 'user.password_changed' : 'user.updated',
+      entity_type: 'user',
+      entity_id: id,
+      details: { fields: loggedFields, password_changed: Boolean(data.password) },
+    });
     res.json(updated);
   }),
 );
@@ -188,6 +203,7 @@ router.delete(
     if (id === req.user.id) throw BadRequest('Нельзя удалить самого себя');
     const result = await db.run('DELETE FROM users WHERE id = ?', id);
     if (result.changes === 0) throw NotFound('Пользователь не найден');
+    await logAction(req, { action: 'user.deleted', entity_type: 'user', entity_id: id });
     res.status(204).send();
   }),
 );
