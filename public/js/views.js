@@ -2141,8 +2141,16 @@ export async function renderOrders(main) {
     if (src === 'new' && dst === 'waiting_stock') return api.markOrderWaiting(id);
     if (src === 'reserved' && dst === 'waiting_stock') return api.markOrderWaiting(id);
     if (src === 'waiting_stock' && dst === 'new') return api.markOrderReady(id);
-    if (src === 'reserved' && dst === 'shipped') return api.shipOrder(id);
-    if (src === 'shipped' && dst === 'reserved') return api.unshipOrder(id);
+    if (src === 'reserved' && dst === 'shipped') {
+      const ok = await confirm('Отгрузить заказ? В МойСклад будет создан документ «Отгрузка», остатки физически списываются.');
+      if (!ok) return false;
+      return api.shipOrder(id);
+    }
+    if (src === 'shipped' && dst === 'reserved') {
+      const ok = await confirm('Откатить отгрузку? В МойСклад документ «Отгрузка» удалится, остатки восстановятся.');
+      if (!ok) return false;
+      return api.unshipOrder(id);
+    }
     if (src === 'shipped' && dst === 'completed') return api.completeOrder(id);
     throw new Error(
       `Нельзя перевести из «${tr('order_status', src)}» в «${tr('order_status', dst)}».`,

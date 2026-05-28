@@ -3,7 +3,7 @@
 // делает upsert: POST если нет ms_customer_order_id, PUT если есть.
 import { db } from '../db.js';
 import {
-  msCreate, msUpdate, msHref, msFindCounterpartyByName,
+  msCreate, msUpdate, msDelete, msHref, msFindCounterpartyByName,
 } from './moysklad.js';
 import { getMoyskladToken, getMsConfig, setMsSetting } from './ms-jobs.js';
 
@@ -128,4 +128,70 @@ export async function customerOrderUpsertHandler(job) {
     await db.run('UPDATE orders SET ms_customer_order_id = ? WHERE id = ?', result.id, order.id);
   }
   return { ms_document_id: result.id };
+}
+
+// --- Demand (отгрузка): создание / удаление ---
+
+async function buildDemandBody(token, order) {
+  const cfg = await getMsConfig();
+  if (!cfg.organization_id) throw new Error('МС не инициализирован: нет organization_id');
+  if (!order.ms_customer_order_id) {
+    throw new Error('У заказа нет ms_customer_order_id — задача customer_order.upsert ещё не выполнилась. Будет автоматический retry.');
+  }
+
+  const storeId = cfg.store_map?.[order.warehouse];
+  if (order.warehouse && !storeId) {
+    throw new Error(`Склад «${order.warehouse}» не найден в МС. Переинициализируйте конфиг.`);
+  }
+
+  const counterpartyId = await resolveManagerCounterparty(token, order.manager_id);
+  if (!counterpartyId) throw new Error('Не удалось определить контрагента');
+
+  const items = await fetchOrderPositions(order.id);
+  const positions = items
+    .filter((it) => it.ms_product_id)
+    .map((it) => ({
+      assortment: msHref('product', it.ms_product_id),
+      quantity: it.quantity,
+      price: Math.round((it.unit_price || 0) * 100),
+    }));
+  if (!positions.length) throw new Error('У заказа нет позиций, привязанных к МС');
+
+  const body = {
+    organization: msHref('organization', cfg.organization_id),
+    agent: msHref('counterparty', counterpartyId),
+    customerOrder: msHref('customerorder', order.ms_customer_order_id),
+    name: order.reference_number ? `CRM-${order.id}/отгр/${order.reference_number}` : `CRM-${order.id}/отгрузка`,
+    description: `Отгрузка из CRM #${order.id}${order.client_name ? ' · ' + order.client_name : ''}`,
+    positions,
+  };
+  if (storeId) body.store = msHref('store', storeId);
+  return body;
+}
+
+export async function demandCreateHandler(job) {
+  const token = await getMoyskladToken();
+  if (!token) throw new Error('Токен МС не настроен');
+  const order = await db.get('SELECT * FROM orders WHERE id = ?', job.order_id);
+  if (!order) throw new Error(`Заказ #${job.order_id} не найден`);
+  // Идемпотентность: документ уже создан — ничего не делаем.
+  if (order.ms_demand_id) return { ms_document_id: order.ms_demand_id };
+
+  const body = await buildDemandBody(token, order);
+  const result = await msCreate(token, 'demand', body);
+  await db.run('UPDATE orders SET ms_demand_id = ? WHERE id = ?', result.id, order.id);
+  return { ms_document_id: result.id };
+}
+
+export async function demandDeleteHandler(job) {
+  const token = await getMoyskladToken();
+  if (!token) throw new Error('Токен МС не настроен');
+  const order = await db.get('SELECT * FROM orders WHERE id = ?', job.order_id);
+  if (!order) throw new Error(`Заказ #${job.order_id} не найден`);
+  // Идемпотентность: документа уже нет — ничего не делаем.
+  if (!order.ms_demand_id) return {};
+
+  await msDelete(token, 'demand', order.ms_demand_id);
+  await db.run('UPDATE orders SET ms_demand_id = NULL WHERE id = ?', order.id);
+  return {};
 }

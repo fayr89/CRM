@@ -665,6 +665,8 @@ router.post(
        updated_at = NOW() WHERE id = ?`,
       order.id,
     );
+    // МС: создаём документ «Отгрузка» — остатки в МС физически списываются.
+    await enqueueMsJob(order.id, 'demand.create');
     const updated = await db.get('SELECT * FROM orders WHERE id = ?', order.id);
     await notify(
       order.manager_id,
@@ -699,6 +701,12 @@ router.post(
        WHERE id = ANY(?)`,
       shippedIds,
     );
+    // МС: документ «Отгрузка» на каждый — остаток списывается.
+    for (const oid of shippedIds) {
+      await enqueueMsJob(oid, 'demand.create').catch((e) =>
+        console.error(`[ms] enqueue demand.create #${oid}:`, e.message),
+      );
+    }
     // Уведомляем менеджеров каждого заказа.
     for (const order of orders) {
       await notify(
@@ -876,6 +884,8 @@ router.post(
       `UPDATE orders SET status = 'reserved', shipped_at = NULL, updated_at = NOW() WHERE id = ?`,
       order.id,
     );
+    // МС: удаляем документ «Отгрузка» — остатки возвращаются, customerorder остаётся.
+    await enqueueMsJob(order.id, 'demand.delete');
     const updated = await db.get('SELECT * FROM orders WHERE id = ?', order.id);
     emitEvent('order.updated', updated);
     res.json(updated);
