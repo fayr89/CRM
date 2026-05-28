@@ -2548,7 +2548,7 @@ async function showOrderDetails(order, reload) {
             ? el('button', {
                 class: 'btn btn-sm',
                 onClick: async () => {
-                  if (!confirm('Перевести весь заказ в «Ожидает товара»? Резерв будет снят.')) return;
+                  if (!(await confirm('Перевести весь заказ в «Ожидает товара»? Резерв будет снят.'))) return;
                   try {
                     await api.markOrderWaiting(order.id);
                     toast('Заказ переведён в «Ожидает товара»', 'success');
@@ -2561,7 +2561,7 @@ async function showOrderDetails(order, reload) {
             ? el('button', {
                 class: 'btn btn-sm',
                 onClick: async () => {
-                  if (!confirm('Снять резерв с заказа? Резерв в МС будет снят, pending-приход в кассе удалён.')) return;
+                  if (!(await confirm('Снять резерв с заказа? Резерв в МС будет снят, pending-приход в кассе удалён.'))) return;
                   try {
                     await api.unreserveOrder(order.id);
                     toast('Резерв снят, заказ снова «Новый»', 'success');
@@ -2574,7 +2574,7 @@ async function showOrderDetails(order, reload) {
             ? el('button', {
                 class: 'btn btn-sm',
                 onClick: async () => {
-                  if (!confirm('Вернуть заказ в «К отгрузке» (отменить отгрузку)?')) return;
+                  if (!(await confirm('Вернуть заказ в «К отгрузке» (отменить отгрузку)?'))) return;
                   try {
                     await api.unshipOrder(order.id);
                     toast('Заказ возвращён в «К отгрузке»', 'success');
@@ -3758,7 +3758,7 @@ async function renderMoyskladSyncSection(area) {
               const msg = wasReserve
                 ? 'Снять резерв в МС? (статус заказа в CRM не изменится)'
                 : 'Восстановить резерв в МС? (статус заказа в CRM не изменится)';
-              if (!confirm(msg)) return;
+              if (!(await confirm(msg))) return;
               try { await api.msUndoJob(j.id); toast('Откат в МС поставлен в очередь', 'success'); await refresh(); }
               catch (e) { toast(e.message, 'error'); }
             },
