@@ -56,6 +56,46 @@ async function fetchOrderPositions(orderId) {
   );
 }
 
+// Обновить локальные остатки в CRM сразу после успешной МС-операции.
+// multiplier: +1 (приход — возврат), -1 (расход — отгрузка/списание).
+// Так пользователь видит актуальные остатки сразу, не ждёт ручного импорта
+// (МС в /report/stock/* имеет лаг, плюс пересчёт всего отчёта медленный).
+async function applyLocalStockDelta(orderId, multiplier, warehouseOverride = null) {
+  const order = await db.get('SELECT warehouse FROM orders WHERE id = ?', orderId);
+  const warehouse = warehouseOverride || order?.warehouse || null;
+  const items = await db.all(
+    `SELECT oi.product_id, oi.quantity FROM order_items oi
+     WHERE oi.order_id = ? AND oi.product_id IS NOT NULL`,
+    orderId,
+  );
+  for (const it of items) {
+    const delta = multiplier * it.quantity;
+    // Total stock — не уходим в минус.
+    await db.run(
+      `UPDATE products SET stock = GREATEST(0, COALESCE(stock, 0) + ?), updated_at = NOW()
+       WHERE id = ?`,
+      delta,
+      it.product_id,
+    );
+    // stock_by_store: находим запись со склада, обновляем; если нет — создаём.
+    if (!warehouse) continue;
+    const p = await db.get('SELECT stock_by_store FROM products WHERE id = ?', it.product_id);
+    let sbs = Array.isArray(p?.stock_by_store) ? [...p.stock_by_store] : [];
+    const idx = sbs.findIndex((s) => s.store === warehouse);
+    if (idx >= 0) {
+      const cur = Number(sbs[idx].stock || 0);
+      sbs[idx] = { ...sbs[idx], stock: Math.max(0, cur + delta) };
+    } else if (delta > 0) {
+      sbs.push({ store: warehouse, stock: delta, reserve: 0 });
+    }
+    await db.run(
+      `UPDATE products SET stock_by_store = ?::jsonb, updated_at = NOW() WHERE id = ?`,
+      JSON.stringify(sbs),
+      it.product_id,
+    );
+  }
+}
+
 // Сформировать body для customerorder POST/PUT.
 // reserveMode: 'full' (reserve = quantity), 'none' (reserve = 0).
 async function buildCustomerOrderBody(token, order, { reserveMode = 'full' } = {}) {
@@ -180,6 +220,8 @@ export async function demandCreateHandler(job) {
   const body = await buildDemandBody(token, order);
   const result = await msCreate(token, 'demand', body);
   await db.run('UPDATE orders SET ms_demand_id = ? WHERE id = ?', result.id, order.id);
+  // Локально списываем остатки — UI отразит без ожидания импорта.
+  await applyLocalStockDelta(order.id, -1);
   return { ms_document_id: result.id };
 }
 
@@ -193,6 +235,8 @@ export async function demandDeleteHandler(job) {
 
   await msDelete(token, 'demand', order.ms_demand_id);
   await db.run('UPDATE orders SET ms_demand_id = NULL WHERE id = ?', order.id);
+  // Откат отгрузки — остатки возвращаются.
+  await applyLocalStockDelta(order.id, +1);
   return {};
 }
 
@@ -246,6 +290,8 @@ export async function customerReturnCreateHandler(job) {
   // 'customerreturn.create' — историческое имя, не меняем чтобы не сбросить очередь.
   const result = await msCreate(token, 'salesreturn', body);
   await db.run('UPDATE orders SET ms_return_id = ? WHERE id = ?', result.id, order.id);
+  // Локально приходуем — товары возвращаются на склад из CRM-инвентаря.
+  await applyLocalStockDelta(order.id, +1);
   return { ms_document_id: result.id };
 }
 
@@ -292,6 +338,8 @@ export async function lossCreateHandler(job) {
   const body = await buildLossBody(token, order);
   const result = await msCreate(token, 'loss', body);
   await db.run('UPDATE orders SET ms_loss_id = ? WHERE id = ?', result.id, order.id);
+  // Локально списываем — товар уходит со склада.
+  await applyLocalStockDelta(order.id, -1);
   return { ms_document_id: result.id };
 }
 
