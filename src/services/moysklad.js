@@ -183,6 +183,33 @@ export async function fetchMoyskladStock(token) {
   return { byId, bySku, count: rows.length, sample: rows[0] || null };
 }
 
+// Свежие остатки по складам для конкретного списка товаров (UUID-ов МС).
+// Используется при открытии формы заказа для on-demand-обновления полей stock_by_store
+// у выбранных товаров. МС-фильтр поддерживает несколько значений через ';'.
+export async function msFetchStockByProductIds(token, productExternalIds) {
+  if (!productExternalIds?.length) return new Map();
+  const headers = authHeader(token);
+  const filterParts = productExternalIds.map((id) => `product=${BASE}/entity/product/${id}`).join(';');
+  const url = `${BASE}/report/stock/bystore?filter=${encodeURIComponent(filterParts)}&limit=1000`;
+  const res = await msFetch(url, headers);
+  if (!res.ok) {
+    const text = await res.text();
+    throw msError(res.status, text);
+  }
+  const data = await res.json();
+  const byId = new Map();
+  for (const r of (data.rows || [])) {
+    const stores = (r.stockByStore || []).map((s) => ({
+      store: s.name || '—',
+      stock: Number(s.stock) || 0,
+      reserve: Number(s.reserve) || 0,
+    }));
+    const id = extractUuid(r.meta?.href);
+    if (id) byId.set(id, stores);
+  }
+  return byId;
+}
+
 // Одна страница отчёта по складам — для порционной загрузки большого каталога.
 // Возвращает Map(sku → [{store, stock}]) для страницы + общий размер отчёта.
 export async function fetchMoyskladStockByStorePage(token, offset = 0, limit = 500) {

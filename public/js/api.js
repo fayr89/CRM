@@ -84,6 +84,7 @@ export const api = {
   splitOrder: (id, body) => request('POST', `/api/orders/${id}/split`, { body }),
   extractItem: (id, itemId, body) => request('POST', `/api/orders/${id}/items/${itemId}/extract`, { body }),
   unshipOrder: (id) => request('POST', `/api/orders/${id}/unship`),
+  refreshProductStocks: (product_ids) => request('POST', '/api/products/refresh-stocks', { body: { product_ids } }),
   reserveOrder: (id) => request('POST', `/api/orders/${id}/reserve`),
   unreserveOrder: (id) => request('POST', `/api/orders/${id}/unreserve`),
   shipOrder: (id) => request('POST', `/api/orders/${id}/ship`),

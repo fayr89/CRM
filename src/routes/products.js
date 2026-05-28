@@ -4,7 +4,7 @@ import { authenticate, requireRole } from '../auth.js';
 import { db } from '../db.js';
 import { BadRequest, NotFound, asyncHandler } from '../errors.js';
 import { parsePagination, parseSort, paginated } from '../query.js';
-import { fetchMoyskladProducts, fetchMoyskladStock, fetchMoyskladStockByStorePage } from '../services/moysklad.js';
+import { fetchMoyskladProducts, fetchMoyskladStock, fetchMoyskladStockByStorePage, msFetchStockByProductIds } from '../services/moysklad.js';
 import { toCsv } from '../services/csv.js';
 import { encryptSecret, decryptSecret } from '../services/secrets.js';
 
@@ -1010,6 +1010,47 @@ router.put(
       );
     });
     res.json({ ok: true, hidden });
+  }),
+);
+
+// On-demand обновление остатков для конкретных товаров — используется в форме
+// заказа, чтобы менеджер видел максимально актуальные остатки выбранных
+// позиций без ожидания cron-тика.
+const refreshStocksSchema = z.object({
+  product_ids: z.array(z.number().int().positive()).min(1).max(50),
+});
+router.post(
+  '/refresh-stocks',
+  asyncHandler(async (req, res) => {
+    const { product_ids } = refreshStocksSchema.parse(req.body || {});
+    const token = await resolveMoyskladToken(null);
+    if (!token) throw BadRequest('МС не настроен');
+
+    const products = await db.all(
+      `SELECT id, external_id FROM products
+       WHERE id = ANY(?) AND external_source = 'moysklad' AND external_id IS NOT NULL`,
+      product_ids,
+    );
+    if (!products.length) return res.json({ updated: [] });
+
+    let byId;
+    try {
+      byId = await msFetchStockByProductIds(token, products.map((p) => p.external_id));
+    } catch (e) {
+      throw BadRequest('Не удалось получить остатки из МС: ' + e.message);
+    }
+
+    const updated = [];
+    for (const p of products) {
+      const stores = byId.get(p.external_id) || [];
+      await db.run(
+        `UPDATE products SET stock_by_store = ?::jsonb, updated_at = NOW() WHERE id = ?`,
+        JSON.stringify(stores),
+        p.id,
+      );
+      updated.push({ id: p.id, stock_by_store: stores });
+    }
+    res.json({ updated });
   }),
 );
 

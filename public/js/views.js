@@ -1353,12 +1353,33 @@ function itemsEditor(initialItems = [], { getMarketplace, getWarehouse, onChange
   recalc();
   refreshPopular();
 
+  // Принудительно подтянуть свежие остатки из МС для текущих позиций (без ожидания
+  // 15-минутного cron-тика). Вызывается сразу при открытии формы заказа.
+  async function refreshStocks() {
+    const productIds = [...tbody.children]
+      .map((r) => r._meta?.product_id)
+      .filter((v) => Number.isFinite(v));
+    if (!productIds.length) return;
+    try {
+      const r = await api.refreshProductStocks(productIds);
+      const byId = new Map((r.updated || []).map((u) => [u.id, u.stock_by_store]));
+      for (const row of tbody.children) {
+        const pid = row._meta?.product_id;
+        if (!pid || !byId.has(pid)) continue;
+        row._meta.stock_by_store = byId.get(pid);
+        updateStoresHint(row);
+      }
+    } catch {
+      // Не критично — на UI остаётся последний кэш из БД.
+    }
+  }
+
   // При смене площадки — переподтягиваем популярные (цены обновятся) + прайсы выбранных строк.
   async function refreshAll() {
     await Promise.all([refreshCatalogPrices(), refreshPopular()]);
   }
 
-  return { node: wrap, getItems, refreshCatalogPrices: refreshAll, applyPriceFactor };
+  return { node: wrap, getItems, refreshCatalogPrices: refreshAll, refreshStocks, applyPriceFactor };
 }
 
 // Пикер товара: открывает модалку со списком, фильтрация по поиску.
@@ -1714,6 +1735,12 @@ async function openOrderForm(order, onSaved) {
     onChange: renderPricingPanel,
     hiddenSet,
   });
+  // При открытии формы существующего заказа — сразу подтягиваем свежие остатки
+  // из МС для позиций, чтобы менеджер видел актуальную картину, не ждал
+  // 15-минутный cron.
+  if ((cur.items || []).some((i) => i.product_id)) {
+    items.refreshStocks();
+  }
   marketI.addEventListener('change', () => {
     items.refreshCatalogPrices().then(() => renderPricingPanel());
   });
