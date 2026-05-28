@@ -306,3 +306,16 @@ export async function msUpdate(token, entity, id, body) {
 export async function msDelete(token, entity, id) {
   return await msRequest('DELETE', `/entity/${entity}/${id}`, token);
 }
+
+// Загрузить изображение в карточку товара МС. base64DataUrl — это data:image/...;base64,...
+// (то, что хранится в return_proof). МС эндпоинт POST /entity/product/{id}/images
+// принимает массив [{ filename, content (base64 без префикса) }].
+export async function msUploadProductImage(token, productId, base64DataUrl, filenameHint = 'photo') {
+  const m = String(base64DataUrl || '').match(/^data:(image\/\w+);base64,(.+)$/);
+  if (!m) throw new Error('Невалидный data URL — нужно data:image/...;base64,...');
+  const ext = m[1].split('/')[1] || 'jpg';
+  const filename = filenameHint.includes('.') ? filenameHint : `${filenameHint}.${ext}`;
+  return await msRequest('POST', `/entity/product/${productId}/images`, token, [
+    { filename, content: m[2] },
+  ]);
+}

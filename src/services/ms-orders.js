@@ -3,7 +3,7 @@
 // делает upsert: POST если нет ms_customer_order_id, PUT если есть.
 import { db } from '../db.js';
 import {
-  msCreate, msUpdate, msDelete, msHref, msFindCounterpartyByName,
+  msCreate, msUpdate, msDelete, msHref, msFindCounterpartyByName, msUploadProductImage,
 } from './moysklad.js';
 import { getMoyskladToken, getMsConfig, setMsSetting } from './ms-jobs.js';
 
@@ -326,6 +326,8 @@ export async function markdownCreateHandler(job) {
   );
 
   // Создаём в МС товары для уценок (если ещё не созданы).
+  // buyPrice не передаём — currency UUID в нашем кэше нет, и без него МС валится.
+  // Себестоимость и продажную цену проставит админ.
   for (const md of mdRows) {
     if (md.external_id) continue; // уже создан
     const created = await msCreate(token, 'product', {
@@ -333,17 +335,13 @@ export async function markdownCreateHandler(job) {
       code: md.sku || undefined,
       article: md.sku || undefined,
       description: `Уценка из CRM (заказ #${order.id}). Цену проставит админ.${md.parent_ms_id ? ' Исходный товар: ' + md.parent_name : ''}`,
-      buyPrice: { value: Math.round((md.cost_price || 0) * 100), currency: msHref('currency', cfg.currency_id) },
-    }).catch(async (e) => {
-      // Если МС требует currency и его нет в кэше — пробуем без buyPrice.
-      const retryBody = {
-        name: md.name,
-        code: md.sku || undefined,
-        article: md.sku || undefined,
-        description: `Уценка из CRM (заказ #${order.id}).`,
-      };
-      return await msCreate(token, 'product', retryBody);
     });
+    // Загружаем фото-пруф состояния в карточку товара (если есть). Не падаем если
+    // не получилось — товар уже создан, картинку можно добавить вручную в МС.
+    if (order.return_proof) {
+      await msUploadProductImage(token, created.id, order.return_proof, `markdown-${order.id}-${md.id}`)
+        .catch((e) => console.warn(`[ms] image upload to product ${created.id} failed:`, e.message));
+    }
     await db.run(
       `UPDATE products SET external_source = 'moysklad', external_id = ?, updated_at = NOW() WHERE id = ?`,
       created.id,
@@ -381,4 +379,56 @@ export async function markdownCreateHandler(job) {
   const result = await msCreate(token, 'salesreturn', body);
   await db.run('UPDATE orders SET ms_return_id = ? WHERE id = ?', result.id, order.id);
   return { ms_document_id: result.id };
+}
+
+// Откат уценки: удаляет в МС возвратный документ и архивирует созданные товары,
+// в CRM деактивирует markdown-products и возвращает заказ в return_status='pending'
+// (можно выбрать другой resolution — В сток / Списать / Потерян / повторить уценку).
+export async function markdownUndoHandler(job) {
+  const token = await getMoyskladToken();
+  if (!token) throw new Error('Токен МС не настроен');
+  const order = await db.get('SELECT * FROM orders WHERE id = ?', job.order_id);
+  if (!order) throw new Error(`Заказ #${job.order_id} не найден`);
+
+  // 1) Удаляем salesreturn в МС.
+  if (order.ms_return_id) {
+    try {
+      await msDelete(token, 'salesreturn', order.ms_return_id);
+    } catch (e) {
+      console.warn(`[ms] delete salesreturn ${order.ms_return_id}:`, e.message);
+    }
+  }
+  // 2) Удаляем (или архивируем) markdown-товары в МС.
+  const mdRows = await db.all(
+    `SELECT id, external_id, name FROM products WHERE markdown_order_id = ? AND is_markdown = TRUE`,
+    order.id,
+  );
+  for (const md of mdRows) {
+    if (!md.external_id) continue;
+    try {
+      await msDelete(token, 'product', md.external_id);
+    } catch (e) {
+      // МС не даёт удалить товар с историей — архивируем.
+      try {
+        await msUpdate(token, 'product', md.external_id, { archived: true });
+      } catch (e2) {
+        console.warn(`[ms] archive product ${md.external_id}:`, e2.message);
+      }
+    }
+  }
+  // 3) В CRM: маркируем markdown-products как inactive (для аудита оставляем запись).
+  await db.run(
+    `UPDATE products SET active = FALSE, updated_at = NOW()
+     WHERE markdown_order_id = ? AND is_markdown = TRUE`,
+    order.id,
+  );
+  // 4) Возвращаем заказ в return_status='pending' — менеджер выберет другое решение.
+  await db.run(
+    `UPDATE orders SET return_status = 'pending', return_proof = NULL,
+     return_resolved_by = NULL, return_resolved_at = NULL,
+     ms_return_id = NULL, updated_at = NOW()
+     WHERE id = ?`,
+    order.id,
+  );
+  return {};
 }

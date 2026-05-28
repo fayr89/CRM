@@ -3699,6 +3699,7 @@ async function renderMoyskladSyncSection(area) {
       'customerreturn.create': '↩️ Возврат от покупателя',
       'loss.create': '❌ Списание (потеря/брак)',
       'markdown.create': '🏷️ Уценка (новый товар + приход)',
+      'markdown.undo': '↩️ Откат уценки',
     };
     return map[a] || a;
   }
@@ -3758,20 +3759,26 @@ async function renderMoyskladSyncSection(area) {
             },
           }, '🔄')
         : null;
-      // «Отменить в МС» — для done customer_order.upsert ставит обратную задачу.
-      // Это меняет ТОЛЬКО МС, статус заказа в CRM остаётся прежним.
-      const canUndo = j.status === 'done' && j.action === 'customer_order.upsert' && !j.payload?.undo_of;
+      // «Отменить» — для done операций которые умеют откат: customer_order.upsert
+      // (резерв/снятие) и markdown.create (уценка).
+      const canUndo = j.status === 'done' && !j.payload?.undo_of &&
+        (j.action === 'customer_order.upsert' || j.action === 'markdown.create');
       const undoBtn = canUndo
         ? el('button', {
             class: 'btn btn-xs',
-            title: 'Откатить это действие в МойСклад (статус заказа в CRM не меняется)',
+            title: 'Откатить это действие',
             onClick: async () => {
-              const wasReserve = j.payload?.reserve_mode === 'full';
-              const msg = wasReserve
-                ? 'Снять резерв в МС? (статус заказа в CRM не изменится)'
-                : 'Восстановить резерв в МС? (статус заказа в CRM не изменится)';
+              let msg;
+              if (j.action === 'customer_order.upsert') {
+                const wasReserve = j.payload?.reserve_mode === 'full';
+                msg = wasReserve
+                  ? 'Снять резерв в МС? (статус заказа в CRM не изменится)'
+                  : 'Восстановить резерв в МС? (статус заказа в CRM не изменится)';
+              } else {
+                msg = 'Откатить уценку? Уценочный возврат удалится из МС, новые товары будут архивированы, заказ вернётся в «Ждёт обработки» — можно выбрать другое решение.';
+              }
               if (!(await confirm(msg))) return;
-              try { await api.msUndoJob(j.id); toast('Откат в МС поставлен в очередь', 'success'); await refresh(); }
+              try { await api.msUndoJob(j.id); toast('Откат поставлен в очередь', 'success'); await refresh(); }
               catch (e) { toast(e.message, 'error'); }
             },
           }, '↩')

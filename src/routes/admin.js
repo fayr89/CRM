@@ -178,6 +178,10 @@ router.post(
         undo_of: id,
       });
       res.json({ ok: true, reverse_mode: reverseMode });
+    } else if (row.action === 'markdown.create') {
+      // Откат уценки: удалить salesreturn, архивировать товары, вернуть заказ в pending.
+      await enqueueMsJob(row.order_id, 'markdown.undo', { undo_of: id });
+      res.json({ ok: true, undo_action: 'markdown.undo' });
     } else {
       throw BadRequest(`Отмена действия «${row.action}» пока не поддерживается`);
     }
