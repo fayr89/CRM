@@ -263,12 +263,6 @@ router.get(
       return mpMap[mp] || row.marketplace || '';
     };
     const columns = [
-      { key: '_seq', label: '№', format: (v) => String(v) },
-      { key: 'id', label: 'ID', format: (v) => `#${v}` },
-      { key: 'created_at', label: 'Создан', format: csvDate },
-      { key: 'ship_method', label: 'Способ отправки', get: shipMethod },
-      { key: 'shipment_qr', label: 'Трек номер' },
-      { key: 'manager_name', label: 'Менеджер' },
       {
         key: 'sku',
         label: 'Артикул',
@@ -279,7 +273,7 @@ router.get(
       },
       {
         key: 'qty',
-        label: 'Кол-во, шт',
+        label: 'Кол-во',
         get: (row) => {
           const list = itemsByOrder.get(row.id) || [];
           return list.map((i) => String(i.quantity)).join(' | ');
@@ -293,6 +287,11 @@ router.get(
           return list.map((i) => i.name).join(' | ');
         },
       },
+      { key: 'ship_method', label: 'Способ отправки', get: shipMethod },
+      { key: 'shipment_qr', label: 'Трек номер' },
+      { key: 'manager_name', label: 'Менеджер' },
+      { key: '_seq', label: '№', format: (v) => String(v) },
+      { key: 'id', label: 'ID', format: (v) => `#${v}` },
       { key: 'notes', label: 'Комментарий' },
     ];
 
