@@ -355,3 +355,15 @@ export async function msUploadProductImage(token, productId, base64DataUrl, file
     { filename, content: m[2] },
   ]);
 }
+
+// Прикрепить файл к произвольному документу МС (salesreturn, loss, demand, customerorder).
+// data URL → /entity/{entityType}/{id}/files. МС держит до 100 файлов на документе.
+export async function msAttachFile(token, entityType, entityId, base64DataUrl, filenameHint = 'file') {
+  const m = String(base64DataUrl || '').match(/^data:([^;]+);base64,(.+)$/);
+  if (!m) throw new Error('Невалидный data URL');
+  const ext = (m[1].split('/')[1] || 'bin').split('+')[0];
+  const filename = filenameHint.includes('.') ? filenameHint : `${filenameHint}.${ext}`;
+  return await msRequest('POST', `/entity/${entityType}/${entityId}/files`, token, [
+    { filename, content: m[2] },
+  ]);
+}

@@ -3,7 +3,7 @@
 // делает upsert: POST если нет ms_customer_order_id, PUT если есть.
 import { db } from '../db.js';
 import {
-  msCreate, msUpdate, msDelete, msHref, msFindCounterpartyByName, msUploadProductImage,
+  msCreate, msUpdate, msDelete, msHref, msFindCounterpartyByName, msUploadProductImage, msAttachFile,
 } from './moysklad.js';
 import { getMoyskladToken, getMsConfig, setMsSetting } from './ms-jobs.js';
 
@@ -308,6 +308,12 @@ export async function customerReturnCreateHandler(job) {
   // 'customerreturn.create' — историческое имя, не меняем чтобы не сбросить очередь.
   const result = await msCreate(token, 'salesreturn', body);
   await db.run('UPDATE orders SET ms_return_id = ? WHERE id = ?', result.id, order.id);
+  // Прикрепляем фото-пруф состояния товара к документу возврата (если есть).
+  // Не критично — если МС не примет файл, документ уже создан.
+  if (order.return_proof) {
+    await msAttachFile(token, 'salesreturn', result.id, order.return_proof, `return-proof-${order.id}`)
+      .catch((e) => console.warn(`[ms] attach proof to salesreturn ${result.id}:`, e.message));
+  }
   // Возврат: stock +1, reserve без изменений (товар не был зарезервирован).
   await applyLocalStockReserveDelta(order.id, +1, 0);
   return { ms_document_id: result.id };
@@ -356,6 +362,11 @@ export async function lossCreateHandler(job) {
   const body = await buildLossBody(token, order);
   const result = await msCreate(token, 'loss', body);
   await db.run('UPDATE orders SET ms_loss_id = ? WHERE id = ?', result.id, order.id);
+  // Прикрепляем фото-пруф (товар негоден) к документу списания.
+  if (order.return_proof) {
+    await msAttachFile(token, 'loss', result.id, order.return_proof, `loss-proof-${order.id}`)
+      .catch((e) => console.warn(`[ms] attach proof to loss ${result.id}:`, e.message));
+  }
   // Списание: stock -1, reserve без изменений.
   await applyLocalStockReserveDelta(order.id, -1, 0);
   return { ms_document_id: result.id };
@@ -444,6 +455,11 @@ export async function markdownCreateHandler(job) {
 
   const result = await msCreate(token, 'salesreturn', body);
   await db.run('UPDATE orders SET ms_return_id = ? WHERE id = ?', result.id, order.id);
+  // Прикрепляем фото-пруф состояния товара к документу уценки в МС.
+  if (order.return_proof) {
+    await msAttachFile(token, 'salesreturn', result.id, order.return_proof, `markdown-proof-${order.id}`)
+      .catch((e) => console.warn(`[ms] attach proof to salesreturn ${result.id}:`, e.message));
+  }
   return { ms_document_id: result.id };
 }
 
