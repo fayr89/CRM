@@ -14,10 +14,11 @@ if (isProd) {
       'Установите случайное значение в Vercel env (≥ 32 байт) и сделайте Redeploy.',
     );
   }
-  if (!process.env.ADMIN_PASSWORD) {
-    console.warn(
-      '⚠️ ADMIN_PASSWORD не задан. Используется только при создании ПЕРВОГО админа ' +
-      'на пустой БД — на работающем проде неактуально, но лучше задать на будущее.',
+  if (!process.env.ADMIN_PASSWORD || process.env.ADMIN_PASSWORD === 'admin123') {
+    throw new Error(
+      'ADMIN_PASSWORD не задан в production (или равен дефолту admin123). ' +
+      'Задайте сильный пароль в Vercel env. Используется при создании первого ' +
+      'админа на пустой БД — без него поднятая с нуля копия откроется с admin/admin123.',
     );
   }
 }

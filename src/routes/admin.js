@@ -29,7 +29,17 @@ const BACKUP_TABLES = [
   'shipping_schedule',
 ];
 
-// Полный дамп БД в JSON. Только админ. Включает хеши паролей — храните файл безопасно.
+// Чувствительные колонки, которые НЕ должны попадать в JSON-бэкап (даже у админа):
+// — хеши паролей дают возможность брутфорса оффлайн
+// — токены/секреты дают доступ от имени системы
+const SENSITIVE_COLUMNS = {
+  users: ['password_hash'],
+  invitations: ['token'],
+  api_tokens: ['token_hash'],
+  webhooks: ['secret'],
+};
+
+// Полный дамп БД в JSON. Только админ. Чувствительные поля вырезаются (см. выше).
 router.get(
   '/backup',
   requireRole('admin'),
@@ -37,7 +47,12 @@ router.get(
     const dump = { version: 1, created_at: new Date().toISOString(), tables: {} };
     for (const table of BACKUP_TABLES) {
       try {
-        dump.tables[table] = await db.all(`SELECT * FROM ${table}`);
+        const rows = await db.all(`SELECT * FROM ${table}`);
+        const drop = SENSITIVE_COLUMNS[table];
+        if (drop && rows.length) {
+          for (const row of rows) for (const c of drop) delete row[c];
+        }
+        dump.tables[table] = rows;
       } catch {
         // таблицы может не быть — пропускаем
         dump.tables[table] = [];
