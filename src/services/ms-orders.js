@@ -195,3 +195,100 @@ export async function demandDeleteHandler(job) {
   await db.run('UPDATE orders SET ms_demand_id = NULL WHERE id = ?', order.id);
   return {};
 }
+
+// --- Customer return (возврат от покупателя): оприходование на склад ---
+
+async function buildCustomerReturnBody(token, order) {
+  const cfg = await getMsConfig();
+  if (!cfg.organization_id) throw new Error('МС не инициализирован: нет organization_id');
+
+  const storeId = cfg.store_map?.[order.warehouse];
+  if (order.warehouse && !storeId) {
+    throw new Error(`Склад «${order.warehouse}» не найден в МС.`);
+  }
+  const counterpartyId = await resolveManagerCounterparty(token, order.manager_id);
+  if (!counterpartyId) throw new Error('Не удалось определить контрагента');
+
+  const items = await fetchOrderPositions(order.id);
+  const positions = items
+    .filter((it) => it.ms_product_id)
+    .map((it) => ({
+      assortment: msHref('product', it.ms_product_id),
+      quantity: it.quantity,
+      price: Math.round((it.unit_price || 0) * 100),
+    }));
+  if (!positions.length) throw new Error('У заказа нет позиций с привязкой к МС');
+
+  const body = {
+    organization: msHref('organization', cfg.organization_id),
+    agent: msHref('counterparty', counterpartyId),
+    name: order.reference_number
+      ? `CRM-${order.id}/возврат/${order.reference_number}`
+      : `CRM-${order.id}/возврат`,
+    description: `Возврат покупателя по CRM #${order.id}${order.cancel_reason ? ' · ' + order.cancel_reason : ''}`,
+    positions,
+  };
+  if (storeId) body.store = msHref('store', storeId);
+  // МС привязывает возврат к отгрузке, если есть — корректнее учёт.
+  if (order.ms_demand_id) body.demand = msHref('demand', order.ms_demand_id);
+  return body;
+}
+
+export async function customerReturnCreateHandler(job) {
+  const token = await getMoyskladToken();
+  if (!token) throw new Error('Токен МС не настроен');
+  const order = await db.get('SELECT * FROM orders WHERE id = ?', job.order_id);
+  if (!order) throw new Error(`Заказ #${job.order_id} не найден`);
+  if (order.ms_return_id) return { ms_document_id: order.ms_return_id };
+
+  const body = await buildCustomerReturnBody(token, order);
+  const result = await msCreate(token, 'customerreturn', body);
+  await db.run('UPDATE orders SET ms_return_id = ? WHERE id = ?', result.id, order.id);
+  return { ms_document_id: result.id };
+}
+
+// --- Loss (списание): расход со склада без выручки ---
+
+async function buildLossBody(token, order) {
+  const cfg = await getMsConfig();
+  if (!cfg.organization_id) throw new Error('МС не инициализирован: нет organization_id');
+
+  const storeId = cfg.store_map?.[order.warehouse];
+  if (order.warehouse && !storeId) {
+    throw new Error(`Склад «${order.warehouse}» не найден в МС.`);
+  }
+
+  const items = await fetchOrderPositions(order.id);
+  const positions = items
+    .filter((it) => it.ms_product_id)
+    .map((it) => ({
+      assortment: msHref('product', it.ms_product_id),
+      quantity: it.quantity,
+      price: Math.round((it.unit_price || 0) * 100),
+    }));
+  if (!positions.length) throw new Error('У заказа нет позиций с привязкой к МС');
+
+  const body = {
+    organization: msHref('organization', cfg.organization_id),
+    name: order.reference_number
+      ? `CRM-${order.id}/списание/${order.reference_number}`
+      : `CRM-${order.id}/списание`,
+    description: `Списание по CRM #${order.id}${order.cancel_reason ? ' · ' + order.cancel_reason : ''}`,
+    positions,
+  };
+  if (storeId) body.store = msHref('store', storeId);
+  return body;
+}
+
+export async function lossCreateHandler(job) {
+  const token = await getMoyskladToken();
+  if (!token) throw new Error('Токен МС не настроен');
+  const order = await db.get('SELECT * FROM orders WHERE id = ?', job.order_id);
+  if (!order) throw new Error(`Заказ #${job.order_id} не найден`);
+  if (order.ms_loss_id) return { ms_document_id: order.ms_loss_id };
+
+  const body = await buildLossBody(token, order);
+  const result = await msCreate(token, 'loss', body);
+  await db.run('UPDATE orders SET ms_loss_id = ? WHERE id = ?', result.id, order.id);
+  return { ms_document_id: result.id };
+}

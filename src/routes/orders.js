@@ -367,6 +367,13 @@ router.post(
       req.user.id,
       order.id,
     );
+    // МС: товар вернулся → «Возврат от покупателя» (приход); товар не вернулся
+    // или негоден → «Списание» (расход без выручки).
+    if (resolution === 'restocked') {
+      await enqueueMsJob(order.id, 'customerreturn.create');
+    } else if (resolution === 'written_off' || resolution === 'lost') {
+      await enqueueMsJob(order.id, 'loss.create');
+    }
     res.json(await db.get('SELECT * FROM orders WHERE id = ?', order.id));
   }),
 );

@@ -3696,8 +3696,8 @@ async function renderMoyskladSyncSection(area) {
     const map = {
       'demand.create': '🚚 Отгрузка',
       'demand.delete': '↩️ Откат отгрузки',
-      'customerreturn.create': '↩️ Возврат',
-      'loss.create': '❌ Списание',
+      'customerreturn.create': '↩️ Возврат от покупателя',
+      'loss.create': '❌ Списание (потеря/брак)',
     };
     return map[a] || a;
   }
