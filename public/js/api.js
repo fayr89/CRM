@@ -150,6 +150,15 @@ export const api = {
   msRunNow: () => request('POST', '/api/admin/ms/jobs/run-now'),
   // Аудит-лог
   listAudit: (query) => request('GET', '/api/admin/audit', { query }),
+
+  // МАХ-бот
+  maxMe: () => request('GET', '/api/max/me'),
+  maxBindCode: () => request('POST', '/api/max/bind-code'),
+  maxUnbind: () => request('POST', '/api/max/unbind'),
+  maxAdminStatus: () => request('GET', '/api/max/admin/status'),
+  maxAdminSetToken: (token) => request('POST', '/api/max/admin/token', { body: { token } }),
+  maxAdminSetWebhook: (url) => request('POST', '/api/max/admin/webhook', { body: { url } }),
+  maxAdminTest: () => request('POST', '/api/max/admin/test'),
   search: (q) => request('GET', '/api/search', { query: { q } }),
 
   apiTokens: () => request('GET', '/api/api-tokens'),

@@ -1,5 +1,8 @@
 import { db } from '../db.js';
+import { sendMaxMessage } from './max-bot.js';
 
+// База: сохраняем в notifications для бейджа-колокольчика, и параллельно дублируем
+// в МАХ-бота, если пользователь привязал чат. Сбой пуша не валит запись в БД.
 export async function notify(userId, type, title, body, link) {
   if (!userId) return;
   await db.run(
@@ -11,6 +14,18 @@ export async function notify(userId, type, title, body, link) {
     body ?? null,
     link ?? null,
   );
+  try {
+    const u = await db.get(`SELECT max_chat_id FROM users WHERE id = ?`, userId);
+    if (u?.max_chat_id) {
+      const fullLink = link && link.startsWith('#') && process.env.PUBLIC_URL
+        ? `${process.env.PUBLIC_URL}/${link}`
+        : link;
+      await sendMaxMessage(u.max_chat_id, `${title}${body ? '\n\n' + body : ''}`, fullLink);
+    }
+  } catch (e) {
+    // eslint-disable-next-line no-console
+    console.error('[notify max]', e.message);
+  }
 }
 
 export async function notifyMany(userIds, type, title, body, link) {

@@ -3785,6 +3785,7 @@ export async function renderIntegrations(main) {
 
   const msTokenArea = el('div', { class: 'integration-section' });
   const msSyncArea = el('div', { class: 'integration-section' });
+  const maxBotArea = el('div', { class: 'integration-section' });
   const marketplacesArea = el('div', { class: 'integration-section' });
   const deliveryArea = el('div', { class: 'integration-section' });
   const cancelReasonsArea = el('div', { class: 'integration-section' });
@@ -3793,10 +3794,11 @@ export async function renderIntegrations(main) {
   const webhooksArea = el('div', { class: 'integration-section' });
   const docsArea = el('div', { class: 'integration-section' });
 
-  main.append(msTokenArea, msSyncArea, marketplacesArea, deliveryArea, cancelReasonsArea, warehousesArea, tokensArea, webhooksArea, docsArea);
+  main.append(msTokenArea, msSyncArea, maxBotArea, marketplacesArea, deliveryArea, cancelReasonsArea, warehousesArea, tokensArea, webhooksArea, docsArea);
 
   await renderMoyskladTokenSection(msTokenArea);
   await renderMoyskladSyncSection(msSyncArea);
+  await renderMaxBotSection(maxBotArea);
   await renderMarketplacesSection(marketplacesArea);
   await renderDeliveryMethodsSection(deliveryArea);
   await renderListSettingSection(cancelReasonsArea, {
@@ -7597,5 +7599,161 @@ export async function renderAudit(main) {
     tableArea,
   );
   await reload();
+}
+
+// === МАХ-бот: привязка чата пользователя ===
+// Открывается из сайдбара кнопкой «🔔 Подключить МАХ». Шаги:
+//   1) Кликаем «Получить код» — бэк генерит 6-значный код, кладёт в users.max_bind_code.
+//   2) Пользователь в МАХ открывает бота (имя/ссылка показаны в модалке) и шлёт /start <код>.
+//   3) Webhook ловит → save chat_id → бот пишет «Подключено».
+//   4) В модалке кнопка «Проверить» поллит /api/max/me — если bound, поздравляем.
+export async function openMaxBindDialog() {
+  const statusBlock = el('div', { class: 'detail-grid', style: { marginBottom: '12px' } });
+  const codeBlock = el('div');
+  const checkBtn = el('button', { class: 'btn btn-sm' }, '🔄 Проверить статус');
+  const unbindBtn = el('button', { class: 'btn btn-sm btn-danger' }, 'Отвязать');
+
+  async function refresh() {
+    const me = await api.maxMe().catch(() => ({ bound: false }));
+    clear(statusBlock);
+    statusBlock.append(
+      el('div', { class: 'k' }, 'Статус'),
+      el('div', {}, me.bound
+        ? el('span', { style: { color: 'green', fontWeight: 600 } }, '✅ Подключено — уведомления приходят в МАХ')
+        : el('span', { style: { color: 'var(--text-muted)' } }, '⚪ Не подключено')),
+    );
+    clear(codeBlock);
+    if (me.bound) {
+      codeBlock.append(
+        el('p', {}, 'Если хотите отключить уведомления в МАХ — нажмите кнопку ниже.'),
+        unbindBtn,
+      );
+    } else {
+      codeBlock.append(
+        el('p', { style: { color: 'var(--text-muted)' } },
+          'Чтобы получать уведомления в мессенджере МАХ, нажмите «Получить код» и пришлите его боту.'),
+        el('button', {
+          class: 'btn btn-primary',
+          onClick: async () => {
+            try {
+              const r = await api.maxBindCode();
+              clear(codeBlock);
+              codeBlock.append(
+                el('div', { class: 'card', style: { padding: '16px', textAlign: 'center', marginTop: '12px' } },
+                  el('div', { style: { fontSize: '13px', color: 'var(--text-muted)' } }, 'Ваш код привязки:'),
+                  el('div', { style: { fontSize: '36px', fontWeight: 700, letterSpacing: '4px', margin: '8px 0', fontFamily: 'monospace' } }, r.code),
+                  el('div', { style: { fontSize: '12px', color: 'var(--text-muted)' } }, `Действует ${r.expires_in_minutes || 30} минут`),
+                ),
+                el('ol', { style: { paddingLeft: '20px', lineHeight: '1.6' } },
+                  el('li', {},
+                    'Откройте МАХ',
+                    r.bot_username
+                      ? ` и найдите бота @${r.bot_username}`
+                      : ' и найдите нашего бота (имя бота уточните у админа)',
+                  ),
+                  el('li', {}, 'Отправьте боту: ', el('code', { style: { background: '#f3f4f6', padding: '2px 6px', borderRadius: '3px' } }, `/start ${r.code}`)),
+                  el('li', {}, 'Нажмите ниже «🔄 Проверить статус»'),
+                ),
+                checkBtn,
+              );
+            } catch (e) { toast(e.message, 'error'); }
+          },
+        }, 'Получить код'),
+      );
+    }
+  }
+
+  checkBtn.addEventListener('click', async () => {
+    await refresh();
+    const me = await api.maxMe().catch(() => null);
+    if (me?.bound) toast('Подключено! Уведомления будут приходить в МАХ.', 'success');
+    else toast('Пока не подключено. Отправили боту /start КОД?', '');
+  });
+
+  unbindBtn.addEventListener('click', async () => {
+    if (!(await confirm('Отвязать МАХ? Уведомления в мессенджере перестанут приходить.'))) return;
+    try {
+      await api.maxUnbind();
+      toast('МАХ отвязан', 'success');
+      await refresh();
+    } catch (e) { toast(e.message, 'error'); }
+  });
+
+  const body = el('div', {}, statusBlock, codeBlock);
+  await refresh();
+  await openModal('🔔 Уведомления в МАХ', body, { primaryLabel: 'Закрыть', onSubmit: () => true });
+}
+
+// Админ-секция МАХ-бота в «Настройках».
+export async function renderMaxBotSection(area) {
+  clear(area);
+  const me = JSON.parse(localStorage.getItem('crm_user') || '{}');
+  if (me.role !== 'admin') return;
+  area.append(el('div', { class: 'section-header' }, el('h2', {}, '🔔 МАХ-бот (уведомления в мессенджер)')));
+  area.append(el('p', { class: 'help-banner' },
+    'Бот шлёт пользователям те же уведомления, что показывает колокольчик. ',
+    'Сначала создайте бота на dev.max.ru, скопируйте Bearer-токен, сохраните здесь. ',
+    'Затем зарегистрируйте webhook (один раз) — после этого пользователи смогут привязать свой МАХ-аккаунт через профиль.',
+  ));
+
+  const status = await api.maxAdminStatus().catch((e) => ({ error: e.message }));
+  const tokenI = el('input', { type: 'password', placeholder: 'Bearer-токен МАХ-бота' });
+
+  const tokenRow = el('div', { class: 'form-row' },
+    el('label', {}, 'Токен бота'),
+    tokenI,
+    el('button', {
+      class: 'btn btn-sm btn-primary',
+      onClick: async () => {
+        const tok = tokenI.value.trim();
+        if (!tok) return toast('Введите токен', 'error');
+        try { await api.maxAdminSetToken(tok); toast('Токен сохранён', 'success'); await renderMaxBotSection(area); }
+        catch (e) { toast(e.message, 'error'); }
+      },
+    }, 'Сохранить'),
+    status?.has_token ? el('button', {
+      class: 'btn btn-sm btn-danger',
+      onClick: async () => {
+        if (!(await confirm('Удалить токен? Все привязки сохранятся, но уведомления перестанут уходить.'))) return;
+        try { await api.maxAdminSetToken(null); toast('Токен удалён', 'success'); await renderMaxBotSection(area); }
+        catch (e) { toast(e.message, 'error'); }
+      },
+    }, 'Удалить') : null,
+  );
+
+  const defaultWebhook = `${location.origin}/api/max/webhook`;
+  const webhookI = el('input', { type: 'text', placeholder: defaultWebhook, value: status?.webhook_url || defaultWebhook });
+  const webhookRow = el('div', { class: 'form-row' },
+    el('label', {}, 'Webhook URL'),
+    webhookI,
+    el('button', {
+      class: 'btn btn-sm btn-primary',
+      onClick: async () => {
+        const url = webhookI.value.trim();
+        if (!url) return toast('Введите URL', 'error');
+        try { await api.maxAdminSetWebhook(url); toast('Webhook зарегистрирован у МАХ', 'success'); await renderMaxBotSection(area); }
+        catch (e) { toast(e.message, 'error'); }
+      },
+    }, 'Зарегистрировать'),
+  );
+
+  const statusBlock = el('div', { class: 'detail-grid', style: { marginTop: '8px' } },
+    el('div', { class: 'k' }, 'Токен'),
+    el('div', {}, status?.has_token ? '✅ задан' : '⚪ не задан'),
+    el('div', { class: 'k' }, 'Webhook'),
+    el('div', {}, status?.webhook_url || '⚪ не зарегистрирован'),
+    el('div', { class: 'k' }, 'Имя бота'),
+    el('div', {}, status?.bot?.username ? `@${status.bot.username}` : (status?.bot?.error ? `Ошибка: ${status.bot.error}` : '—')),
+    el('div', { class: 'k' }, 'Привязано пользователей'),
+    el('div', {}, String(status?.bound_users || 0)),
+  );
+
+  const testBtn = el('button', { class: 'btn btn-sm' }, '✉️ Тестовая отправка себе');
+  testBtn.addEventListener('click', async () => {
+    try { await api.maxAdminTest(); toast('Отправлено! Проверьте МАХ.', 'success'); }
+    catch (e) { toast(e.message, 'error'); }
+  });
+
+  area.append(tokenRow, webhookRow, statusBlock, el('div', { style: { marginTop: '8px' } }, testBtn));
 }
 

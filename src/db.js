@@ -588,6 +588,12 @@ export async function ensureInitialized() {
       // Вложения к обращению: массив объектов { filename, content (data URL), type, size }.
       // Хранится в БД — для бага «как воспроизвести» удобно скриншот посмотреть.
       await pool.query('ALTER TABLE feedback ADD COLUMN IF NOT EXISTS attachments JSONB DEFAULT NULL');
+      // МАХ-бот: chat_id пользователя для пушей; одноразовый код для привязки (с TTL).
+      await pool.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS max_chat_id BIGINT');
+      await pool.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS max_bind_code TEXT');
+      await pool.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS max_bind_expires TIMESTAMPTZ');
+      await pool.query('CREATE INDEX IF NOT EXISTS idx_users_max_chat ON users(max_chat_id) WHERE max_chat_id IS NOT NULL');
+      await pool.query('CREATE INDEX IF NOT EXISTS idx_users_max_code ON users(max_bind_code) WHERE max_bind_code IS NOT NULL');
       // Прайс с привязкой к складу: товар × канал × склад. Старое UNIQUE(product,market) снимаем.
       await pool.query("ALTER TABLE product_prices ADD COLUMN IF NOT EXISTS warehouse TEXT NOT NULL DEFAULT ''");
       await pool.query('ALTER TABLE product_prices DROP CONSTRAINT IF EXISTS product_prices_product_id_marketplace_key');

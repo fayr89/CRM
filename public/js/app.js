@@ -10,6 +10,7 @@ import {
   renderCashbox,
   renderDashboard,
   openFeedbackDialog,
+  openMaxBindDialog,
   renderFeedback,
   renderIntegrations,
   renderInvitations,
@@ -307,6 +308,15 @@ function renderShell() {
       el('div', {}, user.email),
       el('div', {}, `Роль: ${tr('role', user.role) || user.role}`),
       buildRoleSwitcher(user),
+      el(
+        'button',
+        {
+          class: 'btn btn-sm',
+          style: { marginTop: '6px', width: '100%' },
+          onClick: () => openMaxBindDialog(),
+        },
+        '🔔 Подключить МАХ',
+      ),
       el(
         'button',
         {
