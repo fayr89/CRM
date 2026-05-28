@@ -48,12 +48,12 @@ export async function getMsConfig() {
 
 export { setSetting as setMsSetting };
 
-// Добавить задачу в очередь. Если есть активная задача с тем же (order_id, action) —
-// не дублируем. Для action='retry' конкретного типа сначала удаляют failed.
+// Добавить задачу в очередь. Если уже есть pending/running для тех же (order, action) —
+// не дублируем. Done/failed не блокируют новые задачи (важно для upsert-операций,
+// где режим резерва меняется — full при reserve, none при cancel).
 export async function enqueueMsJob(orderId, action, payload = {}) {
-  // Если уже есть pending/running/done с тем же ключом — пропускаем (идемпотентно).
   const existing = await db.get(
-    `SELECT id FROM ms_jobs WHERE order_id = ? AND action = ? AND status IN ('pending','running','done') LIMIT 1`,
+    `SELECT id FROM ms_jobs WHERE order_id = ? AND action = ? AND status IN ('pending','running') LIMIT 1`,
     orderId,
     action,
   );

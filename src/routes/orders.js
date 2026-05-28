@@ -9,6 +9,7 @@ import { notify, notifyWarehouse } from '../services/notifications.js';
 import { emitEvent } from '../services/webhooks.js';
 import { toCsv, csvDate } from '../services/csv.js';
 import { nextShippingDate, getSchedule } from '../services/shippingSchedule.js';
+import { enqueueMsJob } from '../services/ms-jobs.js';
 
 const router = Router();
 
@@ -634,6 +635,8 @@ router.post(
       }
     });
     const updated = await db.get('SELECT * FROM orders WHERE id = ?', order.id);
+    // МС: ставим/обновляем customerorder с резервом на позициях.
+    await enqueueMsJob(order.id, 'customer_order.upsert', { reserve_mode: 'full' });
     await notify(
       order.manager_id,
       'order.reserved',
@@ -783,6 +786,11 @@ router.post(
       }
     });
     const updated = await db.get('SELECT * FROM orders WHERE id = ?', order.id);
+    // МС: если был резерв (был зарезервирован/отгружён) — снимаем резерв в customerorder.
+    // Для new/waiting_stock — customerorder в МС обычно ещё нет, поэтому пропускаем.
+    if (['reserved', 'shipped'].includes(order.status)) {
+      await enqueueMsJob(order.id, 'customer_order.upsert', { reserve_mode: 'none' });
+    }
     emitEvent('order.cancelled', updated);
     res.json(updated);
   }),
@@ -797,6 +805,7 @@ router.post(
     if (!order) throw NotFound('Заказ не найден');
     const isWarehouseOrAdmin = ['admin', 'warehouse'].includes(req.user.role);
     if (!isWarehouseOrAdmin && !(await canAccessOrder(req.user, order))) throw Forbidden();
+    const prevStatus = order.status;
     if (order.status === 'new') {
       // ok — любой владелец
     } else if (order.status === 'reserved') {
@@ -808,6 +817,10 @@ router.post(
       `UPDATE orders SET status = 'waiting_stock', updated_at = NOW() WHERE id = ?`,
       order.id,
     );
+    // МС: если переходим из reserved — снимаем резерв в customerorder.
+    if (prevStatus === 'reserved') {
+      await enqueueMsJob(order.id, 'customer_order.upsert', { reserve_mode: 'none' });
+    }
     const updated = await db.get('SELECT * FROM orders WHERE id = ?', order.id);
     emitEvent('order.updated', updated);
     res.json(updated);
