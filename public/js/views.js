@@ -2038,7 +2038,8 @@ export async function renderOrders(main) {
             const src = e.dataTransfer.getData('source-status');
             if (!id || src === stage) return;
             try {
-              await transitionOrder(id, src, stage);
+              const result = await transitionOrder(id, src, stage);
+              if (result === false) return; // пользователь отменил confirm / диалог сам отработал
               toast(`Заказ переведён в «${tr('order_status', stage)}»`, 'success');
               reload();
             } catch (err) {
@@ -2125,13 +2126,19 @@ export async function renderOrders(main) {
   async function transitionOrder(id, src, dst) {
     if (dst === 'cancelled') {
       await openCancelDialog(id, reload);
-      return null; // диалог сам отменит заказ и перезагрузит
+      return false; // диалог сам отменит заказ и перезагрузит — caller не показывает свой toast
+    }
+    if (src === 'new' && dst === 'reserved') {
+      if (!confirm('Перевести заказ в «Зарезервирован»? Товар будет зарезервирован в МойСклад на складе списания.')) return false;
+      return api.reserveOrder(id);
+    }
+    if (src === 'reserved' && dst === 'new') {
+      if (!confirm('Снять резерв? Резерв в МойСклад снимется, незаконченная транзакция в кассе удалится.')) return false;
+      return api.unreserveOrder(id);
     }
     if (src === 'new' && dst === 'waiting_stock') return api.markOrderWaiting(id);
     if (src === 'reserved' && dst === 'waiting_stock') return api.markOrderWaiting(id);
     if (src === 'waiting_stock' && dst === 'new') return api.markOrderReady(id);
-    if (src === 'new' && dst === 'reserved') return api.reserveOrder(id);
-    if (src === 'reserved' && dst === 'new') return api.unreserveOrder(id);
     if (src === 'reserved' && dst === 'shipped') return api.shipOrder(id);
     if (src === 'shipped' && dst === 'reserved') return api.unshipOrder(id);
     if (src === 'shipped' && dst === 'completed') return api.completeOrder(id);
