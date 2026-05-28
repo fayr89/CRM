@@ -1038,18 +1038,23 @@ function itemsEditor(initialItems = [], { getMarketplace, getWarehouse, onChange
 
   // При смене площадки — переподтягиваем catalog_price для уже выбранных товаров,
   // но unit_price НЕ трогаем (если расходится — увидите подсветку).
+  // Каталог тянется ОДНИМ запросом — раньше был N+1 (каждая строка дёргала api).
   async function refreshCatalogPrices() {
+    const rows = [...tbody.children].filter((r) => r._meta.product_id);
+    if (!rows.length) return;
     const marketplace = getMarketplace?.() || '';
     const warehouse = getWarehouse?.() || '';
-    for (const row of tbody.children) {
-      if (!row._meta.product_id) continue;
-      try {
-        const r = await api.productsForMarketplace(marketplace, '', warehouse);
-        const p = (r.data || []).find((x) => x.id === row._meta.product_id);
-        row._meta.catalog_price = p?.marketplace_price ?? null;
-      } catch {
-        /* ignore */
-      }
+    let products = [];
+    try {
+      const r = await api.productsForMarketplace(marketplace, '', warehouse);
+      products = r.data || [];
+    } catch {
+      return;
+    }
+    const byId = new Map(products.map((p) => [p.id, p]));
+    for (const row of rows) {
+      const p = byId.get(row._meta.product_id);
+      row._meta.catalog_price = p?.marketplace_price ?? null;
       updatePriceHint(row);
     }
   }
