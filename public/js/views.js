@@ -913,14 +913,12 @@ function itemsEditor(initialItems = [], { getMarketplace, getWarehouse, onChange
       min: '1',
       step: '1',
       value: item.quantity || 1,
-      style: { width: '70px' },
     });
     const priceI = el('input', {
       type: 'number',
       min: '0',
       step: 'any',
       value: item.unit_price ?? 0,
-      style: { width: '100px' },
     });
     const priceHint = el('div', { class: 'price-hint' });
 
@@ -1021,11 +1019,11 @@ function itemsEditor(initialItems = [], { getMarketplace, getWarehouse, onChange
       'tr',
       {},
       el('th', { style: { width: '50px' } }, ''),
-      el('th', {}, 'Артикул'),
+      el('th', { style: { width: '140px' } }, 'Артикул'),
       el('th', {}, 'Название'),
-      el('th', {}, 'Кол-во'),
-      el('th', {}, 'Цена'),
-      el('th', {}, ''),
+      el('th', { style: { width: '90px' } }, 'Кол-во'),
+      el('th', { style: { width: '130px' } }, 'Цена'),
+      el('th', { style: { width: '32px' } }, ''),
     ),
   );
   const tfoot = el('tfoot', {}, el('tr', {}, totalCell));
