@@ -136,6 +136,89 @@ router.get(
   }),
 );
 
+// Расширенные виджеты дашборда: динамика продаж, топ менеджеров, уценки без цены.
+// Доступно admin/rop, остальные — только своя выборка.
+// Период: ?period=week (7 дней по дням), month (30 дней по дням), quarter (90 по неделям).
+router.get(
+  '/insights',
+  asyncHandler(async (req, res) => {
+    const period = ['week', 'month', 'quarter'].includes(req.query.period) ? req.query.period : 'month';
+    const days = period === 'week' ? 7 : period === 'quarter' ? 90 : 30;
+    const bucket = period === 'quarter' ? 'week' : 'day';
+
+    const ordIds = await getAccessibleUserIds(req.user);
+    // Без алиаса (для запросов с FROM orders) и с алиасом o.
+    const scopeWhere = ordIds === null ? '' : 'AND manager_id = ANY(?)';
+    const scopeWhereO = ordIds === null ? '' : 'AND o.manager_id = ANY(?)';
+    const scopeParams = ordIds === null ? [] : [ordIds];
+
+    // 1) Серия продаж по дням/неделям (только non-cancelled).
+    const series = await db.all(
+      `SELECT date_trunc('${bucket}', created_at)::date AS bucket,
+              COUNT(*)::int AS orders,
+              COALESCE(SUM(total_amount), 0)::float AS amount
+       FROM orders
+       WHERE created_at >= NOW() - INTERVAL '${days} days'
+         AND status <> 'cancelled' ${scopeWhere}
+       GROUP BY bucket ORDER BY bucket ASC`,
+      ...scopeParams,
+    );
+
+    // 2) Топ менеджеров за период. Считаем только полностью отгруженные/завершённые —
+    // это «реальная» выручка, без учёта будущих отмен.
+    const topManagers = await db.all(
+      `SELECT u.id, u.name,
+              COUNT(o.id)::int AS orders,
+              COALESCE(SUM(o.total_amount), 0)::float AS revenue
+       FROM orders o
+       JOIN users u ON u.id = o.manager_id
+       WHERE o.created_at >= NOW() - INTERVAL '${days} days'
+         AND o.status IN ('shipped', 'completed') ${scopeWhereO}
+       GROUP BY u.id, u.name
+       ORDER BY revenue DESC LIMIT 10`,
+      ...scopeParams,
+    );
+
+    // 3) Уценочные товары без цены — что ждёт админа.
+    // Цены лежат в product_prices (по каналу+складу). Считаем «без цены» = нет ни
+    // одной записи в product_prices для этого товара.
+    const markdownNoPrice = await db.get(
+      `SELECT COUNT(*)::int AS n
+       FROM products p
+       WHERE p.is_markdown = TRUE AND p.active = TRUE
+         AND NOT EXISTS (SELECT 1 FROM product_prices pp WHERE pp.product_id = p.id)`,
+    ).catch(() => ({ n: 0 }));
+
+    const markdownNoPriceList = await db.all(
+      `SELECT p.id, p.name, p.sku, p.markdown_order_id, p.stock
+       FROM products p
+       WHERE p.is_markdown = TRUE AND p.active = TRUE
+         AND NOT EXISTS (SELECT 1 FROM product_prices pp WHERE pp.product_id = p.id)
+       ORDER BY p.id DESC LIMIT 10`,
+    ).catch(() => []);
+
+    // 4) Сводка по статусам заказов за тот же период — для подзаголовка к графику.
+    const periodTotals = await db.get(
+      `SELECT COUNT(*)::int AS orders,
+              COALESCE(SUM(CASE WHEN status <> 'cancelled' THEN total_amount ELSE 0 END), 0)::float AS revenue,
+              COUNT(*) FILTER (WHERE status = 'cancelled')::int AS cancelled
+       FROM orders
+       WHERE created_at >= NOW() - INTERVAL '${days} days' ${scopeWhere}`,
+      ...scopeParams,
+    );
+
+    res.json({
+      period,
+      bucket,
+      days,
+      series,
+      top_managers: topManagers,
+      markdown_no_price: { count: markdownNoPrice?.n || 0, sample: markdownNoPriceList },
+      period_totals: periodTotals || { orders: 0, revenue: 0, cancelled: 0 },
+    });
+  }),
+);
+
 router.get(
   '/recent',
   asyncHandler(async (req, res) => {

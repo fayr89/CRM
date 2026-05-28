@@ -77,6 +77,7 @@ export const api = {
 
   dashboard: (query) => request('GET', '/api/dashboard/stats', { query }),
   recent: (query) => request('GET', '/api/dashboard/recent', { query }),
+  insights: (query) => request('GET', '/api/dashboard/insights', { query }),
 
   // Avito / прямые продажи
   markOrderWaiting: (id) => request('POST', `/api/orders/${id}/mark-waiting`),

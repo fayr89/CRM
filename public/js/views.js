@@ -3447,7 +3447,122 @@ function renderDashboardContent(container, stats, me) {
         el('div', { class: 'card' }, ...renderBars(ordersByStatus, 'label', 'count')),
       ),
     );
+
+    // Расширенные виджеты: динамика продаж, топ менеджеров, уценки без цены.
+    // Грузятся отдельным запросом — заглушка пока, чтобы не задерживать первый рендер.
+    const insightsContainer = el('div');
+    container.append(insightsContainer);
+    renderInsightsWidgets(insightsContainer, me).catch((e) => {
+      console.error('[dashboard insights]', e);
+    });
   }
+}
+
+// График-бары для временной серии (по дням/неделям).
+function renderTimeSeries(rows) {
+  if (!rows.length) return el('div', { class: 'empty' }, 'Нет данных за период');
+  const max = Math.max(...rows.map((r) => r.amount || 0)) || 1;
+  const labelFmt = (d) => {
+    const date = new Date(d);
+    return date.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit' });
+  };
+  // Простой SVG-график не делаем — bar-row из существующих стилей выглядит понятно.
+  return el('div', {},
+    ...rows.map((r) => el('div', { class: 'bar-row' },
+      el('div', { class: 'name' }, labelFmt(r.bucket)),
+      el('div', { class: 'bar' },
+        el('div', { style: { width: `${((r.amount || 0) / max) * 100}%` } }),
+      ),
+      el('div', { class: 'count' }, fmtMoney(r.amount || 0)),
+    )),
+  );
+}
+
+async function renderInsightsWidgets(container, me) {
+  const periodSel = el('select', {},
+    el('option', { value: 'week' }, 'Неделя'),
+    el('option', { value: 'month', selected: true }, 'Месяц'),
+    el('option', { value: 'quarter' }, 'Квартал'),
+  );
+
+  const seriesArea = el('div');
+  const totalsLine = el('div', { class: 'page-subtitle' });
+  const topArea = el('div');
+  const markdownArea = el('div');
+
+  async function load() {
+    seriesArea.innerHTML = '<div class="empty">Загрузка…</div>';
+    try {
+      const r = await api.insights({ period: periodSel.value });
+      clear(seriesArea);
+      seriesArea.append(renderTimeSeries(r.series || []));
+      const t = r.period_totals || {};
+      totalsLine.textContent = `За период: ${t.orders || 0} заказ(ов), выручка ${fmtMoney(t.revenue || 0)}, отменено ${t.cancelled || 0}`;
+
+      clear(topArea);
+      if ((r.top_managers || []).length === 0) {
+        topArea.append(el('div', { class: 'empty' }, 'Нет данных'));
+      } else {
+        const maxRev = Math.max(...r.top_managers.map((m) => m.revenue || 0)) || 1;
+        for (const m of r.top_managers) {
+          topArea.append(el('div', { class: 'bar-row' },
+            el('div', { class: 'name' }, m.name),
+            el('div', { class: 'bar' },
+              el('div', { style: { width: `${((m.revenue || 0) / maxRev) * 100}%` } }),
+            ),
+            el('div', { class: 'count' }, `${fmtMoney(m.revenue || 0)} (${m.orders})`),
+          ));
+        }
+      }
+
+      clear(markdownArea);
+      const md = r.markdown_no_price || {};
+      if ((md.count || 0) === 0) {
+        markdownArea.append(el('div', { class: 'empty' }, 'Все уценки имеют цену 👍'));
+      } else {
+        const link = el('a', { href: '#/products?markdown=1' }, `Открыть каталог уценок (${md.count})`);
+        markdownArea.append(
+          el('div', { style: { marginBottom: '8px' } },
+            el('b', {}, `🏷️ Без цены: ${md.count}`),
+            ' — ', link,
+          ),
+          el('ul', { style: { paddingLeft: '20px', margin: '4px 0' } },
+            ...(md.sample || []).slice(0, 5).map((p) => el('li', {},
+              `${p.name}`, p.sku ? ` (${p.sku})` : '', ` · ${p.stock || 0} шт`,
+            )),
+          ),
+        );
+      }
+    } catch (e) {
+      clear(seriesArea);
+      seriesArea.append(el('div', { class: 'empty' }, `Ошибка: ${e.message}`));
+    }
+  }
+
+  periodSel.addEventListener('change', load);
+
+  container.append(
+    el('div', { class: 'dashboard-section' },
+      el('h3', { style: { display: 'flex', alignItems: 'center', gap: '12px' } },
+        'Динамика продаж',
+        el('span', { style: { fontSize: '13px', fontWeight: 400 } }, periodSel),
+      ),
+      el('div', { class: 'card' },
+        totalsLine,
+        seriesArea,
+      ),
+    ),
+    el('div', { class: 'dashboard-section' },
+      el('h3', {}, 'Топ менеджеров за период'),
+      el('div', { class: 'card' }, topArea),
+    ),
+    me.role === 'admin' ? el('div', { class: 'dashboard-section' },
+      el('h3', {}, 'Уценки без цены'),
+      el('div', { class: 'card' }, markdownArea),
+    ) : null,
+  );
+
+  await load();
 }
 
 function statCard(label, value, sub) {
