@@ -852,18 +852,42 @@ router.post(
   }),
 );
 
-// Разделить заказ: отделить часть позиций в новый заказ.
-// Разрешено в статусах 'new' и 'reserved'. Нельзя отделить все позиции.
-async function performSplit({ original, itemIds, newStatus }) {
+// Разделить заказ: отделить часть позиций (можно с указанием количества) в новый заказ.
+// Если quantity = item.quantity — переносим строку целиком. Если меньше — расщепляем
+// позицию на две строки: оставшаяся уменьшается, новая создаётся в новом заказе.
+// Нельзя отделить ВСЁ: в исходном должна остаться хотя бы одна позиция с qty > 0.
+async function performSplit({ original, items, newStatus }) {
   const allItems = await db.all('SELECT * FROM order_items WHERE order_id = ? ORDER BY id', original.id);
   if (!allItems.length) throw BadRequest('У заказа нет позиций');
-  const idSet = new Set(itemIds);
-  const moving = allItems.filter((i) => idSet.has(i.id));
-  if (moving.length !== itemIds.length) throw BadRequest('Какая-то из выбранных позиций не принадлежит этому заказу');
-  if (moving.length === allItems.length) throw BadRequest('Нельзя отделить все позиции — оставьте хотя бы одну в исходном заказе');
-  const remaining = allItems.filter((i) => !idSet.has(i.id));
-  const movingTotal = moving.reduce((s, i) => s + (i.line_total || 0), 0);
-  const remainingTotal = remaining.reduce((s, i) => s + (i.line_total || 0), 0);
+  const allMap = new Map(allItems.map((i) => [i.id, i]));
+
+  for (const m of items) {
+    const it = allMap.get(m.item_id);
+    if (!it) throw BadRequest('Какая-то из выбранных позиций не принадлежит этому заказу');
+    if (m.quantity <= 0) throw BadRequest(`Количество для «${it.name}» должно быть больше 0`);
+    if (m.quantity > it.quantity) {
+      throw BadRequest(`По позиции «${it.name}» доступно только ${it.quantity} шт, а указано ${m.quantity}`);
+    }
+  }
+
+  // Сколько позиций ОСТАНЕТСЯ с qty>0 в исходном после переноса.
+  const movesByItemId = new Map(items.map((m) => [m.item_id, m.quantity]));
+  const remainingRowsCount = allItems.filter((it) => {
+    const mv = movesByItemId.get(it.id);
+    return !mv || mv < it.quantity;
+  }).length;
+  if (remainingRowsCount === 0) {
+    throw BadRequest('Нельзя отделить всё — оставьте хотя бы одну позицию в исходном заказе');
+  }
+
+  // Итог по сумме (по unit_price × quantity).
+  let movingTotal = 0;
+  for (const m of items) {
+    const it = allMap.get(m.item_id);
+    movingTotal += (it.unit_price || 0) * m.quantity;
+  }
+  const allTotal = allItems.reduce((s, i) => s + (i.line_total || 0), 0);
+  const remainingTotal = allTotal - movingTotal;
 
   return await db.withTransaction(async (tx) => {
     const r = await tx.run(
@@ -889,7 +913,40 @@ async function performSplit({ original, itemIds, newStatus }) {
       original.id,
     );
     const splitId = r.lastInsertRowid;
-    await tx.run(`UPDATE order_items SET order_id = ? WHERE order_id = ? AND id = ANY(?)`, splitId, original.id, itemIds);
+
+    for (const m of items) {
+      const it = allMap.get(m.item_id);
+      if (m.quantity === it.quantity) {
+        // Переносим строку целиком.
+        await tx.run('UPDATE order_items SET order_id = ? WHERE id = ?', splitId, it.id);
+      } else {
+        // Расщепляем: в исходном остаётся (qty - moved), создаём новую строку в новом заказе.
+        const remainingQty = it.quantity - m.quantity;
+        const remainingLine = (it.unit_price || 0) * remainingQty;
+        const movedLine = (it.unit_price || 0) * m.quantity;
+        await tx.run(
+          'UPDATE order_items SET quantity = ?, line_total = ? WHERE id = ?',
+          remainingQty,
+          remainingLine,
+          it.id,
+        );
+        await tx.run(
+          `INSERT INTO order_items
+           (order_id, sku, name, quantity, unit_price, line_total, product_id, image_url, catalog_price)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          splitId,
+          it.sku ?? null,
+          it.name,
+          m.quantity,
+          it.unit_price || 0,
+          movedLine,
+          it.product_id ?? null,
+          it.image_url ?? null,
+          it.catalog_price ?? null,
+        );
+      }
+    }
+
     const noteAppend = `Разделён → создан заказ #${splitId}`;
     const newNotes = original.notes ? `${original.notes}\n${noteAppend}` : noteAppend;
     await tx.run('UPDATE orders SET total_amount = ?, notes = ?, updated_at = NOW() WHERE id = ?', remainingTotal, newNotes, original.id);
@@ -898,20 +955,23 @@ async function performSplit({ original, itemIds, newStatus }) {
 }
 
 const splitSchema = z.object({
-  item_ids: z.array(z.number().int().positive()).min(1),
+  items: z.array(z.object({
+    item_id: z.number().int().positive(),
+    quantity: z.number().int().positive(),
+  })).min(1),
   new_status: z.enum(['new', 'waiting_stock']).optional().default('new'),
 });
 router.post(
   '/:id/split',
   asyncHandler(async (req, res) => {
-    const { item_ids, new_status } = splitSchema.parse(req.body || {});
+    const { items, new_status } = splitSchema.parse(req.body || {});
     const order = await db.get('SELECT * FROM orders WHERE id = ?', req.params.id);
     if (!order) throw NotFound('Заказ не найден');
     if (!(await canAccessOrder(req.user, order))) throw Forbidden();
     if (!['new', 'reserved'].includes(order.status)) {
       throw BadRequest('Разделять можно только новый или зарезервированный заказ');
     }
-    const newId = await performSplit({ original: order, itemIds: item_ids, newStatus: new_status });
+    const newId = await performSplit({ original: order, items, newStatus: new_status });
 
     const newOrder = await db.get('SELECT * FROM orders WHERE id = ?', newId);
     const newItems = await db.all('SELECT * FROM order_items WHERE order_id = ? ORDER BY id', newId);
@@ -922,16 +982,18 @@ router.post(
   }),
 );
 
-// Действие над отдельной позицией: «Ждём товара» (отделить в waiting_stock) или
-// «Отменить» (отделить + сразу отменить). Доступно складу/админу и владельцу.
+// Действие над отдельной позицией (с опциональным quantity): «Ждём товара» (отделить
+// в waiting_stock) или «Отменить» (отделить + сразу отменить). Если quantity не задан —
+// переносим всю позицию целиком.
 const extractSchema = z.object({
   action: z.enum(['waiting', 'cancel']),
   reason: z.string().optional().nullable(),
+  quantity: z.number().int().positive().optional(),
 });
 router.post(
   '/:id/items/:itemId/extract',
   asyncHandler(async (req, res) => {
-    const { action, reason } = extractSchema.parse(req.body || {});
+    const { action, reason, quantity } = extractSchema.parse(req.body || {});
     const itemId = Number(req.params.itemId);
     const order = await db.get('SELECT * FROM orders WHERE id = ?', req.params.id);
     if (!order) throw NotFound('Заказ не найден');
@@ -944,10 +1006,13 @@ router.post(
     if (!item) throw NotFound('Позиция не найдена в заказе');
     if (action === 'cancel' && !reason) throw BadRequest('Укажите причину отмены');
 
-    // waiting → новый заказ сразу в waiting_stock; cancel → новый заказ повторяет статус,
-    // потом отменяется (если был reserved — пойдёт в Возвраты на физическую обработку).
+    const qty = quantity ?? item.quantity;
     const newStatus = action === 'waiting' ? 'waiting_stock' : order.status;
-    const splitId = await performSplit({ original: order, itemIds: [itemId], newStatus });
+    const splitId = await performSplit({
+      original: order,
+      items: [{ item_id: itemId, quantity: qty }],
+      newStatus,
+    });
 
     if (action === 'cancel') {
       const needsReturn = ['reserved', 'shipped'].includes(order.status);

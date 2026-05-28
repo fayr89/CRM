@@ -70,7 +70,7 @@ const INSTRUCTIONS = {
   products: {
     title: 'Как работать с каталогом',
     steps: [
-      'Товары и остатки подтягиваются из МойСклад. Сначала сохраните токен в «Интеграции → Токен МойСклад» (один раз).',
+      'Товары и остатки подтягиваются из МойСклад. Сначала сохраните токен в «Настройки → Токен МойСклад» (один раз).',
       '«Импорт из МойСклад» — загружает товары и поставщиков. «🔄 Остатки» — обновляет остатки. «🏬 Склады» — остатки по складам.',
       'Фильтры сверху: по складу, поставщику, наличию остатков.',
       'В строке товара видно остаток, резерв и склады. «Канал: цена» — цена товара по площадкам из прайса.',
@@ -78,7 +78,7 @@ const INSTRUCTIONS = {
     ],
   },
   integrations: {
-    title: 'Интеграции и настройки',
+    title: 'Настройки',
     steps: [
       '«🔑 Токен МойСклад» — сохраните Bearer-токен один раз, он хранится шифрованно. После этого импорт не будет просить токен.',
       '«🛒 Площадки» — добавьте/удалите площадки продаж (появятся в форме заказа и прайсах).',
@@ -562,8 +562,8 @@ const RESOURCES = {
         options: [
           { value: '', label: 'Все блоки (продажи + прямые)' },
           { value: 'sales', label: 'Только Продажи' },
-          { value: 'direct', label: 'Только Прямые продажи' },
-          { value: 'sales,direct', label: 'Продажи + Прямые продажи' },
+          { value: 'direct', label: 'Только Продажи с площадок' },
+          { value: 'sales,direct', label: 'Продажи + Продажи с площадок' },
         ],
       },
     ],
@@ -1801,13 +1801,37 @@ async function openCancelDialog(orderId, onDone) {
   });
 }
 
-// Отмена одной позиции (split + cancel новой части) — нужна причина.
+// Отделить позицию (или её часть) в «Ожидает товара».
+async function openItemWaitingDialog(order, item, onDone) {
+  const qtyI = el('input', { type: 'number', min: '1', max: String(item.quantity), value: String(item.quantity), style: { maxWidth: '120px' } });
+  const body = el('div', {},
+    el('p', {}, `Позиция: ${item.name}.`),
+    el('p', {}, `В заказе: ${item.quantity} шт по ${fmtMoney(item.unit_price, order.currency)}.`),
+    el('div', { class: 'form-row' }, el('label', {}, 'Сколько штук отделить *'), qtyI),
+    el('p', { style: { color: 'var(--text-muted)', fontSize: '12px' } }, 'Выбранное количество уйдёт в новый заказ «Ожидает товара». Остаток останется в исходном.'),
+  );
+  await openModal('Отделить в «Ожидает товара»', body, {
+    primaryLabel: 'Создать новый заказ',
+    onSubmit: async () => {
+      const q = Number(qtyI.value);
+      if (!q || q < 1 || q > item.quantity) { toast(`Введите от 1 до ${item.quantity}`, 'error'); return false; }
+      try {
+        const r = await api.extractItem(order.id, item.id, { action: 'waiting', quantity: q });
+        toast(`Создан заказ #${r.new_order?.id} (Ожидает товара)`, 'success');
+        await onDone?.();
+      } catch (e) { toast(e.message, 'error'); return false; }
+    },
+  });
+}
+
+// Отмена позиции (или её части) — split + cancel новой части. Нужна причина.
 async function openItemCancelDialog(order, item, onDone) {
   let reasons = [];
   try {
     const r = await api.cancelReasonsList();
     reasons = r.cancel_reasons || [];
   } catch { /* ignore */ }
+  const qtyI = el('input', { type: 'number', min: '1', max: String(item.quantity), value: String(item.quantity), style: { maxWidth: '120px' } });
   const sel = el('select', {},
     el('option', { value: '' }, '— выберите причину —'),
     ...reasons.map((r) => el('option', { value: r }, r)),
@@ -1815,37 +1839,43 @@ async function openItemCancelDialog(order, item, onDone) {
   const customI = el('input', { type: 'text', placeholder: 'Или впишите свою причину' });
   const body = el('div', {},
     el('p', {}, `Позиция: ${item.name} (${item.quantity} × ${fmtMoney(item.unit_price, order.currency)}).`),
-    el('p', {}, 'Эта позиция будет отделена в новый заказ и сразу отменена.'),
+    el('div', { class: 'form-row' }, el('label', {}, 'Сколько штук отменить *'), qtyI),
     el('div', { class: 'form-row' }, el('label', {}, 'Причина отмены *'), sel),
     el('div', { class: 'form-row' }, el('label', {}, 'Своя причина'), customI),
   );
   await openModal('Отменить позицию', body, {
     primaryLabel: 'Отменить позицию',
     onSubmit: async () => {
+      const q = Number(qtyI.value);
+      if (!q || q < 1 || q > item.quantity) { toast(`Введите от 1 до ${item.quantity}`, 'error'); return false; }
       const reason = customI.value.trim() || sel.value;
       if (!reason) { toast('Укажите причину отмены', 'error'); return false; }
       try {
-        const r = await api.extractItem(order.id, item.id, { action: 'cancel', reason });
-        toast(`Позиция отменена (новый заказ #${r.new_order?.id})`, 'success');
+        const r = await api.extractItem(order.id, item.id, { action: 'cancel', reason, quantity: q });
+        toast(`Отменено ${q} шт (новый заказ #${r.new_order?.id})`, 'success');
         await onDone?.();
       } catch (e) { toast(e.message, 'error'); return false; }
     },
   });
 }
 
-// Разделение заказа: отделить часть позиций в новый заказ (товар не нашли на складе и т.п.).
+// Разделение заказа: отделить часть позиций (с количеством) в новый заказ.
 async function openSplitDialog(order, onDone) {
   const items = order.items || [];
   if (!items.length) { toast('У заказа нет позиций', 'error'); return; }
-  if (items.length < 2) { toast('Чтобы разделить, нужно минимум 2 позиции', 'error'); return; }
+  const totalUnits = items.reduce((s, i) => s + (i.quantity || 0), 0);
+  if (totalUnits < 2) { toast('Чтобы разделить, в заказе должно быть минимум 2 штуки товара', 'error'); return; }
 
-  // Чекбоксы по позициям.
+  // Для каждой позиции: чекбокс + поле «сколько штук перенести» (по умолчанию = вся позиция).
   const rows = items.map((it) => {
     const cb = el('input', { type: 'checkbox', value: String(it.id) });
-    return { it, cb, row: el('label', { class: 'split-row' },
+    const qtyI = el('input', { type: 'number', min: '1', max: String(it.quantity), value: String(it.quantity), style: { width: '70px' }, disabled: true });
+    cb.addEventListener('change', () => { qtyI.disabled = !cb.checked; });
+    return { it, cb, qtyI, row: el('label', { class: 'split-row' },
       cb,
       el('span', { class: 'split-name' }, it.name),
-      el('span', { class: 'split-meta' }, `${it.quantity} × ${fmtMoney(it.unit_price, order.currency)} = ${fmtMoney(it.line_total, order.currency)}`),
+      el('span', { class: 'split-meta' }, `${it.quantity} × ${fmtMoney(it.unit_price, order.currency)}`),
+      qtyI,
     ) };
   });
   const list = el('div', { class: 'split-list' }, ...rows.map((r) => r.row));
@@ -1856,7 +1886,7 @@ async function openSplitDialog(order, onDone) {
   );
 
   const body = el('div', {},
-    el('p', {}, 'Выберите позиции, которые уйдут в НОВЫЙ заказ. Оставшиеся останутся в исходном.'),
+    el('p', {}, 'Отметьте позиции, укажите сколько штук уйдёт в НОВЫЙ заказ (по умолчанию — вся позиция). Остаток останется в исходном.'),
     list,
     el('div', { class: 'form-row' }, el('label', {}, 'Статус нового заказа'), statusSel),
   );
@@ -1864,14 +1894,19 @@ async function openSplitDialog(order, onDone) {
   await openModal(`Разделить заказ #${order.id}`, body, {
     primaryLabel: 'Создать новый заказ',
     onSubmit: async () => {
-      const chosen = rows.filter((r) => r.cb.checked).map((r) => r.it.id);
+      const chosen = rows.filter((r) => r.cb.checked);
       if (!chosen.length) { toast('Отметьте хотя бы одну позицию', 'error'); return false; }
-      if (chosen.length === items.length) {
-        toast('Нельзя отделить ВСЕ позиции — оставьте хотя бы одну в исходном', 'error');
-        return false;
+      const moves = [];
+      for (const r of chosen) {
+        const q = Number(r.qtyI.value);
+        if (!q || q < 1 || q > r.it.quantity) {
+          toast(`Кол-во для «${r.it.name}»: от 1 до ${r.it.quantity}`, 'error');
+          return false;
+        }
+        moves.push({ item_id: r.it.id, quantity: q });
       }
       try {
-        const r = await api.splitOrder(order.id, { item_ids: chosen, new_status: statusSel.value });
+        const r = await api.splitOrder(order.id, { items: moves, new_status: statusSel.value });
         toast(`Создан заказ #${r.new_order?.id}`, 'success');
         await onDone?.();
       } catch (e) {
@@ -2051,7 +2086,7 @@ export async function renderOrders(main) {
           icon: '📦',
           title: 'Заказов пока нет',
           description: canCreate
-            ? 'Создайте первый заказ кнопкой «Новый заказ» вверху, или подключите внешний сайт через раздел «Интеграции».'
+            ? 'Создайте первый заказ кнопкой «Новый заказ» вверху, или подключите внешний сайт через раздел «Настройки».'
             : 'Когда менеджер создаст заказ, он появится здесь.',
         }),
       );
@@ -2303,7 +2338,7 @@ export async function renderOrders(main) {
       'div',
       { class: 'page-header' },
       el('div', {},
-        el('h1', { class: 'page-title' }, 'Прямые продажи (Avito)'),
+        el('h1', { class: 'page-title' }, 'Продажи с площадок (Avito)'),
         el('div', { class: 'page-subtitle' }, 'Заказы из маркетплейсов и с собственных сайтов'),
       ),
     ),
@@ -2322,11 +2357,13 @@ async function showOrderDetails(order, reload) {
   const canCancel =
     !['completed', 'cancelled'].includes(order.status) &&
     (['admin', 'warehouse'].includes(me.role) || (me.id === order.manager_id && ['new', 'reserved', 'waiting_stock'].includes(order.status)));
-  // Разделять можно из 'new' и 'reserved' — владелец/админ.
+  // Разделять можно из 'new' и 'reserved' — владелец/админ. Минимум 2 штуки товара суммарно
+  // (один SKU с qty=2 тоже считается делимым).
+  const totalUnits = (order.items || []).reduce((s, i) => s + (i.quantity || 0), 0);
   const canSplit =
     ['new', 'reserved'].includes(order.status) &&
     (me.role === 'admin' || me.id === order.manager_id) &&
-    (order.items || []).length >= 2;
+    totalUnits >= 2;
   // «Товар поступил» — из waiting_stock в new (владелец/админ/склад).
   const canMarkReady =
     order.status === 'waiting_stock' &&
@@ -2337,10 +2374,10 @@ async function showOrderDetails(order, reload) {
   // Откат ошибочной отгрузки.
   const canUnship =
     order.status === 'shipped' && ['admin', 'warehouse'].includes(me.role);
-  // Per-item действия: «Ждём товар» / «Отменить» — для new/reserved при ≥ 2 позиций.
+  // Per-item действия: «Ждём товар» / «Отменить» — для new/reserved при суммарно ≥ 2 шт.
   const canExtractItems =
     ['new', 'reserved'].includes(order.status) &&
-    (order.items || []).length > 1 &&
+    totalUnits >= 2 &&
     (['admin', 'warehouse'].includes(me.role) || me.id === order.manager_id);
 
   const itemsTable = el(
@@ -2398,20 +2435,13 @@ async function showOrderDetails(order, reload) {
             ? el('td', { class: 'item-actions' },
                 el('button', {
                   class: 'btn btn-xs',
-                  title: 'Эту позицию — в новый заказ «Ожидает товара»',
-                  onClick: async () => {
-                    if (!confirm(`Перевести «${it.name}» в новый заказ «Ожидает товара»?`)) return;
-                    try {
-                      const r = await api.extractItem(order.id, it.id, { action: 'waiting' });
-                      toast(`Создан заказ #${r.new_order?.id} (Ожидает товара)`, 'success');
-                      reload?.();
-                    } catch (e) { toast(e.message, 'error'); }
-                  },
+                  title: 'Отделить эту позицию (или её часть) в «Ожидает товара»',
+                  onClick: () => openItemWaitingDialog(order, it, () => { reload?.(); }),
                 }, '⏳'),
                 ' ',
                 el('button', {
                   class: 'btn btn-xs btn-danger',
-                  title: 'Отделить позицию и отменить (с причиной)',
+                  title: 'Отменить эту позицию (или её часть) — с причиной',
                   onClick: () => openItemCancelDialog(order, it, () => { reload?.(); }),
                 }, '🚫'),
               )
@@ -3101,12 +3131,12 @@ export async function renderDashboard(main) {
 
   // Инструкция «как работать» по роли (закрывает часть #6 — памятка прямо на дашборде).
   const tipsForRole = {
-    admin: 'Вы видите все данные и настройки. Интеграции, роли, площадки, бэкап — в вашем ведении.',
+    admin: 'Вы видите все данные и настройки. Настройки, роли, площадки, бэкап — в вашем ведении.',
     rop: 'Вы видите данные своих менеджеров и аналитику отдела. Контролируйте воронку и выполнение задач.',
-    manager: 'Набивайте заказы (Прямые продажи) и ведите сделки (Продажи). Переводите готовый заказ в «Зарезервирован».',
+    manager: 'Набивайте заказы (Продажи с площадок) и ведите сделки (Продажи). Переводите готовый заказ в «Зарезервирован».',
     sales: 'Здесь сводка по вашим сделкам и задачам. Перетащите сделку на воронке — стадия поменяется.',
     warehouse: 'Раздел «Отгрузки»: заказы в статусе «Зарезервирован» собирайте и подтверждайте отгрузку (массово или по одному), выгружайте Excel с QR.',
-    aus: 'Раздел «Каталог» и «Интеграции»: импортируйте товары и остатки из МойСклад, ведите прайсы, площадки и склады.',
+    aus: 'Раздел «Каталог» и «Настройки»: импортируйте товары и остатки из МойСклад, ведите прайсы, площадки и склады.',
     finance: 'Раздел «Касса»: проверяйте транзакции по заказам, подтверждайте или отклоняйте, проставляйте комиссии.',
   };
 
@@ -3178,7 +3208,7 @@ async function renderAusDashboard(container) {
     el('div', { class: 'today-card card' },
       el('h3', { style: { margin: '0 0 8px' } }, 'Что делать'),
       el('ul', { class: 'today-list' },
-        el('li', {}, '1. «Интеграции» → сохраните токен МойСклад (один раз)'),
+        el('li', {}, '1. «Настройки» → сохраните токен МойСклад (один раз)'),
         el('li', {}, '2. «Каталог» → Импорт из МойСклад (товары), 🔄 Остатки, 🏬 Склады'),
         el('li', {}, '3. Ведите прайсы по площадкам и настройку складов'),
       ),
@@ -3272,7 +3302,7 @@ function renderDashboardContent(container, stats, me) {
     ),
   );
 
-  // Прямые продажи (заказы) — для admin/rop/manager/sales.
+  // Продажи с площадок (заказы) — для admin/rop/manager/sales.
   const orders = stats.orders;
   if (orders) {
     const ordersByStatus = (orders.by_status || []).map((r) => ({
@@ -3281,13 +3311,13 @@ function renderDashboardContent(container, stats, me) {
     }));
     container.append(
       el('div', { class: 'dashboard-grid' },
-        statCard('Прямые продажи', orders.total, 'всего заказов'),
+        statCard('Продажи с площадок', orders.total, 'всего заказов'),
         statCard('Сумма заказов', fmtMoney(orders.total_amount), 'без отменённых'),
         statCard('К отгрузке', (orders.by_status || []).find((r) => r.status === 'reserved')?.count || 0, 'в статусе «Зарезервирован»'),
         statCard('Отгружено', (orders.by_status || []).find((r) => r.status === 'shipped')?.count || 0),
       ),
       el('div', { class: 'dashboard-section' },
-        el('h3', {}, 'Прямые продажи по статусу'),
+        el('h3', {}, 'Продажи с площадок по статусу'),
         el('div', { class: 'card' }, ...renderBars(ordersByStatus, 'label', 'count')),
       ),
     );
@@ -3495,7 +3525,7 @@ async function openDealEdit(deal, onSaved) {
 }
 
 // ============================================================
-// Интеграции: API-токены и вебхуки
+// Настройки: API-токены и вебхуки
 // ============================================================
 
 export async function renderIntegrations(main) {
@@ -3504,7 +3534,7 @@ export async function renderIntegrations(main) {
       'div',
       { class: 'page-header' },
       el('div', {},
-        el('h1', { class: 'page-title' }, 'Интеграции'),
+        el('h1', { class: 'page-title' }, 'Настройки'),
         el('div', { class: 'page-subtitle' }, 'Подключайте внешние сайты, мессенджеры, маркетплейсы — заявки и заказы будут падать прямо в CRM'),
       ),
     ),
@@ -6505,7 +6535,17 @@ function renderContent(container, schedule, readyList, canEdit, reload) {
     if (canEdit) headRow.append(el('th', {}, 'Действия'));
 
     const rowsEls = orders.map((o) => {
-      const rowEl = el('tr', {});
+      const rowEl = el('tr', {
+        style: { cursor: 'pointer' },
+        onClick: async (e) => {
+          // Не открываем детали при клике по интерактивным элементам (чекбокс, кнопки).
+          if (e.target.closest('button, input, a, label')) return;
+          try {
+            const full = await api.get('orders', o.id);
+            await showOrderDetails(full, reload);
+          } catch (err) { toast(err.message, 'error'); }
+        },
+      });
       if (canEdit) {
         const cb = el('input', { type: 'checkbox', class: 'ship-row-cb' });
         cb.dataset.id = String(o.id);
