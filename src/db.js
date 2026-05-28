@@ -499,6 +499,27 @@ export async function ensureInitialized() {
       await pool.query('ALTER TABLE orders ADD COLUMN IF NOT EXISTS cancelled_from_status TEXT');
       // Связь с родительским заказом, если этот создан разделением.
       await pool.query('ALTER TABLE orders ADD COLUMN IF NOT EXISTS parent_order_id INTEGER');
+      // Обратная связь от пользователей (вопросы / баги / предложения).
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS feedback (
+          id SERIAL PRIMARY KEY,
+          user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+          category TEXT NOT NULL DEFAULT 'other'
+            CHECK(category IN ('bug','question','suggestion','other')),
+          subject TEXT NOT NULL,
+          message TEXT NOT NULL,
+          context TEXT,
+          status TEXT NOT NULL DEFAULT 'open'
+            CHECK(status IN ('open','in_progress','closed')),
+          resolved_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+          resolved_at TIMESTAMPTZ,
+          admin_reply TEXT,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+      `);
+      await pool.query('CREATE INDEX IF NOT EXISTS idx_feedback_status ON feedback(status)');
+      await pool.query('CREATE INDEX IF NOT EXISTS idx_feedback_user ON feedback(user_id)');
       // Прайс с привязкой к складу: товар × канал × склад. Старое UNIQUE(product,market) снимаем.
       await pool.query("ALTER TABLE product_prices ADD COLUMN IF NOT EXISTS warehouse TEXT NOT NULL DEFAULT ''");
       await pool.query('ALTER TABLE product_prices DROP CONSTRAINT IF EXISTS product_prices_product_id_marketplace_key');
@@ -511,16 +532,24 @@ export async function ensureInitialized() {
       // холодном старте (самовосстановление, если что-то просочилось из старого клиента).
       await pool.query("DELETE FROM product_prices WHERE warehouse IS NULL OR warehouse = ''");
       // Обновляем CHECK роли (добавлены rop, aus, finance) — для users и invitations.
-      await pool.query('ALTER TABLE users DROP CONSTRAINT IF EXISTS users_role_check');
-      await pool.query(
-        `ALTER TABLE users ADD CONSTRAINT users_role_check
-         CHECK (role IN ('admin','manager','sales','warehouse','rop','aus','finance'))`,
-      );
-      await pool.query('ALTER TABLE invitations DROP CONSTRAINT IF EXISTS invitations_role_check');
-      await pool.query(
-        `ALTER TABLE invitations ADD CONSTRAINT invitations_role_check
-         CHECK (role IN ('admin','manager','sales','warehouse','rop','aus','finance'))`,
-      );
+      // DO ... EXCEPTION на случай гонки нескольких холодных стартов лямбд (без него —
+      // 42710 duplicate_object, если другая лямбда уже создала constraint между DROP и ADD).
+      await pool.query(`
+        DO $$ BEGIN
+          ALTER TABLE users DROP CONSTRAINT IF EXISTS users_role_check;
+          ALTER TABLE users ADD CONSTRAINT users_role_check
+            CHECK (role IN ('admin','manager','sales','warehouse','rop','aus','finance'));
+        EXCEPTION WHEN duplicate_object THEN NULL;
+        END $$;
+      `);
+      await pool.query(`
+        DO $$ BEGIN
+          ALTER TABLE invitations DROP CONSTRAINT IF EXISTS invitations_role_check;
+          ALTER TABLE invitations ADD CONSTRAINT invitations_role_check
+            CHECK (role IN ('admin','manager','sales','warehouse','rop','aus','finance'));
+        EXCEPTION WHEN duplicate_object THEN NULL;
+        END $$;
+      `);
       globalThis.__crmInitialized = true;
       return;
     } catch (e) {
