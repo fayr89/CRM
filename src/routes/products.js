@@ -422,11 +422,17 @@ router.post(
     }
 
     let updated = 0;
+    let clearedMissing = 0;
     try {
       await db.withTransaction(async (tx) => {
         // На пулере соединение могло «застрять» на старой схеме без колонки stock —
         // в той же транзакции гарантируем её, затем обновляем остатки.
         await tx.run('ALTER TABLE products ADD COLUMN IF NOT EXISTS stock REAL');
+        // Помечаем все moysklad-товары как «не обновлено в этом импорте» через
+        // временную секунду: ставим updated_at в прошлое, затем UPDATE из отчёта
+        // поднимает updated_at у тех, что вернул МС. После — обнуляем stock у
+        // отстающих (МС не вернул их → 0 на складе).
+        const startedAt = new Date().toISOString();
         if (byId.size) {
           const r = await tx.run(
             `UPDATE products AS p SET stock = d.stock, updated_at = NOW()
@@ -448,11 +454,23 @@ router.post(
           );
           updated += r.changes || 0;
         }
+        // Обнуляем stock у moysklad-товаров, которые МС не вернул в /report/stock/all
+        // (значит остаток 0 либо товар архивирован). is_markdown пропускаем — у них
+        // собственный учёт через CRM при создании уценки.
+        const r = await tx.run(
+          `UPDATE products SET stock = 0, updated_at = NOW()
+           WHERE external_source = 'moysklad'
+             AND COALESCE(stock, 0) > 0
+             AND updated_at < ?::timestamptz
+             AND is_markdown IS NOT TRUE`,
+          startedAt,
+        );
+        clearedMissing = r.changes || 0;
       });
     } catch (e) {
       throw BadRequest('Не удалось записать остатки: ' + e.message);
     }
-    res.json({ ok: true, updated, total: count });
+    res.json({ ok: true, updated, clearedMissing, total: count });
   }),
 );
 
@@ -468,6 +486,18 @@ router.post(
     }
     const offset = Math.max(0, parseInt(req.body?.offset, 10) || 0);
     const LIMIT = 1000;
+    // На первой странице фиксируем timestamp начала синхронизации — потом по нему
+    // обнуляем stock_by_store у moysklad-товаров, которых нет в отчёте (товары
+    // с нулевыми остатками МС в /report/stock/bystore не включает).
+    if (offset === 0) {
+      const nowIso = new Date().toISOString();
+      await db.run(
+        `INSERT INTO app_settings (key, value, updated_at)
+         VALUES ('moysklad.stock_sync_started_at', ?::jsonb, NOW())
+         ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`,
+        JSON.stringify(nowIso),
+      );
+    }
     let page;
     try {
       page = await fetchMoyskladStockByStorePage(token, offset, LIMIT);
@@ -530,15 +560,41 @@ router.post(
     const updated = updatedById + updatedBySku;
     const nextOffset = offset + fetched;
     const done = fetched < LIMIT || nextOffset >= size;
+    // На финальной странице обнуляем stock_by_store у moysklad-товаров,
+    // которые не получили UPDATE в этой сессии (значит МС не вернул их в
+    // /report/stock/bystore — нулевой остаток или товар архивирован).
+    // is_markdown пропускаем — у них собственный стек в нашем кастомном складе.
+    let clearedMissing = 0;
+    if (done) {
+      const cfgRow = await db.get(`SELECT value FROM app_settings WHERE key = 'moysklad.stock_sync_started_at'`).catch(() => null);
+      const startedAt = cfgRow?.value;
+      if (startedAt) {
+        try {
+          const r = await db.run(
+            `UPDATE products SET stock_by_store = NULL, updated_at = NOW()
+             WHERE external_source = 'moysklad'
+               AND stock_by_store IS NOT NULL
+               AND updated_at < ?::timestamptz
+               AND is_markdown IS NOT TRUE`,
+            startedAt,
+          );
+          clearedMissing = r.changes || 0;
+        } catch (e) {
+          console.warn('[stores] clearedMissing failed:', e.message);
+        }
+      }
+    }
     console.log(
       `[stores] offset=${offset} fetched=${fetched} byId=${byId.size} (matched ${matchedIds.length}) ` +
-        `bySku=${bySku.size} (matched ${matchedSkus.length}) updatedById=${updatedById} updatedBySku=${updatedBySku}`,
+        `bySku=${bySku.size} (matched ${matchedSkus.length}) updatedById=${updatedById} updatedBySku=${updatedBySku}` +
+        (done ? ` clearedMissing=${clearedMissing}` : ''),
     );
     res.json({
       ok: true,
       updated,
       updatedById,
       updatedBySku,
+      clearedMissing,
       fetched,
       nextOffset,
       total: size,
