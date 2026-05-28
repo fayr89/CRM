@@ -532,6 +532,17 @@ export async function ensureInitialized() {
       await pool.query('ALTER TABLE products ADD COLUMN IF NOT EXISTS markdown_of_product_id INTEGER REFERENCES products(id) ON DELETE SET NULL');
       await pool.query('ALTER TABLE products ADD COLUMN IF NOT EXISTS markdown_order_id INTEGER REFERENCES orders(id) ON DELETE SET NULL');
       await pool.query('CREATE INDEX IF NOT EXISTS idx_products_markdown ON products(is_markdown) WHERE is_markdown = TRUE');
+      // Backfill stock_by_store у уже созданных markdown-товаров (фикс задним числом
+      // для тех что создались до фикса, когда мы ещё не заполняли поле сразу).
+      await pool.query(`
+        UPDATE products
+        SET stock_by_store = jsonb_build_array(
+          jsonb_build_object('store', 'Склад МСК (Электросталь) УЦЕНКА', 'stock', stock, 'reserve', 0)
+        ), updated_at = NOW()
+        WHERE is_markdown = TRUE
+          AND active = TRUE
+          AND (stock_by_store IS NULL OR jsonb_typeof(stock_by_store) <> 'array' OR jsonb_array_length(stock_by_store) = 0)
+      `);
       // Обратная связь от пользователей (вопросы / баги / предложения).
       await pool.query(`
         CREATE TABLE IF NOT EXISTS feedback (

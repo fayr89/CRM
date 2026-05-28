@@ -6497,11 +6497,21 @@ export async function renderReturns(main) {
       primaryLabel: 'Уценить',
       onSubmit: async () => {
         if (!proofData) { toast('Приложите фото-пруф состояния товара', 'error'); return false; }
+        // Загрузка фото в МС может занимать 5-15 сек: показываем индикатор
+        // прямо в теле диалога, чтобы пользователь видел что окно не зависло.
+        const loadingBlock = el('div', {
+          style: { padding: '16px', textAlign: 'center', color: 'var(--text-muted)', borderTop: '1px solid var(--border)', marginTop: '8px' },
+        }, '⏳ Создаём уценку и загружаем фото в МойСклад…');
+        body.appendChild(loadingBlock);
         try {
           await api.resolveReturn(order.id, 'markdown', proofData);
           toast('Товар уценён. Админу отправлено уведомление проставить цену.', 'success');
           onDone?.();
-        } catch (e) { toast(e.message, 'error'); return false; }
+        } catch (e) {
+          loadingBlock.remove();
+          toast(e.message, 'error');
+          return false;
+        }
       },
     });
   }
