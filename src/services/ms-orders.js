@@ -242,7 +242,9 @@ export async function customerReturnCreateHandler(job) {
   if (order.ms_return_id) return { ms_document_id: order.ms_return_id };
 
   const body = await buildCustomerReturnBody(token, order);
-  const result = await msCreate(token, 'customerreturn', body);
+  // В МС endpoint называется salesreturn (Возврат покупателя). Наш внутренний action
+  // 'customerreturn.create' — историческое имя, не меняем чтобы не сбросить очередь.
+  const result = await msCreate(token, 'salesreturn', body);
   await db.run('UPDATE orders SET ms_return_id = ? WHERE id = ?', result.id, order.id);
   return { ms_document_id: result.id };
 }
@@ -375,7 +377,7 @@ export async function markdownCreateHandler(job) {
   };
   if (order.ms_demand_id) body.demand = msHref('demand', order.ms_demand_id);
 
-  const result = await msCreate(token, 'customerreturn', body);
+  const result = await msCreate(token, 'salesreturn', body);
   await db.run('UPDATE orders SET ms_return_id = ? WHERE id = ?', result.id, order.id);
   return { ms_document_id: result.id };
 }

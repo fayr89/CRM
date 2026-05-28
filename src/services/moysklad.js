@@ -290,7 +290,7 @@ export function msHref(entity, id) {
   };
 }
 
-// Generic POST для создания документа (customerorder, demand, customerreturn, loss).
+// Generic POST для создания документа (customerorder, demand, salesreturn, loss).
 export async function msCreate(token, entity, body) {
   return await msRequest('POST', `/entity/${entity}`, token, body);
 }
