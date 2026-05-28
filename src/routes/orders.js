@@ -246,7 +246,10 @@ router.get(
       itemsByOrder.get(it.order_id).push(it);
     }
 
+    // Порядковый номер в выгрузке — совпадает с номером на PDF-этикетке.
+    orders.forEach((o, idx) => { o._seq = idx + 1; });
     const columns = [
+      { key: '_seq', label: '№', format: (v) => String(v) },
       { key: 'id', label: 'ID', format: (v) => `#${v}` },
       { key: 'created_at', label: 'Создан', format: csvDate },
       { key: 'marketplace', label: 'Площадка' },
@@ -288,6 +291,49 @@ router.get(
     res.setHeader('Content-Type', 'text/csv; charset=utf-8');
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
     res.send(csv);
+  }),
+);
+
+// PDF с этикетками отгрузки: на каждый заказ страница 58×40мм со штрих-кодом
+// Code 128 (из shipment_qr), порядковым номером и службой доставки.
+// Query params: ?ids=N,N,N (или фильтры как у /export.csv, по умолчанию reserved).
+router.get(
+  '/labels.pdf',
+  asyncHandler(async (req, res) => {
+    const idsRaw = String(req.query.ids || '').trim();
+    let orders;
+    if (idsRaw) {
+      const ids = idsRaw.split(',').map((s) => Number(s.trim())).filter((n) => Number.isFinite(n) && n > 0);
+      if (!ids.length) throw BadRequest('Некорректный параметр ids');
+      orders = await db.all(
+        `SELECT id, reference_number, shipment_qr, delivery_method
+         FROM orders WHERE id = ANY(?) ORDER BY array_position(?::int[], id)`,
+        ids,
+        ids,
+      );
+    } else {
+      // По умолчанию — все reserved (для массовой печати в графике отгрузок).
+      const scope = await orderScope(req.user);
+      const where = ['status = ?'];
+      const params = ['reserved'];
+      if (scope.sql) {
+        where.push(scope.sql);
+        params.push(...scope.params);
+      }
+      orders = await db.all(
+        `SELECT id, reference_number, shipment_qr, delivery_method
+         FROM orders WHERE ${where.join(' AND ')} ORDER BY reserved_at`,
+        ...params,
+      );
+    }
+    if (!orders.length) throw BadRequest('Не найдено заказов для печати этикеток');
+    // shipment_qr — обязательное поле этикетки. Если у кого-то пусто — пропускаем (внутри).
+    const { generateLabelsPdf } = await import('../services/labels-pdf.js');
+    const pdf = await generateLabelsPdf(orders);
+    const filename = `labels-${new Date().toISOString().slice(0, 10)}.pdf`;
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.send(pdf);
   }),
 );
 

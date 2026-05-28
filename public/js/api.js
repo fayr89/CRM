@@ -85,6 +85,28 @@ export const api = {
   extractItem: (id, itemId, body) => request('POST', `/api/orders/${id}/items/${itemId}/extract`, { body }),
   unshipOrder: (id) => request('POST', `/api/orders/${id}/unship`),
   refreshProductStocks: (product_ids) => request('POST', '/api/products/refresh-stocks', { body: { product_ids } }),
+  downloadLabelsPdf: async (ids) => {
+    const token = getToken();
+    const url = `/api/orders/labels.pdf?ids=${ids.join(',')}`;
+    const res = await fetch(url, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
+    if (!res.ok) {
+      let msg = `HTTP ${res.status}`;
+      try { const j = await res.json(); msg = j.error || msg; } catch { /* ignore */ }
+      throw new Error(msg);
+    }
+    const blob = await res.blob();
+    const cd = res.headers.get('content-disposition') || '';
+    const m = /filename="?([^"]+)"?/.exec(cd);
+    const filename = m ? m[1] : `labels-${new Date().toISOString().slice(0, 10)}.pdf`;
+    const downloadUrl = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = downloadUrl;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(downloadUrl);
+  },
   reserveOrder: (id) => request('POST', `/api/orders/${id}/reserve`),
   unreserveOrder: (id) => request('POST', `/api/orders/${id}/unreserve`),
   shipOrder: (id) => request('POST', `/api/orders/${id}/ship`),

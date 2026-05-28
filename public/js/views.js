@@ -6889,6 +6889,26 @@ function renderContent(container, schedule, readyList, canEdit, reload) {
         },
         '⬇ Выгрузить в Excel',
       ),
+      el(
+        'button',
+        {
+          class: 'btn',
+          title: 'PDF с этикетками 58×40 мм: штрих-код, № и служба доставки',
+          onClick: async () => {
+            // Берём id ВЫБРАННЫХ заказов (если есть), иначе ВСЕ reserved
+            // в том же порядке как в Excel.
+            const ids = selected.size ? [...selected] : orders.map((o) => o.id);
+            if (!ids.length) { toast('Нет заказов для печати', 'error'); return; }
+            try {
+              await api.downloadLabelsPdf(ids);
+              toast(`Этикетки сохранены (${ids.length} шт)`, 'success');
+            } catch (e) {
+              toast(e.message || 'Не удалось сгенерировать PDF', 'error');
+            }
+          },
+        },
+        '🏷 Этикетки PDF',
+      ),
     );
     if (canEdit) {
       actions.append(
