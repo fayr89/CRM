@@ -7129,18 +7129,146 @@ const FEEDBACK_CATEGORIES = [
   { value: 'other', label: '📝 Другое' },
 ];
 
+// Превью вложений в карточке обращения у админа. Картинки кликабельны (открываются
+// в новой вкладке), остальное — ссылка для скачивания. Скачивание через data URL
+// работает напрямую — файлы маленькие (≤2МБ).
+function renderFeedbackAttachments(rawAttachments) {
+  if (!rawAttachments) return null;
+  let list = rawAttachments;
+  if (typeof list === 'string') {
+    try { list = JSON.parse(list); } catch { return null; }
+  }
+  if (!Array.isArray(list) || !list.length) return null;
+  return el('div', { style: { marginTop: '12px' } },
+    el('h4', { style: { marginBottom: '6px' } }, `Вложения (${list.length})`),
+    el('div', { style: { display: 'flex', flexWrap: 'wrap', gap: '8px' } },
+      ...list.map((a) => {
+        const isImg = (a.type || '').startsWith('image/');
+        if (isImg) {
+          return el('a', { href: a.content, target: '_blank', rel: 'noopener', title: a.filename },
+            el('img', { src: a.content, style: { width: '120px', height: '120px', objectFit: 'cover', borderRadius: '6px', border: '1px solid var(--border)' } }),
+          );
+        }
+        return el('a', {
+          href: a.content,
+          download: a.filename,
+          style: { display: 'inline-flex', alignItems: 'center', gap: '6px', padding: '8px 12px', background: '#f9fafb', border: '1px solid var(--border)', borderRadius: '6px', textDecoration: 'none', color: 'inherit' },
+        },
+          el('span', { style: { fontSize: '20px' } }, '📎'),
+          el('span', {},
+            el('div', { style: { fontSize: '13px' } }, a.filename),
+            a.size ? el('div', { style: { fontSize: '11px', color: 'var(--text-muted)' } }, `${(a.size / 1024).toFixed(0)} КБ`) : null,
+          ),
+        );
+      }),
+    ),
+  );
+}
+
+// Лимиты согласованы с backend (см. src/routes/feedback.js).
+const FEEDBACK_MAX_FILE = 2 * 1024 * 1024;
+const FEEDBACK_MAX_FILES = 5;
+
+function readFileAsDataURL(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(reader.error || new Error('Не удалось прочитать файл'));
+    reader.readAsDataURL(file);
+  });
+}
+
+function humanSize(bytes) {
+  if (!bytes) return '0 Б';
+  if (bytes < 1024) return `${bytes} Б`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} КБ`;
+  return `${(bytes / 1024 / 1024).toFixed(1)} МБ`;
+}
+
 export async function openFeedbackDialog() {
   const catSel = el('select', {},
     ...FEEDBACK_CATEGORIES.map((c) => el('option', { value: c.value }, c.label)),
   );
   const subjectI = el('input', { type: 'text', placeholder: 'Кратко суть' });
   const messageI = el('textarea', { rows: '6', placeholder: 'Опишите подробно: что произошло, что ожидали, шаги воспроизведения' });
+
+  // Список выбранных файлов (data URLs). При сабмите идут в body.attachments.
+  const attachments = [];
+  const filesList = el('div', { style: { display: 'flex', flexDirection: 'column', gap: '6px', marginTop: '6px' } });
+
+  function renderFilesList() {
+    clear(filesList);
+    if (!attachments.length) return;
+    for (const [idx, a] of attachments.entries()) {
+      const isImg = (a.type || '').startsWith('image/');
+      filesList.append(el('div', {
+        style: { display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 10px', background: '#f9fafb', border: '1px solid var(--border)', borderRadius: '6px' },
+      },
+        isImg ? el('img', { src: a.content, style: { width: '40px', height: '40px', objectFit: 'cover', borderRadius: '4px' } }) : el('span', { style: { fontSize: '24px' } }, '📎'),
+        el('div', { style: { flex: 1, minWidth: 0 } },
+          el('div', { style: { fontSize: '13px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, a.filename),
+          el('div', { style: { fontSize: '11px', color: 'var(--text-muted)' } }, humanSize(a.size || 0)),
+        ),
+        el('button', {
+          class: 'btn btn-xs',
+          type: 'button',
+          title: 'Удалить',
+          onClick: () => { attachments.splice(idx, 1); renderFilesList(); },
+        }, '✕'),
+      ));
+    }
+  }
+
+  const fileI = el('input', {
+    type: 'file',
+    multiple: true,
+    accept: 'image/*,application/pdf,.txt,.log,.json,.csv',
+    style: { display: 'none' },
+  });
+  fileI.addEventListener('change', async () => {
+    const picked = Array.from(fileI.files || []);
+    fileI.value = ''; // позволяет выбрать тот же файл повторно после удаления
+    for (const f of picked) {
+      if (attachments.length >= FEEDBACK_MAX_FILES) {
+        toast(`Не больше ${FEEDBACK_MAX_FILES} файлов`, 'error');
+        break;
+      }
+      if (f.size > FEEDBACK_MAX_FILE) {
+        toast(`«${f.name}» слишком большой (макс ${humanSize(FEEDBACK_MAX_FILE)})`, 'error');
+        continue;
+      }
+      try {
+        const content = await readFileAsDataURL(f);
+        attachments.push({ filename: f.name, type: f.type || null, size: f.size || 0, content });
+      } catch (e) {
+        toast(`«${f.name}»: ${e.message}`, 'error');
+      }
+    }
+    renderFilesList();
+  });
+
+  const pickBtn = el('button', {
+    class: 'btn btn-sm',
+    type: 'button',
+    onClick: () => fileI.click(),
+  }, '📎 Прикрепить файл');
+
   const body = el('div', {},
     el('p', { style: { color: 'var(--text-muted)', fontSize: '13px' } },
       'Сообщения видит администратор. Опишите проблему или задайте вопрос — мы постараемся быстро ответить.'),
     el('div', { class: 'form-row' }, el('label', {}, 'Категория'), catSel),
     el('div', { class: 'form-row' }, el('label', {}, 'Тема *'), subjectI),
     el('div', { class: 'form-row' }, el('label', {}, 'Сообщение *'), messageI),
+    el('div', { class: 'form-row' },
+      el('label', {}, 'Файлы'),
+      el('div', {},
+        pickBtn,
+        fileI,
+        el('div', { class: 'hint', style: { fontSize: '11px', color: 'var(--text-muted)', marginTop: '4px' } },
+          `Скриншоты, PDF, текстовые логи. До ${FEEDBACK_MAX_FILES} файлов × ${humanSize(FEEDBACK_MAX_FILE)}.`),
+        filesList,
+      ),
+    ),
   );
   await openModal('📮 Обратная связь', body, {
     primaryLabel: 'Отправить',
@@ -7155,6 +7283,7 @@ export async function openFeedbackDialog() {
           subject,
           message,
           context: `${location.hash || '#/'} · ${navigator.userAgent.slice(0, 200)}`,
+          attachments: attachments.length ? attachments : undefined,
         });
         toast('Спасибо! Сообщение отправлено администратору.', 'success');
       } catch (e) { toast(e.message, 'error'); return false; }
@@ -7206,6 +7335,7 @@ export async function renderFeedback(main) {
       ),
       el('h4', { style: { marginTop: '16px' } }, 'Сообщение'),
       el('pre', { style: { background: '#f9fafb', padding: '10px', borderRadius: '6px', whiteSpace: 'pre-wrap', fontSize: '13px', fontFamily: 'inherit' } }, item.message),
+      renderFeedbackAttachments(item.attachments),
       el('div', { class: 'form-row' }, el('label', {}, 'Статус'), statusSel),
       el('div', { class: 'form-row' }, el('label', {}, 'Заметка / ответ'), replyI),
     );
@@ -7243,17 +7373,25 @@ export async function renderFeedback(main) {
       el('th', {}, 'Когда'),
     );
     const tbody = el('tbody', {},
-      ...rows.map((it) => el('tr', {
-        style: { cursor: 'pointer' },
-        onClick: () => openItem(it),
-      },
-        el('td', {}, '#' + it.id),
-        el('td', {}, statusBadge(it.status)),
-        el('td', {}, categoryLabel(it.category)),
-        el('td', {}, it.subject),
-        el('td', {}, `${it.user_name || '—'} (${it.user_role || '—'})`),
-        el('td', {}, fmtDateTime(it.created_at)),
-      )),
+      ...rows.map((it) => {
+        // attachments может прийти как JSON-строка или уже массив (pg возвращает объект).
+        let atts = it.attachments;
+        if (typeof atts === 'string') {
+          try { atts = JSON.parse(atts); } catch { atts = null; }
+        }
+        const attCount = Array.isArray(atts) ? atts.length : 0;
+        return el('tr', {
+          style: { cursor: 'pointer' },
+          onClick: () => openItem({ ...it, attachments: atts }),
+        },
+          el('td', {}, '#' + it.id),
+          el('td', {}, statusBadge(it.status)),
+          el('td', {}, categoryLabel(it.category)),
+          el('td', {}, it.subject, attCount ? el('span', { style: { marginLeft: '6px', fontSize: '12px', color: 'var(--text-muted)' } }, `📎${attCount}`) : null),
+          el('td', {}, `${it.user_name || '—'} (${it.user_role || '—'})`),
+          el('td', {}, fmtDateTime(it.created_at)),
+        );
+      }),
     );
     tableArea.append(el('div', { class: 'card' },
       el('div', { class: 'table-wrap' }, el('table', { class: 'data' }, el('thead', {}, headRow), tbody)),

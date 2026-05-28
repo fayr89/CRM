@@ -1,3 +1,4 @@
+import express from 'express';
 import { Router } from 'express';
 import { z } from 'zod';
 import { authenticate, requireRole } from '../auth.js';
@@ -8,11 +9,31 @@ import { notifyAdmins } from '../services/notifications.js';
 
 const router = Router();
 
+// На этом роуте принимаем base64-вложения: глобальный лимит 1mb недостаточен.
+// Подменяем JSON-парсер локально на 10mb (5 файлов × 2mb после base64 ≈ 13.5mb,
+// округляем до 10mb — это hard cap на запрос с фронта).
+router.use(express.json({ limit: '10mb' }));
+
+// Лимит на размер одного вложения и общее число. 2 МБ — типичный скриншот
+// помещается с запасом; ограничение тут согласовано с body-limit на роуте (10mb).
+const MAX_ATTACHMENT_SIZE = 2 * 1024 * 1024;
+const MAX_ATTACHMENTS = 5;
+
+const attachmentSchema = z.object({
+  filename: z.string().min(1).max(200),
+  type: z.string().max(100).optional().nullable(),
+  size: z.number().int().nonnegative().max(MAX_ATTACHMENT_SIZE).optional().nullable(),
+  // data URL вида "data:image/png;base64,..." или произвольный mime — на бэке
+  // не парсим, только проверяем длину (base64 ≈ 4/3 от сырого размера).
+  content: z.string().min(1).max(Math.ceil(MAX_ATTACHMENT_SIZE * 1.4) + 100),
+});
+
 const createSchema = z.object({
   category: z.enum(['bug', 'question', 'suggestion', 'other']).optional().default('other'),
   subject: z.string().min(1, 'Заполните тему').max(200),
   message: z.string().min(1, 'Заполните сообщение').max(5000),
   context: z.string().optional().nullable(),
+  attachments: z.array(attachmentSchema).max(MAX_ATTACHMENTS).optional().nullable(),
 });
 
 const updateSchema = z.object({
@@ -27,14 +48,18 @@ router.post(
   '/',
   asyncHandler(async (req, res) => {
     const data = createSchema.parse(req.body || {});
+    const attachmentsJson = data.attachments && data.attachments.length
+      ? JSON.stringify(data.attachments)
+      : null;
     const r = await db.run(
-      `INSERT INTO feedback (user_id, category, subject, message, context, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, NOW(), NOW()) RETURNING id`,
+      `INSERT INTO feedback (user_id, category, subject, message, context, attachments, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?::jsonb, NOW(), NOW()) RETURNING id`,
       req.user.id,
       data.category,
       data.subject,
       data.message,
       data.context ?? null,
+      attachmentsJson,
     );
     const row = await db.get(
       `SELECT f.*, u.name AS user_name, u.email AS user_email, u.role AS user_role

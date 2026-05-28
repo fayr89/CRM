@@ -248,6 +248,7 @@ CREATE TABLE IF NOT EXISTS feedback (
   resolved_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
   resolved_at TIMESTAMPTZ,
   admin_reply TEXT,
+  attachments JSONB,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -577,12 +578,16 @@ export async function ensureInitialized() {
           resolved_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
           resolved_at TIMESTAMPTZ,
           admin_reply TEXT,
+          attachments JSONB,
           created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
           updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
         )
       `);
       await pool.query('CREATE INDEX IF NOT EXISTS idx_feedback_status ON feedback(status)');
       await pool.query('CREATE INDEX IF NOT EXISTS idx_feedback_user ON feedback(user_id)');
+      // Вложения к обращению: массив объектов { filename, content (data URL), type, size }.
+      // Хранится в БД — для бага «как воспроизвести» удобно скриншот посмотреть.
+      await pool.query('ALTER TABLE feedback ADD COLUMN IF NOT EXISTS attachments JSONB DEFAULT NULL');
       // Прайс с привязкой к складу: товар × канал × склад. Старое UNIQUE(product,market) снимаем.
       await pool.query("ALTER TABLE product_prices ADD COLUMN IF NOT EXISTS warehouse TEXT NOT NULL DEFAULT ''");
       await pool.query('ALTER TABLE product_prices DROP CONSTRAINT IF EXISTS product_prices_product_id_marketplace_key');
