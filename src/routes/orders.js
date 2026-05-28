@@ -158,7 +158,10 @@ router.get(
               (SELECT COUNT(*)::int FROM order_items WHERE order_id = o.id) AS items_count,
               (SELECT image_url FROM order_items
                  WHERE order_id = o.id AND image_url IS NOT NULL
-                 ORDER BY id LIMIT 1) AS preview_image
+                 ORDER BY id LIMIT 1) AS preview_image,
+              (SELECT string_agg(name, ', ') FROM (
+                 SELECT name FROM order_items WHERE order_id = o.id ORDER BY id LIMIT 5
+               ) t) AS items_preview
        FROM orders o
        LEFT JOIN users u ON u.id = o.manager_id
        LEFT JOIN users w ON w.id = o.warehouse_user_id
@@ -733,8 +736,8 @@ router.post(
     if (['completed', 'cancelled'].includes(order.status)) {
       throw BadRequest('Заказ уже закрыт');
     }
-    if (!isAdminOrWarehouse && !['new', 'reserved', 'waiting_stock'].includes(order.status)) {
-      throw BadRequest('Менеджер может отменить только новый, зарезервированный или ожидающий товара заказ');
+    if (!isAdminOrWarehouse && !['new', 'reserved', 'waiting_stock', 'shipped'].includes(order.status)) {
+      throw BadRequest('Этот заказ уже нельзя отменить');
     }
     // Если товар был зарезервирован/отгружён — заказ попадает в «Возвраты» на обработку складом.
     // Для waiting_stock и new возврата нет — товар не списывался.
@@ -781,18 +784,46 @@ router.post(
   }),
 );
 
-// Перевести заказ в «Ожидает товара» (товара ещё нет на складе). Только из 'new'.
+// Перевести заказ в «Ожидает товара». Из 'new' — любой владелец/админ;
+// из 'reserved' — может склад/админ (товар не нашли при сборке, ждём поставку).
 router.post(
   '/:id/mark-waiting',
   asyncHandler(async (req, res) => {
     const order = await db.get('SELECT * FROM orders WHERE id = ?', req.params.id);
     if (!order) throw NotFound('Заказ не найден');
-    if (!(await canAccessOrder(req.user, order))) throw Forbidden();
-    if (order.status !== 'new') {
-      throw BadRequest('Перевести в «Ожидает товара» можно только новый заказ');
+    const isWarehouseOrAdmin = ['admin', 'warehouse'].includes(req.user.role);
+    if (!isWarehouseOrAdmin && !(await canAccessOrder(req.user, order))) throw Forbidden();
+    if (order.status === 'new') {
+      // ok — любой владелец
+    } else if (order.status === 'reserved') {
+      if (!isWarehouseOrAdmin) throw Forbidden('Снимать резерв и переводить в «Ожидает товара» может только склад или админ');
+    } else {
+      throw BadRequest('Перевести в «Ожидает товара» можно из «Новый» или «Зарезервирован»');
     }
     await db.run(
       `UPDATE orders SET status = 'waiting_stock', updated_at = NOW() WHERE id = ?`,
+      order.id,
+    );
+    const updated = await db.get('SELECT * FROM orders WHERE id = ?', order.id);
+    emitEvent('order.updated', updated);
+    res.json(updated);
+  }),
+);
+
+// Откат ошибочной отгрузки: shipped → reserved. Только склад/админ.
+router.post(
+  '/:id/unship',
+  asyncHandler(async (req, res) => {
+    if (!['warehouse', 'admin'].includes(req.user.role)) {
+      throw Forbidden('Откатить отгрузку может только склад или админ');
+    }
+    const order = await db.get('SELECT * FROM orders WHERE id = ?', req.params.id);
+    if (!order) throw NotFound('Заказ не найден');
+    if (order.status !== 'shipped') {
+      throw BadRequest('Откатить можно только отгруженный заказ');
+    }
+    await db.run(
+      `UPDATE orders SET status = 'reserved', shipped_at = NULL, updated_at = NOW() WHERE id = ?`,
       order.id,
     );
     const updated = await db.get('SELECT * FROM orders WHERE id = ?', order.id);
@@ -823,6 +854,49 @@ router.post(
 
 // Разделить заказ: отделить часть позиций в новый заказ.
 // Разрешено в статусах 'new' и 'reserved'. Нельзя отделить все позиции.
+async function performSplit({ original, itemIds, newStatus }) {
+  const allItems = await db.all('SELECT * FROM order_items WHERE order_id = ? ORDER BY id', original.id);
+  if (!allItems.length) throw BadRequest('У заказа нет позиций');
+  const idSet = new Set(itemIds);
+  const moving = allItems.filter((i) => idSet.has(i.id));
+  if (moving.length !== itemIds.length) throw BadRequest('Какая-то из выбранных позиций не принадлежит этому заказу');
+  if (moving.length === allItems.length) throw BadRequest('Нельзя отделить все позиции — оставьте хотя бы одну в исходном заказе');
+  const remaining = allItems.filter((i) => !idSet.has(i.id));
+  const movingTotal = moving.reduce((s, i) => s + (i.line_total || 0), 0);
+  const remainingTotal = remaining.reduce((s, i) => s + (i.line_total || 0), 0);
+
+  return await db.withTransaction(async (tx) => {
+    const r = await tx.run(
+      `INSERT INTO orders
+       (reference_number, marketplace, client_classification, client_name, client_phone,
+        total_amount, currency, manager_id, notes, status, warehouse, payment_method,
+        delivery_method, avito_dialog_url, parent_order_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
+      original.reference_number ? `${original.reference_number}-split` : null,
+      original.marketplace ?? null,
+      original.client_classification ?? null,
+      original.client_name ?? null,
+      original.client_phone ?? null,
+      movingTotal,
+      original.currency ?? 'RUB',
+      original.manager_id,
+      `Создан разделением из заказа #${original.id}`,
+      newStatus,
+      original.warehouse ?? null,
+      original.payment_method ?? null,
+      original.delivery_method ?? null,
+      original.avito_dialog_url ?? null,
+      original.id,
+    );
+    const splitId = r.lastInsertRowid;
+    await tx.run(`UPDATE order_items SET order_id = ? WHERE order_id = ? AND id = ANY(?)`, splitId, original.id, itemIds);
+    const noteAppend = `Разделён → создан заказ #${splitId}`;
+    const newNotes = original.notes ? `${original.notes}\n${noteAppend}` : noteAppend;
+    await tx.run('UPDATE orders SET total_amount = ?, notes = ?, updated_at = NOW() WHERE id = ?', remainingTotal, newNotes, original.id);
+    return splitId;
+  });
+}
+
 const splitSchema = z.object({
   item_ids: z.array(z.number().int().positive()).min(1),
   new_status: z.enum(['new', 'waiting_stock']).optional().default('new'),
@@ -837,70 +911,61 @@ router.post(
     if (!['new', 'reserved'].includes(order.status)) {
       throw BadRequest('Разделять можно только новый или зарезервированный заказ');
     }
-    // Все позиции этого заказа.
-    const allItems = await db.all(
-      'SELECT * FROM order_items WHERE order_id = ? ORDER BY id',
-      order.id,
-    );
-    if (!allItems.length) throw BadRequest('У заказа нет позиций');
-    const idSet = new Set(item_ids);
-    const moving = allItems.filter((i) => idSet.has(i.id));
-    if (moving.length !== item_ids.length) {
-      throw BadRequest('Какая-то из выбранных позиций не принадлежит этому заказу');
-    }
-    if (moving.length === allItems.length) {
-      throw BadRequest('Нельзя отделить все позиции — оставьте хотя бы одну в исходном заказе');
-    }
-    const remaining = allItems.filter((i) => !idSet.has(i.id));
-    const movingTotal = moving.reduce((s, i) => s + (i.line_total || 0), 0);
-    const remainingTotal = remaining.reduce((s, i) => s + (i.line_total || 0), 0);
-
-    const newId = await db.withTransaction(async (tx) => {
-      // Создаём новый заказ с метаданными исходного.
-      const r = await tx.run(
-        `INSERT INTO orders
-         (reference_number, marketplace, client_classification, client_name, client_phone,
-          total_amount, currency, manager_id, notes, status, warehouse, payment_method,
-          delivery_method, avito_dialog_url, parent_order_id)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
-        order.reference_number ? `${order.reference_number}-split` : null,
-        order.marketplace ?? null,
-        order.client_classification ?? null,
-        order.client_name ?? null,
-        order.client_phone ?? null,
-        movingTotal,
-        order.currency ?? 'RUB',
-        order.manager_id,
-        `Создан разделением из заказа #${order.id}`,
-        new_status,
-        order.warehouse ?? null,
-        order.payment_method ?? null,
-        order.delivery_method ?? null,
-        order.avito_dialog_url ?? null,
-        order.id,
-      );
-      const splitId = r.lastInsertRowid;
-      // Переносим выбранные позиции на новый заказ.
-      await tx.run(
-        `UPDATE order_items SET order_id = ? WHERE order_id = ? AND id = ANY(?)`,
-        splitId,
-        order.id,
-        item_ids,
-      );
-      // Пересчитываем сумму исходного заказа.
-      await tx.run(
-        'UPDATE orders SET total_amount = ?, updated_at = NOW() WHERE id = ?',
-        remainingTotal,
-        order.id,
-      );
-      return splitId;
-    });
+    const newId = await performSplit({ original: order, itemIds: item_ids, newStatus: new_status });
 
     const newOrder = await db.get('SELECT * FROM orders WHERE id = ?', newId);
     const newItems = await db.all('SELECT * FROM order_items WHERE order_id = ? ORDER BY id', newId);
     const updatedOriginal = await db.get('SELECT * FROM orders WHERE id = ?', order.id);
     emitEvent('order.updated', updatedOriginal);
     emitEvent('order.created', { ...newOrder, items: newItems });
+    res.status(201).json({ new_order: { ...newOrder, items: newItems }, original: updatedOriginal });
+  }),
+);
+
+// Действие над отдельной позицией: «Ждём товара» (отделить в waiting_stock) или
+// «Отменить» (отделить + сразу отменить). Доступно складу/админу и владельцу.
+const extractSchema = z.object({
+  action: z.enum(['waiting', 'cancel']),
+  reason: z.string().optional().nullable(),
+});
+router.post(
+  '/:id/items/:itemId/extract',
+  asyncHandler(async (req, res) => {
+    const { action, reason } = extractSchema.parse(req.body || {});
+    const itemId = Number(req.params.itemId);
+    const order = await db.get('SELECT * FROM orders WHERE id = ?', req.params.id);
+    if (!order) throw NotFound('Заказ не найден');
+    const isWarehouseOrAdmin = ['admin', 'warehouse'].includes(req.user.role);
+    if (!isWarehouseOrAdmin && !(await canAccessOrder(req.user, order))) throw Forbidden();
+    if (!['new', 'reserved'].includes(order.status)) {
+      throw BadRequest('Действие доступно только для новых и зарезервированных заказов');
+    }
+    const item = await db.get('SELECT * FROM order_items WHERE id = ? AND order_id = ?', itemId, order.id);
+    if (!item) throw NotFound('Позиция не найдена в заказе');
+    if (action === 'cancel' && !reason) throw BadRequest('Укажите причину отмены');
+
+    // waiting → новый заказ сразу в waiting_stock; cancel → новый заказ повторяет статус,
+    // потом отменяется (если был reserved — пойдёт в Возвраты на физическую обработку).
+    const newStatus = action === 'waiting' ? 'waiting_stock' : order.status;
+    const splitId = await performSplit({ original: order, itemIds: [itemId], newStatus });
+
+    if (action === 'cancel') {
+      const needsReturn = ['reserved', 'shipped'].includes(order.status);
+      await db.run(
+        `UPDATE orders SET status='cancelled', cancel_reason=?, return_status=?,
+         cancelled_from_status=?, cancelled_at=NOW(), updated_at=NOW() WHERE id=?`,
+        reason,
+        needsReturn ? 'pending' : null,
+        newStatus,
+        splitId,
+      );
+    }
+
+    const newOrder = await db.get('SELECT * FROM orders WHERE id = ?', splitId);
+    const newItems = await db.all('SELECT * FROM order_items WHERE order_id = ? ORDER BY id', splitId);
+    const updatedOriginal = await db.get('SELECT * FROM orders WHERE id = ?', order.id);
+    emitEvent('order.updated', updatedOriginal);
+    emitEvent(action === 'cancel' ? 'order.cancelled' : 'order.created', { ...newOrder, items: newItems });
     res.status(201).json({ new_order: { ...newOrder, items: newItems }, original: updatedOriginal });
   }),
 );

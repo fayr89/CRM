@@ -1801,6 +1801,38 @@ async function openCancelDialog(orderId, onDone) {
   });
 }
 
+// Отмена одной позиции (split + cancel новой части) — нужна причина.
+async function openItemCancelDialog(order, item, onDone) {
+  let reasons = [];
+  try {
+    const r = await api.cancelReasonsList();
+    reasons = r.cancel_reasons || [];
+  } catch { /* ignore */ }
+  const sel = el('select', {},
+    el('option', { value: '' }, '— выберите причину —'),
+    ...reasons.map((r) => el('option', { value: r }, r)),
+  );
+  const customI = el('input', { type: 'text', placeholder: 'Или впишите свою причину' });
+  const body = el('div', {},
+    el('p', {}, `Позиция: ${item.name} (${item.quantity} × ${fmtMoney(item.unit_price, order.currency)}).`),
+    el('p', {}, 'Эта позиция будет отделена в новый заказ и сразу отменена.'),
+    el('div', { class: 'form-row' }, el('label', {}, 'Причина отмены *'), sel),
+    el('div', { class: 'form-row' }, el('label', {}, 'Своя причина'), customI),
+  );
+  await openModal('Отменить позицию', body, {
+    primaryLabel: 'Отменить позицию',
+    onSubmit: async () => {
+      const reason = customI.value.trim() || sel.value;
+      if (!reason) { toast('Укажите причину отмены', 'error'); return false; }
+      try {
+        const r = await api.extractItem(order.id, item.id, { action: 'cancel', reason });
+        toast(`Позиция отменена (новый заказ #${r.new_order?.id})`, 'success');
+        await onDone?.();
+      } catch (e) { toast(e.message, 'error'); return false; }
+    },
+  });
+}
+
 // Разделение заказа: отделить часть позиций в новый заказ (товар не нашли на складе и т.п.).
 async function openSplitDialog(order, onDone) {
   const items = order.items || [];
@@ -1974,6 +2006,9 @@ export async function renderOrders(main) {
                 ? el('div', { class: 'meta' }, '№ ' + r.reference_number)
                 : null,
               el('div', { class: 'meta' }, '👤 ' + (r.manager_name || '—')),
+              r.items_preview
+                ? el('div', { class: 'order-card-items', title: r.items_preview }, '📦 ' + r.items_preview)
+                : null,
               r.price_deviation != null && Math.abs(r.price_deviation) >= 1
                 ? el(
                     'div',
@@ -1996,12 +2031,14 @@ export async function renderOrders(main) {
       return null; // диалог сам отменит заказ и перезагрузит
     }
     if (src === 'new' && dst === 'waiting_stock') return api.markOrderWaiting(id);
+    if (src === 'reserved' && dst === 'waiting_stock') return api.markOrderWaiting(id);
     if (src === 'waiting_stock' && dst === 'new') return api.markOrderReady(id);
     if (src === 'new' && dst === 'reserved') return api.reserveOrder(id);
     if (src === 'reserved' && dst === 'shipped') return api.shipOrder(id);
+    if (src === 'shipped' && dst === 'reserved') return api.unshipOrder(id);
     if (src === 'shipped' && dst === 'completed') return api.completeOrder(id);
     throw new Error(
-      `Нельзя перевести из «${tr('order_status', src)}» в «${tr('order_status', dst)}». Допустимые шаги: ожидает товара ↔ новый → зарезервирован → отгружен → завершён.`,
+      `Нельзя перевести из «${tr('order_status', src)}» в «${tr('order_status', dst)}».`,
     );
   }
 
@@ -2294,6 +2331,17 @@ async function showOrderDetails(order, reload) {
   const canMarkReady =
     order.status === 'waiting_stock' &&
     (['admin', 'warehouse'].includes(me.role) || me.id === order.manager_id);
+  // «Ждём товара» из 'reserved' — только склад/админ (товар не нашли при сборке).
+  const canMarkWaitingFromReserved =
+    order.status === 'reserved' && ['admin', 'warehouse'].includes(me.role);
+  // Откат ошибочной отгрузки.
+  const canUnship =
+    order.status === 'shipped' && ['admin', 'warehouse'].includes(me.role);
+  // Per-item действия: «Ждём товар» / «Отменить» — для new/reserved при ≥ 2 позиций.
+  const canExtractItems =
+    ['new', 'reserved'].includes(order.status) &&
+    (order.items || []).length > 1 &&
+    (['admin', 'warehouse'].includes(me.role) || me.id === order.manager_id);
 
   const itemsTable = el(
     'table',
@@ -2310,6 +2358,7 @@ async function showOrderDetails(order, reload) {
         el('th', {}, 'Кол-во'),
         el('th', {}, 'Цена'),
         el('th', {}, 'Сумма'),
+        canExtractItems ? el('th', { style: { width: '180px' } }, 'Действия') : null,
       ),
     ),
     el(
@@ -2345,6 +2394,28 @@ async function showOrderDetails(order, reload) {
           el('td', {}, it.quantity),
           priceCell,
           el('td', {}, fmtMoney(it.line_total, order.currency)),
+          canExtractItems
+            ? el('td', { class: 'item-actions' },
+                el('button', {
+                  class: 'btn btn-xs',
+                  title: 'Эту позицию — в новый заказ «Ожидает товара»',
+                  onClick: async () => {
+                    if (!confirm(`Перевести «${it.name}» в новый заказ «Ожидает товара»?`)) return;
+                    try {
+                      const r = await api.extractItem(order.id, it.id, { action: 'waiting' });
+                      toast(`Создан заказ #${r.new_order?.id} (Ожидает товара)`, 'success');
+                      reload?.();
+                    } catch (e) { toast(e.message, 'error'); }
+                  },
+                }, '⏳'),
+                ' ',
+                el('button', {
+                  class: 'btn btn-xs btn-danger',
+                  title: 'Отделить позицию и отменить (с причиной)',
+                  onClick: () => openItemCancelDialog(order, it, () => { reload?.(); }),
+                }, '🚫'),
+              )
+            : null,
         );
       }),
     ),
@@ -2353,7 +2424,7 @@ async function showOrderDetails(order, reload) {
   const body = el(
     'div',
     {},
-    (canCancel || canSplit || canMarkReady)
+    (canCancel || canSplit || canMarkReady || canMarkWaitingFromReserved || canUnship)
       ? el('div', { style: { marginBottom: '12px', display: 'flex', gap: '8px', flexWrap: 'wrap' } },
           canMarkReady
             ? el('button', {
@@ -2366,6 +2437,32 @@ async function showOrderDetails(order, reload) {
                   } catch (e) { toast(e.message, 'error'); }
                 },
               }, '✅ Товар поступил')
+            : null,
+          canMarkWaitingFromReserved
+            ? el('button', {
+                class: 'btn btn-sm',
+                onClick: async () => {
+                  if (!confirm('Перевести весь заказ в «Ожидает товара»? Резерв будет снят.')) return;
+                  try {
+                    await api.markOrderWaiting(order.id);
+                    toast('Заказ переведён в «Ожидает товара»', 'success');
+                    reload?.();
+                  } catch (e) { toast(e.message, 'error'); }
+                },
+              }, '⏳ Ждём товара')
+            : null,
+          canUnship
+            ? el('button', {
+                class: 'btn btn-sm',
+                onClick: async () => {
+                  if (!confirm('Вернуть заказ в «К отгрузке» (отменить отгрузку)?')) return;
+                  try {
+                    await api.unshipOrder(order.id);
+                    toast('Заказ возвращён в «К отгрузке»', 'success');
+                    reload?.();
+                  } catch (e) { toast(e.message, 'error'); }
+                },
+              }, '↩️ Вернуть в к отгрузке')
             : null,
           canSplit
             ? el('button', {
