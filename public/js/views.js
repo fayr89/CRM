@@ -2097,7 +2097,7 @@ export async function renderOrders(main) {
               r.reference_number
                 ? el('div', { class: 'meta' }, '№ ' + r.reference_number)
                 : null,
-              el('div', { class: 'meta' }, '👤 ' + (r.manager_name || '—')),
+              el('div', { class: 'meta' }, '👤 ' + (r.manager_name || '—') + ' · 📅 ' + fmtDate(r.created_at)),
               r.items_preview
                 ? el('div', { class: 'order-card-items', title: r.items_preview }, '📦 ' + r.items_preview)
                 : null,
@@ -2131,6 +2131,7 @@ export async function renderOrders(main) {
     if (src === 'reserved' && dst === 'waiting_stock') return api.markOrderWaiting(id);
     if (src === 'waiting_stock' && dst === 'new') return api.markOrderReady(id);
     if (src === 'new' && dst === 'reserved') return api.reserveOrder(id);
+    if (src === 'reserved' && dst === 'new') return api.unreserveOrder(id);
     if (src === 'reserved' && dst === 'shipped') return api.shipOrder(id);
     if (src === 'shipped' && dst === 'reserved') return api.unshipOrder(id);
     if (src === 'shipped' && dst === 'completed') return api.completeOrder(id);
@@ -2433,6 +2434,10 @@ async function showOrderDetails(order, reload) {
   // «Ждём товара» из 'reserved' — только склад/админ (товар не нашли при сборке).
   const canMarkWaitingFromReserved =
     order.status === 'reserved' && ['admin', 'warehouse'].includes(me.role);
+  // Снять резерв (reserved → new) — владелец/склад/админ.
+  const canUnreserve =
+    order.status === 'reserved' &&
+    (['admin', 'warehouse'].includes(me.role) || me.id === order.manager_id);
   // Откат ошибочной отгрузки.
   const canUnship =
     order.status === 'shipped' && ['admin', 'warehouse'].includes(me.role);
@@ -2516,7 +2521,7 @@ async function showOrderDetails(order, reload) {
   const body = el(
     'div',
     {},
-    (canCancel || canSplit || canMarkReady || canMarkWaitingFromReserved || canUnship)
+    (canCancel || canSplit || canMarkReady || canMarkWaitingFromReserved || canUnreserve || canUnship)
       ? el('div', { style: { marginBottom: '12px', display: 'flex', gap: '8px', flexWrap: 'wrap' } },
           canMarkReady
             ? el('button', {
@@ -2542,6 +2547,19 @@ async function showOrderDetails(order, reload) {
                   } catch (e) { toast(e.message, 'error'); }
                 },
               }, '⏳ Ждём товара')
+            : null,
+          canUnreserve
+            ? el('button', {
+                class: 'btn btn-sm',
+                onClick: async () => {
+                  if (!confirm('Снять резерв с заказа? Резерв в МС будет снят, pending-приход в кассе удалён.')) return;
+                  try {
+                    await api.unreserveOrder(order.id);
+                    toast('Резерв снят, заказ снова «Новый»', 'success');
+                    reload?.();
+                  } catch (e) { toast(e.message, 'error'); }
+                },
+              }, '↩️ Снять резерв')
             : null,
           canUnship
             ? el('button', {

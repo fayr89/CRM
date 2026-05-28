@@ -85,6 +85,7 @@ export const api = {
   extractItem: (id, itemId, body) => request('POST', `/api/orders/${id}/items/${itemId}/extract`, { body }),
   unshipOrder: (id) => request('POST', `/api/orders/${id}/unship`),
   reserveOrder: (id) => request('POST', `/api/orders/${id}/reserve`),
+  unreserveOrder: (id) => request('POST', `/api/orders/${id}/unreserve`),
   shipOrder: (id) => request('POST', `/api/orders/${id}/ship`),
   shipBulk: (ids) => request('POST', '/api/orders/ship-bulk', { body: { ids } }),
   returnsList: (status) => request('GET', '/api/orders/returns/list', { query: { status } }),

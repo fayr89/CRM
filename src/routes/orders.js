@@ -796,6 +796,39 @@ router.post(
   }),
 );
 
+// Снять резерв: reserved → new. Удаляет pending-приход из кассы (это была заготовка
+// под подтверждение), снимает резерв в МС. Подтверждённую транзакцию оставляет —
+// её менеджер должен обработать сам (отклонить или вручную решить).
+router.post(
+  '/:id/unreserve',
+  asyncHandler(async (req, res) => {
+    const order = await db.get('SELECT * FROM orders WHERE id = ?', req.params.id);
+    if (!order) throw NotFound('Заказ не найден');
+    const isAdminOrWarehouse = ['admin', 'warehouse'].includes(req.user.role);
+    if (!isAdminOrWarehouse && !(await canAccessOrder(req.user, order))) throw Forbidden();
+    if (order.status !== 'reserved') {
+      throw BadRequest('Снять резерв можно только с зарезервированного заказа');
+    }
+    await db.withTransaction(async (tx) => {
+      await tx.run(
+        `UPDATE orders SET status = 'new', warehouse_user_id = NULL,
+         reserved_at = NULL, updated_at = NOW() WHERE id = ?`,
+        order.id,
+      );
+      // Удаляем pending-приход (создан при резерве, не подтверждён — реальных денег нет).
+      await tx.run(
+        `DELETE FROM payments WHERE order_id = ? AND kind = 'income' AND status = 'pending'`,
+        order.id,
+      );
+    });
+    // МС: снимаем резерв в customerorder (reserve = 0 на позициях).
+    await enqueueMsJob(order.id, 'customer_order.upsert', { reserve_mode: 'none' });
+    const updated = await db.get('SELECT * FROM orders WHERE id = ?', order.id);
+    emitEvent('order.updated', updated);
+    res.json(updated);
+  }),
+);
+
 // Перевести заказ в «Ожидает товара». Из 'new' — любой владелец/админ;
 // из 'reserved' — может склад/админ (товар не нашли при сборке, ждём поставку).
 router.post(
