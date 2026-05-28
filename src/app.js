@@ -26,6 +26,7 @@ import pricingRoutes from './routes/pricing.js';
 import warehouseRoutes from './routes/warehouseSettings.js';
 import analyticsRoutes from './routes/analytics.js';
 import adminRoutes from './routes/admin.js';
+import feedbackRoutes from './routes/feedback.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = path.resolve(__dirname, '..', 'public');
@@ -123,6 +124,7 @@ export function createApp({ serveStatic = true } = {}) {
   app.use('/api/warehouse', warehouseRoutes);
   app.use('/api/analytics', analyticsRoutes);
   app.use('/api/admin', adminRoutes);
+  app.use('/api/feedback', feedbackRoutes);
 
   app.use((req, res) => {
     res.status(404).json({ error: `Route not found: ${req.method} ${req.path}` });

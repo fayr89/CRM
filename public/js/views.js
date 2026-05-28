@@ -44,6 +44,48 @@ const INSTRUCTIONS = {
       'Внимание: для Avito-доставки без QR-кода зарезервировать заказ нельзя.',
     ],
   },
+  kanban: {
+    title: 'Памятка по статусам и канбану',
+    steps: [
+      'СТАТУСЫ (слева направо в канбане):',
+      '⏳ «Ожидает товара» — заказ принят, но товара нет на складе. Резерв не создан, в кассу ничего не попало. Закрывается, когда товар придёт или клиент откажется.',
+      '🆕 «Новый» — товар на складе, заказ готов к резерву. Менеджер может править состав/цены.',
+      '🔒 «Зарезервирован» — товар забронирован за заказом, склад готовит к отгрузке. В кассе появился приход на сумму заказа (на подтверждении).',
+      '🚚 «Отгружен» — товар отправлен клиенту.',
+      '✅ «Завершён» — заказ закрыт.',
+      '❌ «Отменён» — закрыт без отгрузки или с отменой после неё.',
+
+      'ДВИЖЕНИЕ ПО КАНБАНУ (drag-and-drop) — допустимые переходы:',
+      '«Новый» → «Зарезервирован»: менеджер. Обязателен «Номер отправления». Создаётся приход в кассе.',
+      '«Новый» ↔ «Ожидает товара»: менеджер. Просто смена статуса, без касса/возвратов.',
+      '«Ожидает товара» → «Новый» (кнопка «✅ Товар поступил»): любая роль с доступом.',
+      '«Зарезервирован» → «Ожидает товара» (кнопка «⏳ Ждём товара»): только склад/админ. Используется когда товар не нашли при сборке.',
+      '«Зарезервирован» → «Отгружен»: только склад/админ.',
+      '«Отгружен» → «Зарезервирован» (кнопка «↩️ Вернуть в к отгрузке»): только склад/админ. Откат ошибочной отгрузки.',
+      '«Отгружен» → «Завершён»: автоматически или вручную.',
+      'В «Отменён» можно перейти из любого активного статуса (с указанием причины).',
+
+      'ПРАВИЛА ОТМЕНЫ:',
+      'Из «Новый» или «Ожидает товара» — без возврата (товар не списывался). Если в кассе был приход — создаётся компенсирующий расход.',
+      'Из «Зарезервирован» или «Отгружен» — заказ уходит в «Возвраты» к складу. Склад обрабатывает физический возврат (вернуть в сток / списать как потерянный).',
+      'Менеджер может отменить заказ в любом активном статусе, включая отгруженный (клиент отказался после отгрузки). Склад и админ — также.',
+      'На отменённом заказе сохраняется «из какого статуса отменили» — для статистики причин «отказ до поступления» / «не оплатил» / «отказался после отгрузки».',
+
+      'ЧАСТИЧНЫЕ ДЕЙСТВИЯ (≥ 2 шт товара суммарно в заказе):',
+      'В деталях заказа у каждой позиции есть кнопки ⏳ и 🚫.',
+      '⏳ «Ждём товара по позиции» — отделяет позицию или её часть (с указанием количества) в НОВЫЙ заказ «Ожидает товара». Исходный продолжает идти на отгрузку.',
+      '🚫 «Отменить позицию» — отделяет позицию (можно часть) и сразу отменяет её с причиной. Если исходный был «Зарезервирован», новая часть уходит в «Возвраты».',
+      'Кнопка «✂️ Разделить заказ» в деталях — открывает диалог, где можно отметить сразу несколько позиций с указанием количеств. Новый заказ — «Новый» или «Ожидает товара» на выбор.',
+      'Сами «разделённые» заказы видно на канбане по бейджу «🔀 из #N» (новый кусок) или «🔀 разделён» (исходный).',
+
+      'ТИПОВЫЕ СЦЕНАРИИ:',
+      'Клиент не оплатил — менеджер отменяет с причиной «Не оплачен». Если «Новый» — без возврата; если «Зарезервирован» — склад вернёт товар в сток через «Возвраты».',
+      'Клиент отказался после отгрузки — менеджер переводит в «Отменён» с причиной, заказ попадает в «Возвраты» (физически клиент должен вернуть товар).',
+      'Часть товара отсутствует на складе — склад в деталях заказа жмёт ⏳ на нужной позиции → новый заказ «Ожидает товара», исходный идёт на отгрузку с оставшимися позициями.',
+      'Ошибочно отгрузили — склад/админ открывает заказ и жмёт «↩️ Вернуть в к отгрузке».',
+      'Клиент заказал 2 шт, а на складе только 1 — открыть заказ, на позиции ⏳ → указать «1 шт» → 1 шт уйдёт в «Ожидает товара», 1 шт останется в исходном заказе и отгрузится.',
+    ],
+  },
   shipping: {
     title: 'Как отгружать заказы (роль «Склад»)',
     steps: [
@@ -1959,10 +2001,13 @@ export async function renderOrders(main) {
     tableArea.append(
       el(
         'div',
-        { class: 'help-banner' },
-        isWarehouse
-          ? '💡 Перетаскивайте заказы: «Новый» → «Зарезервирован» → «Отгружен». Клик откроет детали.'
-          : '💡 Перетащите отгруженный заказ в «Завершён», чтобы закрыть. Менеджер может отменить новый заказ.',
+        { class: 'help-banner', style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px' } },
+        el('span', {},
+          isWarehouse
+            ? '💡 Перетаскивайте заказы: «Новый» → «Зарезервирован» → «Отгружен». Клик откроет детали.'
+            : '💡 Перетащите отгруженный заказ в «Завершён», чтобы закрыть. Менеджер может отменить новый заказ.',
+        ),
+        helpButton('kanban'),
       ),
     );
 
@@ -6606,3 +6651,158 @@ function renderContent(container, schedule, readyList, canEdit, reload) {
     );
   }
 }
+
+// ============ Обратная связь ============
+
+const FEEDBACK_CATEGORIES = [
+  { value: 'bug', label: '🐛 Баг' },
+  { value: 'question', label: '❓ Вопрос' },
+  { value: 'suggestion', label: '💡 Предложение' },
+  { value: 'other', label: '📝 Другое' },
+];
+
+export async function openFeedbackDialog() {
+  const catSel = el('select', {},
+    ...FEEDBACK_CATEGORIES.map((c) => el('option', { value: c.value }, c.label)),
+  );
+  const subjectI = el('input', { type: 'text', placeholder: 'Кратко суть' });
+  const messageI = el('textarea', { rows: '6', placeholder: 'Опишите подробно: что произошло, что ожидали, шаги воспроизведения' });
+  const body = el('div', {},
+    el('p', { style: { color: 'var(--text-muted)', fontSize: '13px' } },
+      'Сообщения видит администратор. Опишите проблему или задайте вопрос — мы постараемся быстро ответить.'),
+    el('div', { class: 'form-row' }, el('label', {}, 'Категория'), catSel),
+    el('div', { class: 'form-row' }, el('label', {}, 'Тема *'), subjectI),
+    el('div', { class: 'form-row' }, el('label', {}, 'Сообщение *'), messageI),
+  );
+  await openModal('📮 Обратная связь', body, {
+    primaryLabel: 'Отправить',
+    onSubmit: async () => {
+      const subject = subjectI.value.trim();
+      const message = messageI.value.trim();
+      if (!subject) { toast('Заполните тему', 'error'); return false; }
+      if (!message) { toast('Заполните сообщение', 'error'); return false; }
+      try {
+        await api.submitFeedback({
+          category: catSel.value,
+          subject,
+          message,
+          context: `${location.hash || '#/'} · ${navigator.userAgent.slice(0, 200)}`,
+        });
+        toast('Спасибо! Сообщение отправлено администратору.', 'success');
+      } catch (e) { toast(e.message, 'error'); return false; }
+    },
+  });
+}
+
+export async function renderFeedback(main) {
+  const me = JSON.parse(localStorage.getItem('crm_user') || '{}');
+  if (me.role !== 'admin') {
+    main.innerHTML = '';
+    main.append(el('div', { class: 'card' }, 'Раздел доступен только администратору.'));
+    return;
+  }
+
+  const state = { status: '', page: 1 };
+  const tableArea = el('div');
+
+  async function reload() {
+    const r = await api.listFeedback({ status: state.status, page: String(state.page), limit: '50' });
+    renderTable(r);
+  }
+
+  function statusBadge(s) {
+    const map = { open: ['Открыто', '#fef3c7', '#92400e'], in_progress: ['В работе', '#dbeafe', '#1e40af'], closed: ['Закрыто', '#dcfce7', '#166534'] };
+    const [label, bg, fg] = map[s] || [s, '#eee', '#444'];
+    return el('span', { style: { background: bg, color: fg, padding: '2px 8px', borderRadius: '4px', fontSize: '12px', fontWeight: 600 } }, label);
+  }
+
+  function categoryLabel(c) {
+    return (FEEDBACK_CATEGORIES.find((x) => x.value === c) || { label: c }).label;
+  }
+
+  async function openItem(item) {
+    const replyI = el('textarea', { rows: '4', placeholder: 'Заметка / ответ (видна только админу)', style: { width: '100%' } });
+    if (item.admin_reply) replyI.value = item.admin_reply;
+    const statusSel = el('select', {},
+      el('option', { value: 'open', selected: item.status === 'open' }, 'Открыто'),
+      el('option', { value: 'in_progress', selected: item.status === 'in_progress' }, 'В работе'),
+      el('option', { value: 'closed', selected: item.status === 'closed' }, 'Закрыто'),
+    );
+    const body = el('div', {},
+      el('div', { class: 'detail-grid' },
+        el('div', { class: 'k' }, 'Тема'), el('div', {}, el('b', {}, item.subject)),
+        el('div', { class: 'k' }, 'Категория'), el('div', {}, categoryLabel(item.category)),
+        el('div', { class: 'k' }, 'От'), el('div', {}, `${item.user_name || '—'} (${item.user_email || '—'}, ${item.user_role || '—'})`),
+        el('div', { class: 'k' }, 'Когда'), el('div', {}, fmtDateTime(item.created_at)),
+        el('div', { class: 'k' }, 'Контекст'), el('div', { style: { fontSize: '11px', color: 'var(--text-muted)', wordBreak: 'break-all' } }, item.context || '—'),
+      ),
+      el('h4', { style: { marginTop: '16px' } }, 'Сообщение'),
+      el('pre', { style: { background: '#f9fafb', padding: '10px', borderRadius: '6px', whiteSpace: 'pre-wrap', fontSize: '13px', fontFamily: 'inherit' } }, item.message),
+      el('div', { class: 'form-row' }, el('label', {}, 'Статус'), statusSel),
+      el('div', { class: 'form-row' }, el('label', {}, 'Заметка / ответ'), replyI),
+    );
+    await openModal(`Обращение #${item.id}`, body, {
+      primaryLabel: 'Сохранить',
+      onSubmit: async () => {
+        try {
+          await api.updateFeedback(item.id, { status: statusSel.value, admin_reply: replyI.value });
+          toast('Сохранено', 'success');
+          await reload();
+        } catch (e) { toast(e.message, 'error'); return false; }
+      },
+    });
+  }
+
+  function renderTable(r) {
+    clear(tableArea);
+    const rows = r.data || [];
+    if (rows.length === 0) {
+      tableArea.append(el('div', { class: 'card' }, 'Обращений нет.'));
+      return;
+    }
+    const headRow = el('tr', {},
+      el('th', {}, '№'),
+      el('th', {}, 'Статус'),
+      el('th', {}, 'Категория'),
+      el('th', {}, 'Тема'),
+      el('th', {}, 'От'),
+      el('th', {}, 'Когда'),
+    );
+    const tbody = el('tbody', {},
+      ...rows.map((it) => el('tr', {
+        style: { cursor: 'pointer' },
+        onClick: () => openItem(it),
+      },
+        el('td', {}, '#' + it.id),
+        el('td', {}, statusBadge(it.status)),
+        el('td', {}, categoryLabel(it.category)),
+        el('td', {}, it.subject),
+        el('td', {}, `${it.user_name || '—'} (${it.user_role || '—'})`),
+        el('td', {}, fmtDateTime(it.created_at)),
+      )),
+    );
+    tableArea.append(el('div', { class: 'card' },
+      el('div', { class: 'table-wrap' }, el('table', { class: 'data' }, el('thead', {}, headRow), tbody)),
+    ));
+  }
+
+  const filterSel = el('select', {},
+    el('option', { value: '', selected: !state.status }, 'Все'),
+    el('option', { value: 'open' }, 'Открытые'),
+    el('option', { value: 'in_progress' }, 'В работе'),
+    el('option', { value: 'closed' }, 'Закрытые'),
+  );
+  filterSel.addEventListener('change', () => { state.status = filterSel.value; state.page = 1; reload(); });
+
+  main.innerHTML = '';
+  main.append(
+    el('h1', { class: 'page-title' }, 'Обращения'),
+    el('div', { class: 'page-subtitle' }, 'Вопросы и баги от менеджеров, склада и других пользователей.'),
+    el('div', { class: 'filter-bar', style: { marginBottom: '12px' } },
+      el('label', {}, 'Статус: ', filterSel),
+    ),
+    tableArea,
+  );
+  await reload();
+}
+

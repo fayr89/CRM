@@ -8,6 +8,8 @@ import {
   renderAnalytics,
   renderCashbox,
   renderDashboard,
+  openFeedbackDialog,
+  renderFeedback,
   renderIntegrations,
   renderInvitations,
   renderOrders,
@@ -68,6 +70,7 @@ const NAV_GROUPS = [
       { hash: '#/users', label: 'Пользователи', roles: ['admin', 'rop'] },
       { hash: '#/invitations', label: 'Приглашения', roles: ['admin', 'rop'] },
       { hash: '#/integrations', label: 'Настройки', roles: ['admin', 'aus'] },
+      { hash: '#/feedback', label: 'Обращения', roles: ['admin'] },
     ],
   },
 ];
@@ -272,12 +275,24 @@ function renderShell() {
     bellCounter,
   );
 
+  const feedbackBtn = el(
+    'a',
+    {
+      class: 'sidebar-bell',
+      href: '#',
+      onClick: (e) => { e.preventDefault(); openFeedbackDialog(); },
+      title: 'Сообщить о проблеме или задать вопрос',
+    },
+    el('span', {}, '📮 Помощь / Баг'),
+  );
+
   const sidebar = el(
     'aside',
     { class: 'sidebar' },
     el('div', { class: 'sidebar-brand' }, 'CRM'),
     searchBtn,
     bellBtn,
+    feedbackBtn,
     el('nav', { class: 'sidebar-nav' }, ...navChildren),
     el(
       'div',
@@ -476,6 +491,7 @@ const ROUTES = {
   '#/cashbox': renderCashbox,
   '#/analytics': renderAnalytics,
   '#/integrations': renderIntegrations,
+  '#/feedback': renderFeedback,
 };
 
 function renderApp() {

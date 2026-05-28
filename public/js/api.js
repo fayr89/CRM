@@ -111,6 +111,11 @@ export const api = {
     request('GET', '/api/notifications', { query: unread ? { unread: 'true' } : {} }),
   readNotification: (id) => request('POST', `/api/notifications/${id}/read`),
   readAllNotifications: () => request('POST', '/api/notifications/read-all'),
+  // Обратная связь
+  submitFeedback: (body) => request('POST', '/api/feedback', { body }),
+  listFeedback: (query) => request('GET', '/api/feedback', { query }),
+  feedbackOpenCount: () => request('GET', '/api/feedback/open-count'),
+  updateFeedback: (id, body) => request('PATCH', `/api/feedback/${id}`, { body }),
   search: (q) => request('GET', '/api/search', { query: { q } }),
 
   apiTokens: () => request('GET', '/api/api-tokens'),

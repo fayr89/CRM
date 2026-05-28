@@ -234,6 +234,26 @@ CREATE INDEX IF NOT EXISTS idx_payments_manager ON payments(manager_id);
 CREATE INDEX IF NOT EXISTS idx_payments_status ON payments(status);
 CREATE INDEX IF NOT EXISTS idx_payments_order ON payments(order_id);
 
+-- Обратная связь от пользователей (вопросы / баги / предложения)
+CREATE TABLE IF NOT EXISTS feedback (
+  id SERIAL PRIMARY KEY,
+  user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  category TEXT NOT NULL DEFAULT 'other'
+    CHECK(category IN ('bug','question','suggestion','other')),
+  subject TEXT NOT NULL,
+  message TEXT NOT NULL,
+  context TEXT,
+  status TEXT NOT NULL DEFAULT 'open'
+    CHECK(status IN ('open','in_progress','closed')),
+  resolved_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  resolved_at TIMESTAMPTZ,
+  admin_reply TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_feedback_status ON feedback(status);
+CREATE INDEX IF NOT EXISTS idx_feedback_user ON feedback(user_id);
+
 -- Интеграции с внешними источниками: токены, вебхуки, уведомления
 CREATE TABLE IF NOT EXISTS api_tokens (
   id SERIAL PRIMARY KEY,
