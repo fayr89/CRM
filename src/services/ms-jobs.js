@@ -48,23 +48,41 @@ export async function getMsConfig() {
 
 export { setSetting as setMsSetting };
 
-// Добавить задачу в очередь. Если уже есть pending/running для тех же (order, action) —
-// не дублируем. Done/failed не блокируют новые задачи (важно для upsert-операций,
-// где режим резерва меняется — full при reserve, none при cancel).
+// Добавить задачу в очередь.
+// Coalesce: если есть pending с тем же (order, action) — обновляем его payload
+// (последнее намерение выигрывает: reserve → unreserve → reserve = финальный full).
+// Если есть running — создаём новую pending, она выполнится после running.
+// Сразу после enqueue запускаем воркер (без throttle) — задача начинает обрабатываться
+// в ту же секунду, не ждёт следующего /api-запроса через 30 сек.
 export async function enqueueMsJob(orderId, action, payload = {}) {
-  const existing = await db.get(
-    `SELECT id FROM ms_jobs WHERE order_id = ? AND action = ? AND status IN ('pending','running') LIMIT 1`,
+  const pending = await db.get(
+    `SELECT id FROM ms_jobs WHERE order_id = ? AND action = ? AND status = 'pending' LIMIT 1`,
     orderId,
     action,
   );
-  if (existing) return { skipped: true, id: existing.id };
-  const r = await db.run(
-    `INSERT INTO ms_jobs (order_id, action, payload) VALUES (?, ?, ?::jsonb) RETURNING id`,
-    orderId,
-    action,
-    JSON.stringify(payload),
-  );
-  return { skipped: false, id: r.lastInsertRowid };
+  let result;
+  if (pending) {
+    await db.run(
+      `UPDATE ms_jobs SET payload = ?::jsonb, attempts = 0, last_error = NULL,
+       scheduled_at = NOW(), updated_at = NOW() WHERE id = ?`,
+      JSON.stringify(payload),
+      pending.id,
+    );
+    result = { coalesced: true, id: pending.id };
+  } else {
+    const r = await db.run(
+      `INSERT INTO ms_jobs (order_id, action, payload) VALUES (?, ?, ?::jsonb) RETURNING id`,
+      orderId,
+      action,
+      JSON.stringify(payload),
+    );
+    result = { skipped: false, id: r.lastInsertRowid };
+  }
+  // Без throttle — задача начинает обрабатываться сразу, fire-and-forget.
+  setImmediate(() => {
+    runPendingMsJobs(3).catch((e) => console.error('[ms] post-enqueue tick:', e.message));
+  });
+  return result;
 }
 
 export async function listMsJobs({ status, limit = 100, offset = 0 } = {}) {

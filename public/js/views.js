@@ -3664,7 +3664,85 @@ async function renderMoyskladSyncSection(area) {
   const statusBox = el('div', { class: 'card', style: { marginTop: '10px' } });
   const controlsBox = el('div', { style: { marginTop: '12px', display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' } });
   const warnBox = el('div');
-  area.append(statusBox, controlsBox, warnBox);
+  const jobsBox = el('div', { class: 'card', style: { marginTop: '14px' } });
+  area.append(statusBox, controlsBox, warnBox, jobsBox);
+
+  function actionLabel(a) {
+    const map = {
+      'customer_order.upsert': '🔁 Заказ покупателя',
+      'demand.create': '🚚 Отгрузка',
+      'demand.delete': '↩️ Откат отгрузки',
+      'customerreturn.create': '↩️ Возврат',
+      'loss.create': '❌ Списание',
+    };
+    return map[a] || a;
+  }
+
+  function jobStatusBadge(s) {
+    const map = {
+      pending: ['Ожидает', '#fef3c7', '#92400e'],
+      running: ['Выполняется', '#dbeafe', '#1e40af'],
+      done: ['Готово', '#dcfce7', '#166534'],
+      failed: ['Сбой', '#fee2e2', '#991b1b'],
+    };
+    const [label, bg, fg] = map[s] || [s, '#eee', '#444'];
+    return el('span', { style: { background: bg, color: fg, padding: '2px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: 600 } }, label);
+  }
+
+  async function refreshJobs() {
+    clear(jobsBox);
+    jobsBox.append(el('div', { class: 'section-header' },
+      el('h3', { style: { margin: 0, fontSize: '14px' } }, '📋 Лог последних МС-операций'),
+      el('button', {
+        class: 'btn btn-sm',
+        onClick: () => refresh(),
+      }, '🔄 Обновить'),
+    ));
+
+    let data;
+    try { data = await api.msListJobs({ limit: '50' }); }
+    catch (e) { jobsBox.append(el('div', {}, 'Не удалось загрузить лог: ' + e.message)); return; }
+
+    if (!data.rows?.length) {
+      jobsBox.append(el('div', { style: { padding: '20px', color: 'var(--text-muted)', textAlign: 'center' } },
+        'Пока не было ни одной операции. Зарезервируйте заказ — здесь появится первая запись.'));
+      return;
+    }
+
+    const head = el('tr', {},
+      el('th', {}, '№'),
+      el('th', {}, 'Когда'),
+      el('th', {}, 'Действие'),
+      el('th', {}, 'Заказ'),
+      el('th', {}, 'Статус'),
+      el('th', {}, 'Попытки'),
+      el('th', {}, 'МС-документ'),
+      el('th', {}, 'Ошибка'),
+    );
+    const tbody = el('tbody', {}, ...data.rows.map((j) => {
+      const retryBtn = j.status === 'failed'
+        ? el('button', {
+            class: 'btn btn-xs',
+            onClick: async () => {
+              try { await api.msRetryJob(j.id); toast('Повторяем…', 'success'); await refresh(); }
+              catch (e) { toast(e.message, 'error'); }
+            },
+          }, '🔄')
+        : null;
+      return el('tr', {},
+        el('td', {}, '#' + j.id),
+        el('td', { style: { whiteSpace: 'nowrap', fontSize: '12px' } }, fmtDateTime(j.updated_at || j.created_at)),
+        el('td', {}, actionLabel(j.action)),
+        el('td', {}, j.order_id ? `#${j.order_id}${j.order_reference ? ' / ' + j.order_reference : ''}` : '—'),
+        el('td', {}, jobStatusBadge(j.status), ' ', retryBtn),
+        el('td', {}, String(j.attempts)),
+        el('td', { style: { fontSize: '11px', fontFamily: 'monospace', wordBreak: 'break-all' } }, j.ms_document_id || '—'),
+        el('td', { style: { fontSize: '11px', color: 'var(--danger)', maxWidth: '300px' } }, j.last_error || '—'),
+      );
+    }));
+    jobsBox.append(el('div', { class: 'table-wrap', style: { marginTop: '8px' } },
+      el('table', { class: 'data' }, el('thead', {}, head), tbody)));
+  }
 
   async function refresh() {
     clear(statusBox);
@@ -3729,9 +3807,10 @@ async function renderMoyskladSyncSection(area) {
 
     if (st.job_counts?.failed) {
       warnBox.append(el('div', { class: 'help-banner', style: { marginTop: '10px' } },
-        `⚠️ В очереди ${st.job_counts.failed} неудачных задач. ` +
-        'Откройте /api/admin/ms/jobs?status=failed для деталей.'));
+        `⚠️ В очереди ${st.job_counts.failed} неудачных задач. См. лог ниже — у каждой кнопка повтора.`));
     }
+
+    await refreshJobs();
   }
 
   await refresh();
