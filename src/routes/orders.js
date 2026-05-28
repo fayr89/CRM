@@ -10,6 +10,7 @@ import { emitEvent } from '../services/webhooks.js';
 import { toCsv, csvDate } from '../services/csv.js';
 import { nextShippingDate, getSchedule } from '../services/shippingSchedule.js';
 import { enqueueMsJob } from '../services/ms-jobs.js';
+import { notifyAdmins } from '../services/notifications.js';
 
 const router = Router();
 
@@ -343,8 +344,8 @@ router.get(
 // Обработка возврата складом: restocked (в сток), written_off (списать с пруфом)
 // или lost (товар потерян — попадает в «Потерянные товары»).
 const returnResolveSchema = z.object({
-  resolution: z.enum(['restocked', 'written_off', 'lost']),
-  proof: z.string().optional().nullable(), // base64-фото для списания
+  resolution: z.enum(['restocked', 'written_off', 'lost', 'markdown']),
+  proof: z.string().optional().nullable(), // base64-фото
 });
 router.post(
   '/:id/return-resolve',
@@ -359,24 +360,73 @@ router.post(
     if (resolution === 'written_off' && !proof) {
       throw BadRequest('Для списания приложите фото-подтверждение, что товар негоден');
     }
+    if (resolution === 'markdown' && !proof) {
+      throw BadRequest('Для уценки приложите фото-пруф состояния товара');
+    }
     await db.run(
       `UPDATE orders SET return_status = ?, return_proof = ?, return_resolved_by = ?,
        return_resolved_at = NOW(), updated_at = NOW() WHERE id = ?`,
       resolution,
-      resolution === 'written_off' ? proof : null,
+      (resolution === 'written_off' || resolution === 'markdown') ? proof : null,
       req.user.id,
       order.id,
     );
-    // МС: товар вернулся → «Возврат от покупателя» (приход); товар не вернулся
-    // или негоден → «Списание» (расход без выручки).
+    // МС: товар вернулся → «Возврат от покупателя» (приход); потерян/брак →
+    // «Списание»; уценка → новый товар + возврат на склад уценки + задача админу.
     if (resolution === 'restocked') {
       await enqueueMsJob(order.id, 'customerreturn.create');
     } else if (resolution === 'written_off' || resolution === 'lost') {
       await enqueueMsJob(order.id, 'loss.create');
+    } else if (resolution === 'markdown') {
+      await handleMarkdownResolution(order);
     }
     res.json(await db.get('SELECT * FROM orders WHERE id = ?', order.id));
   }),
 );
+
+// Уценка: для каждой позиции заказа создаём новый товар-уценку в CRM (своя цена,
+// своя единица), ставим задачу в МС (создать там товар, customerreturn на склад
+// уценки) и уведомляем админов — нужно проставить цену для новых уценок.
+async function handleMarkdownResolution(order) {
+  const items = await db.all(
+    `SELECT oi.id AS item_id, oi.name, oi.quantity, oi.unit_price, oi.product_id,
+            p.sku AS orig_sku, p.cost_price, p.supplier, p.image_url, p.external_id AS ms_orig_id
+     FROM order_items oi
+     LEFT JOIN products p ON p.id = oi.product_id
+     WHERE oi.order_id = ?`,
+    order.id,
+  );
+  const markdownIds = [];
+  for (const it of items) {
+    if (!it.product_id) continue; // позиция без привязки — пропускаем
+    const sku = it.orig_sku ? `${it.orig_sku}-MD-${order.id}-${it.item_id}` : `MD-${order.id}-${it.item_id}`;
+    const name = `${it.name} (УЦЕНКА #${order.id})`;
+    const r = await db.run(
+      `INSERT INTO products
+       (sku, name, cost_price, supplier, image_url, stock, active,
+        is_markdown, markdown_of_product_id, markdown_order_id)
+       VALUES (?, ?, ?, ?, ?, ?, TRUE, TRUE, ?, ?) RETURNING id`,
+      sku,
+      name,
+      it.cost_price ?? 0,
+      it.supplier ?? null,
+      it.image_url ?? null,
+      it.quantity,
+      it.product_id,
+      order.id,
+    );
+    markdownIds.push(r.lastInsertRowid);
+  }
+  if (markdownIds.length) {
+    await enqueueMsJob(order.id, 'markdown.create', { markdown_product_ids: markdownIds });
+    await notifyAdmins(
+      'product.markdown',
+      `🏷️ Уценка: проставьте цену`,
+      `Заказ #${order.id}: ${markdownIds.length} уценённых товар(ов) ждут цены в каталоге.`,
+      '#/products?markdown=1',
+    );
+  }
+}
 
 // Потерянные товары: заказы, по которым возврат отмечен как «потерян».
 // Сумма потерь считается по цене продажи (total_amount). Аннулированные (loss_voided)

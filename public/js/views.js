@@ -3698,6 +3698,7 @@ async function renderMoyskladSyncSection(area) {
       'demand.delete': '↩️ Откат отгрузки',
       'customerreturn.create': '↩️ Возврат от покупателя',
       'loss.create': '❌ Списание (потеря/брак)',
+      'markdown.create': '🏷️ Уценка (новый товар + приход)',
     };
     return map[a] || a;
   }
@@ -6401,6 +6402,10 @@ export async function renderReturns(main) {
               },
             }, '↩️ В сток'),
             el('button', {
+              class: 'btn btn-sm',
+              onClick: () => openMarkdownDialog(o, load),
+            }, '🏷️ Уценка'),
+            el('button', {
               class: 'btn btn-sm btn-danger',
               onClick: () => openWriteOff(o, load),
             }, '🗑 Списать'),
@@ -6443,6 +6448,40 @@ export async function renderReturns(main) {
     } catch (e) {
       container.replaceChildren(el('div', { class: 'empty' }, `Ошибка: ${e.message}`));
     }
+  }
+
+  // Уценка: товар вернулся в плохом состоянии, но продаваем дешевле. Создаём новый
+  // товар (в CRM и МС) на склад уценки, требуем фото-пруф, ставим админу задачу
+  // проставить цену.
+  function openMarkdownDialog(order, onDone) {
+    let proofData = '';
+    const preview = el('div', { class: 'qr-preview' });
+    const fileI = el('input', { type: 'file', accept: 'image/*' });
+    fileI.addEventListener('change', () => {
+      const f = fileI.files?.[0];
+      if (!f) return;
+      const reader = new FileReader();
+      reader.onload = () => {
+        proofData = reader.result;
+        preview.replaceChildren(el('img', { src: proofData, style: { maxWidth: '200px', borderRadius: '8px' } }));
+      };
+      reader.readAsDataURL(f);
+    });
+    const body = el('div', {},
+      el('p', {}, `Уценка по заказу #${order.id}. На каждую позицию создастся новый товар в каталоге, оприходуется на склад «${'Склад МСК (Электросталь) УЦЕНКА'}» в МС. Админ получит уведомление — нужно проставить цену.`),
+      el('div', { class: 'form-row' }, el('label', {}, 'Фото-пруф состояния *'), fileI, preview),
+    );
+    openModal('Перевести в уценку', body, {
+      primaryLabel: 'Уценить',
+      onSubmit: async () => {
+        if (!proofData) { toast('Приложите фото-пруф состояния товара', 'error'); return false; }
+        try {
+          await api.resolveReturn(order.id, 'markdown', proofData);
+          toast('Товар уценён. Админу отправлено уведомление проставить цену.', 'success');
+          onDone?.();
+        } catch (e) { toast(e.message, 'error'); return false; }
+      },
+    });
   }
 
   // Списание с обязательным фото-пруфом.

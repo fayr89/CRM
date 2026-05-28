@@ -7,6 +7,7 @@ import {
   demandDeleteHandler,
   customerReturnCreateHandler,
   lossCreateHandler,
+  markdownCreateHandler,
 } from './ms-orders.js';
 
 registerMsHandler('customer_order.upsert', customerOrderUpsertHandler);
@@ -14,3 +15,4 @@ registerMsHandler('demand.create', demandCreateHandler);
 registerMsHandler('demand.delete', demandDeleteHandler);
 registerMsHandler('customerreturn.create', customerReturnCreateHandler);
 registerMsHandler('loss.create', lossCreateHandler);
+registerMsHandler('markdown.create', markdownCreateHandler);

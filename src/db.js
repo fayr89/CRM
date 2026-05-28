@@ -525,6 +525,13 @@ export async function ensureInitialized() {
         'CREATE INDEX IF NOT EXISTS idx_ms_jobs_pending ON ms_jobs(scheduled_at) WHERE status = \'pending\'',
       );
       await pool.query('CREATE INDEX IF NOT EXISTS idx_ms_jobs_order ON ms_jobs(order_id)');
+      // Уценка: новый товар на каждую уникальную уценённую позицию (своя цена,
+      // создаётся при resolution='markdown' возврата). Ссылается на исходный
+      // товар и заказ-источник.
+      await pool.query('ALTER TABLE products ADD COLUMN IF NOT EXISTS is_markdown BOOLEAN DEFAULT FALSE');
+      await pool.query('ALTER TABLE products ADD COLUMN IF NOT EXISTS markdown_of_product_id INTEGER REFERENCES products(id) ON DELETE SET NULL');
+      await pool.query('ALTER TABLE products ADD COLUMN IF NOT EXISTS markdown_order_id INTEGER REFERENCES orders(id) ON DELETE SET NULL');
+      await pool.query('CREATE INDEX IF NOT EXISTS idx_products_markdown ON products(is_markdown) WHERE is_markdown = TRUE');
       // Обратная связь от пользователей (вопросы / баги / предложения).
       await pool.query(`
         CREATE TABLE IF NOT EXISTS feedback (

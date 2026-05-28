@@ -292,3 +292,90 @@ export async function lossCreateHandler(job) {
   await db.run('UPDATE orders SET ms_loss_id = ? WHERE id = ?', result.id, order.id);
   return { ms_document_id: result.id };
 }
+
+// --- Markdown (уценка): создание новых товаров в МС + оприходование на склад уценки ---
+
+const MARKDOWN_STORE_NAME = 'Склад МСК (Электросталь) УЦЕНКА';
+
+export async function markdownCreateHandler(job) {
+  const token = await getMoyskladToken();
+  if (!token) throw new Error('Токен МС не настроен');
+  const order = await db.get('SELECT * FROM orders WHERE id = ?', job.order_id);
+  if (!order) throw new Error(`Заказ #${job.order_id} не найден`);
+
+  const cfg = await getMsConfig();
+  if (!cfg.organization_id) throw new Error('МС не инициализирован: нет organization_id');
+  const storeId = cfg.store_map?.[MARKDOWN_STORE_NAME];
+  if (!storeId) {
+    throw new Error(`Склад «${MARKDOWN_STORE_NAME}» не найден в МС. Создайте его в МС и переинициализируйте конфиг.`);
+  }
+  const counterpartyId = await resolveManagerCounterparty(token, order.manager_id);
+  if (!counterpartyId) throw new Error('Не удалось определить контрагента');
+
+  const markdownIds = job.payload?.markdown_product_ids || [];
+  if (!markdownIds.length) throw new Error('В задаче не указаны уценённые товары');
+
+  const mdRows = await db.all(
+    `SELECT p.*, parent.external_id AS parent_ms_id, parent.name AS parent_name
+     FROM products p
+     LEFT JOIN products parent ON parent.id = p.markdown_of_product_id
+     WHERE p.id = ANY(?)`,
+    markdownIds,
+  );
+
+  // Создаём в МС товары для уценок (если ещё не созданы).
+  for (const md of mdRows) {
+    if (md.external_id) continue; // уже создан
+    const created = await msCreate(token, 'product', {
+      name: md.name,
+      code: md.sku || undefined,
+      article: md.sku || undefined,
+      description: `Уценка из CRM (заказ #${order.id}). Цену проставит админ.${md.parent_ms_id ? ' Исходный товар: ' + md.parent_name : ''}`,
+      buyPrice: { value: Math.round((md.cost_price || 0) * 100), currency: msHref('currency', cfg.currency_id) },
+    }).catch(async (e) => {
+      // Если МС требует currency и его нет в кэше — пробуем без buyPrice.
+      const retryBody = {
+        name: md.name,
+        code: md.sku || undefined,
+        article: md.sku || undefined,
+        description: `Уценка из CRM (заказ #${order.id}).`,
+      };
+      return await msCreate(token, 'product', retryBody);
+    });
+    await db.run(
+      `UPDATE products SET external_source = 'moysklad', external_id = ?, updated_at = NOW() WHERE id = ?`,
+      created.id,
+      md.id,
+    );
+    md.external_id = created.id;
+  }
+
+  // Создаём customerreturn на склад уценки с этими товарами.
+  if (order.ms_return_id) {
+    return { ms_document_id: order.ms_return_id };
+  }
+  const positions = mdRows
+    .filter((md) => md.external_id)
+    .map((md) => ({
+      assortment: msHref('product', md.external_id),
+      quantity: md.stock || 1,
+      // Цена 0 — её админ потом проставит в каталоге, и МС не нужно знать о ней
+      // в момент оприходования (это не отгрузка, а приход).
+      price: 0,
+    }));
+  if (!positions.length) throw new Error('Не удалось создать ни одного уценочного товара в МС');
+
+  const body = {
+    organization: msHref('organization', cfg.organization_id),
+    agent: msHref('counterparty', counterpartyId),
+    store: msHref('store', storeId),
+    name: `CRM-${order.id}/уценка`,
+    description: `Уценка из CRM #${order.id}. Фото-пруф в CRM.`,
+    positions,
+  };
+  if (order.ms_demand_id) body.demand = msHref('demand', order.ms_demand_id);
+
+  const result = await msCreate(token, 'customerreturn', body);
+  await db.run('UPDATE orders SET ms_return_id = ? WHERE id = ?', result.id, order.id);
+  return { ms_document_id: result.id };
+}
