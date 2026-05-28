@@ -248,42 +248,52 @@ router.get(
 
     // Порядковый номер в выгрузке — совпадает с номером на PDF-этикетке.
     orders.forEach((o, idx) => { o._seq = idx + 1; });
+    // Способ отправки: предпочтительно delivery_method (СДЭК/Почта/Avito Доставка),
+    // если пусто — marketplace. payment_method (cash/card) НЕ используется.
+    const shipMethod = (row) => {
+      const dm = String(row.delivery_method || '').trim().toLowerCase();
+      const map = {
+        sdek: 'СДЭК', cdek: 'СДЭК', pochta: 'Почта России', pochta_russia: 'Почта России',
+        boxberry: 'Boxberry', yandex: 'Я.Доставка', avito_delivery: 'Avito Доставка',
+        avito: 'Avito Доставка', pickup: 'Самовывоз', courier: 'Курьер',
+      };
+      if (dm) return map[dm] || row.delivery_method;
+      const mp = String(row.marketplace || '').trim().toLowerCase();
+      const mpMap = { avito: 'Avito', wildberries: 'Wildberries', wb: 'Wildberries', ozon: 'Ozon', yandex: 'Я.Маркет', yandex_market: 'Я.Маркет' };
+      return mpMap[mp] || row.marketplace || '';
+    };
     const columns = [
       { key: '_seq', label: '№', format: (v) => String(v) },
       { key: 'id', label: 'ID', format: (v) => `#${v}` },
       { key: 'created_at', label: 'Создан', format: csvDate },
-      { key: 'marketplace', label: 'Площадка' },
-      { key: 'reference_number', label: 'Внешний №' },
-      { key: 'client_classification', label: 'Класс клиента' },
-      { key: 'client_name', label: 'Клиент' },
-      { key: 'status', label: 'Статус' },
-      { key: 'payment_method', label: 'Способ оплаты' },
-      { key: 'delivery_method', label: 'Способ отправки' },
-      { key: 'shipment_qr', label: 'QR код отгрузки' },
+      { key: 'ship_method', label: 'Способ отправки', get: shipMethod },
+      { key: 'shipment_qr', label: 'Трек номер' },
       { key: 'manager_name', label: 'Менеджер' },
-      { key: 'warehouse_user_name', label: 'Склад' },
-      { key: 'reserved_at', label: 'Зарезервирован', format: csvDate },
-      { key: 'shipped_at', label: 'Отгружен', format: csvDate },
-      { key: 'completed_at', label: 'Завершён', format: csvDate },
-      { key: 'total_amount', label: 'Сумма' },
-      { key: 'currency', label: 'Валюта' },
       {
-        key: 'total_qty',
+        key: 'sku',
+        label: 'Артикул',
+        get: (row) => {
+          const list = itemsByOrder.get(row.id) || [];
+          return list.map((i) => i.sku || '').filter(Boolean).join(' | ');
+        },
+      },
+      {
+        key: 'qty',
         label: 'Кол-во, шт',
         get: (row) => {
           const list = itemsByOrder.get(row.id) || [];
-          return list.reduce((sum, i) => sum + (Number(i.quantity) || 0), 0);
+          return list.map((i) => String(i.quantity)).join(' | ');
         },
       },
       {
         key: 'items',
-        label: 'Позиции',
+        label: 'Наименование',
         get: (row) => {
           const list = itemsByOrder.get(row.id) || [];
-          return list.map((i) => `${i.sku || ''} ${i.name} × ${i.quantity}`).join(' | ');
+          return list.map((i) => i.name).join(' | ');
         },
       },
-      { key: 'notes', label: 'Заметки' },
+      { key: 'notes', label: 'Комментарий' },
     ];
 
     const csv = toCsv(orders, columns);
