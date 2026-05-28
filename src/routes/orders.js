@@ -262,13 +262,24 @@ router.get(
       const mpMap = { avito: 'Avito', wildberries: 'Wildberries', wb: 'Wildberries', ozon: 'Ozon', yandex: 'Я.Маркет', yandex_market: 'Я.Маркет' };
       return mpMap[mp] || row.marketplace || '';
     };
+    // Excel автоматически переводит длинные числа в научную нотацию ("8,05128E+13")
+    // и срезает ведущие нули. Оборачиваем в формулу-строку ="...", тогда Excel
+    // оставляет значение как текст.
+    const asTextForExcel = (v) => {
+      const s = String(v ?? '').trim();
+      return s ? `="${s.replace(/"/g, '""')}"` : '';
+    };
+
     const columns = [
       {
         key: 'sku',
         label: 'Артикул',
         get: (row) => {
           const list = itemsByOrder.get(row.id) || [];
-          return list.map((i) => i.sku || '').filter(Boolean).join(' | ');
+          const skus = list.map((i) => i.sku || '').filter(Boolean);
+          if (!skus.length) return '';
+          // Каждый артикул как текст-формула, склеены через ' | '.
+          return skus.map((s) => `="${s.replace(/"/g, '""')}"`).join(' | ');
         },
       },
       {
@@ -288,7 +299,7 @@ router.get(
         },
       },
       { key: 'ship_method', label: 'Способ отправки', get: shipMethod },
-      { key: 'shipment_qr', label: 'Трек номер' },
+      { key: 'shipment_qr', label: 'Трек номер', format: asTextForExcel },
       { key: 'manager_name', label: 'Менеджер' },
       { key: '_seq', label: '№', format: (v) => String(v) },
       { key: 'id', label: 'ID', format: (v) => `#${v}` },
