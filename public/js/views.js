@@ -1545,6 +1545,60 @@ async function openOrderForm(order, onSaved) {
   } catch {
     /* нет настройки — покажем все склады */
   }
+
+  // Ближайший день отгрузки + cutoff (в МСК). Помогает менеджеру сразу сказать
+  // клиенту реалистичную дату. Расписание — из shipping_schedule (админ ведёт
+  // в Настройках → Склады → График отгрузок).
+  let shippingBanner = null;
+  try {
+    const sched = await api.warehouseSchedule();
+    if (sched?.next_shipping_date) {
+      const d = new Date(sched.next_shipping_date);
+      const now = new Date();
+      // Берём «сегодня в МСК»: сравниваем yyyy-mm-dd, чтобы понять «сегодня/завтра».
+      const fmtDate = new Intl.DateTimeFormat('ru-RU', {
+        weekday: 'short', day: 'numeric', month: 'long', timeZone: 'Europe/Moscow',
+      });
+      const fmtTime = new Intl.DateTimeFormat('ru-RU', {
+        hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Europe/Moscow',
+      });
+      const sameYmd = (a, b) =>
+        new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Moscow' }).format(a) ===
+        new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Moscow' }).format(b);
+      const tomorrow = new Date(now);
+      tomorrow.setDate(now.getDate() + 1);
+      let prefix = '';
+      if (sameYmd(d, now)) prefix = 'сегодня · ';
+      else if (sameYmd(d, tomorrow)) prefix = 'завтра · ';
+      shippingBanner = el(
+        'div',
+        {
+          class: 'help-banner',
+          style: {
+            background: '#fef3c7', border: '1px solid #fbbf24', color: '#78350f',
+            padding: '10px 12px', borderRadius: '6px', marginBottom: '12px',
+            display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap',
+          },
+        },
+        el('span', { style: { fontSize: '18px' } }, '📦'),
+        el('span', {},
+          el('b', {}, 'Ближайшая отгрузка: '),
+          `${prefix}${fmtDate.format(d)} до ${fmtTime.format(d)} МСК`,
+        ),
+      );
+    } else if (sched && (!sched.days || !sched.days.length)) {
+      shippingBanner = el(
+        'div',
+        {
+          class: 'help-banner',
+          style: { background: '#fef2f2', border: '1px solid #fecaca', color: '#7f1d1d', padding: '8px 12px', borderRadius: '6px', marginBottom: '12px' },
+        },
+        '⚠️ График отгрузок не настроен. Админ → Настройки → Склады → График отгрузок.',
+      );
+    }
+  } catch {
+    /* нет расписания — не критично, форма работает */
+  }
   // Склад списания заказа (для МойСклад и подбора прайса по складу).
   const warehouseI = el(
     'select',
@@ -1763,6 +1817,7 @@ async function openOrderForm(order, onSaved) {
   const body = el(
     'div',
     {},
+    shippingBanner,
     el(
       'div',
       { class: 'form-grid' },
