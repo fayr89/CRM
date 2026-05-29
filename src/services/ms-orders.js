@@ -463,6 +463,61 @@ export async function markdownCreateHandler(job) {
   return { ms_document_id: result.id };
 }
 
+// Откат списания (loss): удаляет документ «Списание» в МС, возвращает остатки в CRM,
+// очищает ms_loss_id и сбрасывает return_status в 'pending' — админ может выбрать
+// другой вариант (В сток / Уценка / Потерян / повторить списание).
+export async function lossUndoHandler(job) {
+  const token = await getMoyskladToken();
+  if (!token) throw new Error('Токен МС не настроен');
+  const order = await db.get('SELECT * FROM orders WHERE id = ?', job.order_id);
+  if (!order) throw new Error(`Заказ #${job.order_id} не найден`);
+
+  if (order.ms_loss_id) {
+    try {
+      await msDelete(token, 'loss', order.ms_loss_id);
+    } catch (e) {
+      console.warn(`[ms] delete loss ${order.ms_loss_id}:`, e.message);
+    }
+  }
+  // Восстанавливаем сток локально (списание убрало -1, откат возвращает +1).
+  await applyLocalStockReserveDelta(order.id, +1, 0);
+  // Сбрасываем resolution: заказ снова в режиме «возврат ожидает решения».
+  await db.run(
+    `UPDATE orders SET ms_loss_id = NULL, return_status = 'pending',
+     return_resolved_by = NULL, return_resolved_at = NULL, updated_at = NOW()
+     WHERE id = ?`,
+    order.id,
+  );
+  return { ms_document_id: null };
+}
+
+// Откат возврата (customerreturn / salesreturn для resolution='restocked'):
+// удаляет документ возврата в МС, убирает локальный сток (+1, который был добавлен
+// при оприходовании), сбрасывает return_status в 'pending'.
+export async function customerReturnUndoHandler(job) {
+  const token = await getMoyskladToken();
+  if (!token) throw new Error('Токен МС не настроен');
+  const order = await db.get('SELECT * FROM orders WHERE id = ?', job.order_id);
+  if (!order) throw new Error(`Заказ #${job.order_id} не найден`);
+
+  if (order.ms_return_id) {
+    try {
+      await msDelete(token, 'salesreturn', order.ms_return_id);
+    } catch (e) {
+      console.warn(`[ms] delete salesreturn ${order.ms_return_id}:`, e.message);
+    }
+  }
+  // Восстановили сток при оприходовании (+1), откат — снимаем (-1).
+  await applyLocalStockReserveDelta(order.id, -1, 0);
+  await db.run(
+    `UPDATE orders SET ms_return_id = NULL, return_status = 'pending',
+     return_resolved_by = NULL, return_resolved_at = NULL, updated_at = NOW()
+     WHERE id = ?`,
+    order.id,
+  );
+  return { ms_document_id: null };
+}
+
 // Откат уценки: удаляет в МС возвратный документ и архивирует созданные товары,
 // в CRM деактивирует markdown-products и возвращает заказ в return_status='pending'
 // (можно выбрать другой resolution — В сток / Списать / Потерян / повторить уценку).

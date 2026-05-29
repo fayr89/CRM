@@ -182,6 +182,14 @@ router.post(
       // Откат уценки: удалить salesreturn, архивировать товары, вернуть заказ в pending.
       await enqueueMsJob(row.order_id, 'markdown.undo', { undo_of: id });
       res.json({ ok: true, undo_action: 'markdown.undo' });
+    } else if (row.action === 'loss.create') {
+      // Откат списания: удалить документ, вернуть остатки, сбросить return_status.
+      await enqueueMsJob(row.order_id, 'loss.undo', { undo_of: id });
+      res.json({ ok: true, undo_action: 'loss.undo' });
+    } else if (row.action === 'customerreturn.create') {
+      // Откат возврата (restocked): удалить salesreturn, снять локальный сток.
+      await enqueueMsJob(row.order_id, 'customerreturn.undo', { undo_of: id });
+      res.json({ ok: true, undo_action: 'customerreturn.undo' });
     } else {
       throw BadRequest(`Отмена действия «${row.action}» пока не поддерживается`);
     }
