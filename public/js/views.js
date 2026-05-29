@@ -2792,6 +2792,7 @@ export async function renderCashbox(main) {
       el('th', {}, 'Тип'),
       el('th', {}, 'Сумма'),
       el('th', {}, 'Комиссия'),
+      el('th', {}, 'К зачислению'),
       el('th', {}, 'Метод'),
       el('th', {}, 'Заказ'),
       el('th', {}, 'Менеджер'),
@@ -2830,6 +2831,22 @@ export async function renderCashbox(main) {
                     : '+ комиссию')
               : (p.commission != null && p.commission > 0 ? fmtMoney(p.commission, p.currency) : '—'),
         ),
+        // К зачислению = сумма − комиссия. Для split-комиссии (sub-row) показываем
+        // саму комиссию со знаком «минус» — она и есть отдельный расход. Для split-
+        // вывода (commission=0 на родителе) это просто amount. Цветом подсветка:
+        // приход = зелёный, расход = красный.
+        (() => {
+          const amt = Number(p.amount) || 0;
+          const comm = Number(p.commission) || 0;
+          const net = amt - comm;
+          const isIncome = p.kind === 'income';
+          const cls = isIncome ? 'dev-up' : 'dev-down';
+          const sign = isIncome ? '+ ' : '− ';
+          return el('td', {},
+            el('span', { class: cls, style: { fontWeight: 600 } },
+              sign + fmtMoney(net, p.currency || 'RUB')),
+          );
+        })(),
         el('td', {}, p.method ? tr('payment_method', p.method) : '—'),
         el('td', {}, p.order_id ? `#${p.order_id}` : (p.reference || '—')),
         el('td', {}, p.manager_name || '—'),
