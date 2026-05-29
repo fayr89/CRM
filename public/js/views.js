@@ -2986,15 +2986,15 @@ export async function renderCashbox(main) {
     });
   }
 
-  // Редактирование комиссии: модалка с двумя полями % и ₽, любое из них считает второе.
-  // Сохраняет в БД ₽ (commission column). Доступно для pending-транзакций (после
-  // подтверждения комиссию уже не меняем — может «уехать» баланс).
+  // Редактирование комиссии: три связанных поля — % / комиссия ₽ / сумма с комиссией.
+  // Заполняешь любое — два других пересчитываются. Сохраняется в БД commission (₽).
   async function openCommissionEditor(payment) {
     const amount = Number(payment.amount) || 0;
     const currentRub = Number(payment.commission) || 0;
     const currentPct = amount > 0 ? Math.round((currentRub / amount) * 10000) / 100 : 0;
     const pctI = el('input', { type: 'number', min: '0', step: '0.01', value: currentPct || '', style: { width: '120px' } });
     const rubI = el('input', { type: 'number', min: '0', step: 'any', value: currentRub || '', style: { width: '120px' } });
+    const grossI = el('input', { type: 'number', min: '0', step: 'any', value: currentRub > 0 ? amount + currentRub : '', style: { width: '120px' } });
     const netLine = el('div', {
       style: { padding: '12px', background: '#f0f9ff', border: '1px solid #bae6fd', borderRadius: '6px', marginTop: '12px', textAlign: 'center' },
     });
@@ -3012,14 +3012,26 @@ export async function renderCashbox(main) {
       );
     }
 
+    // Связь трёх полей: при изменении любого — остальные два пересчитываются.
+    // amount фиксирован (это сумма транзакции из БД).
     pctI.addEventListener('input', () => {
       const pct = Number(pctI.value) || 0;
-      rubI.value = Math.round(amount * pct) / 100;
+      const rub = Math.round(amount * pct) / 100;
+      rubI.value = rub;
+      grossI.value = rub > 0 ? Math.round((amount + rub) * 100) / 100 : '';
       refreshNet();
     });
     rubI.addEventListener('input', () => {
       const rub = Number(rubI.value) || 0;
       pctI.value = amount > 0 ? Math.round((rub / amount) * 10000) / 100 : 0;
+      grossI.value = rub > 0 ? Math.round((amount + rub) * 100) / 100 : '';
+      refreshNet();
+    });
+    grossI.addEventListener('input', () => {
+      const gross = Number(grossI.value) || 0;
+      const rub = Math.max(0, Math.round((gross - amount) * 100) / 100);
+      rubI.value = rub > 0 ? rub : '';
+      pctI.value = amount > 0 && rub > 0 ? Math.round((rub / amount) * 10000) / 100 : '';
       refreshNet();
     });
 
@@ -3036,8 +3048,12 @@ export async function renderCashbox(main) {
         el('label', {}, 'Комиссия ₽'),
         el('div', { style: { display: 'flex', alignItems: 'center', gap: '4px' } }, rubI, el('span', {}, '₽')),
       ),
+      el('div', { class: 'form-row' },
+        el('label', {}, 'Сумма с комиссией'),
+        el('div', { style: { display: 'flex', alignItems: 'center', gap: '4px' } }, grossI, el('span', {}, '₽')),
+      ),
       el('div', { class: 'hint', style: { marginTop: '4px' } },
-        'Любое поле — второе пересчитается автоматически. Сохраняется ₽.'),
+        'Заполни любое из трёх полей — остальные пересчитаются. «Сумма с комиссией» = сумма транзакции + комиссия (если знаешь валовую сумму до удержания).'),
       netLine,
     );
     refreshNet();
