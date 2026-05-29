@@ -252,4 +252,62 @@ router.get(
   }),
 );
 
+// =================== Предзапусковая очистка ===================
+// Сносит все операционные данные (заказы / платежи / возвраты / очередь МС / уведомления),
+// сохраняя пользователей, каталог, прайсы, настройки, токены и пайплайн «Продажи».
+// Требует confirm='УДАЛИТЬ' в боди — защита от случайного клика.
+router.post(
+  '/wipe-operational',
+  requireRole('admin'),
+  asyncHandler(async (req, res) => {
+    if ((req.body?.confirm || '').trim().toUpperCase() !== 'УДАЛИТЬ') {
+      throw BadRequest('Для подтверждения отправьте {"confirm":"УДАЛИТЬ"}');
+    }
+    const result = await db.withTransaction(async (tx) => {
+      const counts = {};
+      // FK-порядок: дети раньше родителей.
+      const tables = [
+        // ms_jobs: FK на orders.
+        'ms_jobs',
+        // platежи: FK на orders.
+        'payments',
+        // order_items: FK на orders.
+        'order_items',
+        // notifications: операционные, ссылок нет, но они про заказы/платежи.
+        'notifications',
+        // orders: родитель.
+        'orders',
+      ];
+      for (const t of tables) {
+        try {
+          const r = await tx.run(`DELETE FROM ${t}`);
+          counts[t] = r.changes ?? 0;
+        } catch (e) {
+          counts[t] = `error: ${e.message}`;
+        }
+      }
+      // Аудит-лог: чистим только записи о заказах/платежах (общая история действий
+      // остаётся, но без шума от тест-данных). Логин-события сохраняем.
+      try {
+        const r = await tx.run(
+          `DELETE FROM audit_log WHERE entity_type IN ('order','payment')`,
+        );
+        counts['audit_log (orders/payments)'] = r.changes ?? 0;
+      } catch (e) {
+        counts['audit_log'] = `error: ${e.message}`;
+      }
+      return counts;
+    });
+    // Фиксируем сам факт очистки — это критическая операция.
+    const { logAction } = await import('../services/audit.js');
+    await logAction(req, {
+      action: 'admin.wipe_operational',
+      entity_type: 'system',
+      entity_id: null,
+      details: { deleted: result },
+    });
+    res.json({ ok: true, deleted: result });
+  }),
+);
+
 export default router;

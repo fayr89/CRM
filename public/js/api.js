@@ -150,6 +150,7 @@ export const api = {
   msRunNow: () => request('POST', '/api/admin/ms/jobs/run-now'),
   // Аудит-лог
   listAudit: (query) => request('GET', '/api/admin/audit', { query }),
+  wipeOperational: () => request('POST', '/api/admin/wipe-operational', { body: { confirm: 'УДАЛИТЬ' } }),
 
   // МАХ-бот
   maxMe: () => request('GET', '/api/max/me'),

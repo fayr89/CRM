@@ -3812,6 +3812,42 @@ export async function renderIntegrations(main) {
   await renderTokensSection(tokensArea);
   await renderWebhooksSection(webhooksArea);
   renderDocsSection(docsArea);
+
+  const me = JSON.parse(localStorage.getItem('crm_user') || '{}');
+  if (me.role === 'admin') {
+    const dangerArea = el('div', { class: 'integration-section' });
+    main.append(dangerArea);
+    renderDangerZoneSection(dangerArea);
+  }
+}
+
+// Опасная зона: предзапусковая очистка тест-данных. Только админ.
+function renderDangerZoneSection(area) {
+  clear(area);
+  area.append(
+    el('div', { class: 'section-header' }, el('h2', { style: { color: '#b91c1c' } }, '⚠️ Опасная зона')),
+    el('p', { class: 'help-banner', style: { background: '#fef2f2', border: '1px solid #fecaca', color: '#7f1d1d' } },
+      'Кнопка ниже снесёт ВСЕ заказы, позиции, платежи, возвраты, очередь МС и уведомления. ',
+      'Сохраняются: пользователи, каталог, прайсы, настройки, токены, лиды/сделки/контакты. ',
+      'Используется перед боевым запуском, чтобы стартовать с чистого листа.',
+    ),
+    el('button', {
+      class: 'btn btn-danger',
+      onClick: async () => {
+        const phrase = prompt('Это удалит ВСЕ заказы, платежи, возвраты, очередь МС и уведомления.\n\nДействие необратимо.\n\nДля подтверждения введите слово УДАЛИТЬ заглавными:');
+        if (!phrase || phrase.trim().toUpperCase() !== 'УДАЛИТЬ') {
+          if (phrase) toast('Не подтверждено — ввели неверное слово', 'error');
+          return;
+        }
+        try {
+          const r = await api.wipeOperational();
+          const lines = Object.entries(r.deleted || {}).map(([k, v]) => `${k}: ${v}`).join('\n');
+          toast('Очистка выполнена', 'success');
+          alert(`Готово. Удалено:\n\n${lines}\n\nОбновите страницу.`);
+        } catch (e) { toast(e.message, 'error'); }
+      },
+    }, '🗑️ Очистить тестовые данные (заказы, платежи, возвраты)'),
+  );
 }
 
 // МС-интеграция: списание/приход. Этап 1 — инициализация и видимость очереди.
