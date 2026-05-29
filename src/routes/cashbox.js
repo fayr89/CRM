@@ -25,7 +25,7 @@ async function cashboxSummary(scopeSql, params) {
     ...params,
   );
   const pending = await db.get(
-    `SELECT ${NET} AS sum, COUNT(*)::int AS count
+    `SELECT ${NET} AS sum, ${COMM} AS commission, COUNT(*)::int AS count
      FROM payments p WHERE ${w} status = 'pending'`,
     ...params,
   );
@@ -44,7 +44,10 @@ async function cashboxSummary(scopeSql, params) {
   return {
     balance: confirmed.sum - confirmed.commission,
     confirmed: { count: confirmed.count, sum: confirmed.sum, commission: confirmed.commission },
-    pending: { count: pending.count, sum: pending.sum },
+    // Pending-баланс теперь тоже считает комиссию — менеджер сразу видит чистый
+    // эффект: amount − commission для прихода, или для split-расхода уже учтено
+    // в самих суммах (там commission = 0 на каждой строке).
+    pending: { count: pending.count, sum: pending.sum - pending.commission, gross: pending.sum, commission: pending.commission },
     rejected: { count: rejected.count },
     recent,
   };

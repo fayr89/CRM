@@ -2767,7 +2767,12 @@ export async function renderCashbox(main) {
           { class: 'balance-card pending' },
           el('div', { class: 'label' }, '⏳ Ожидает подтверждения'),
           el('div', { class: 'value' }, fmtMoney(cashbox.pending.sum, 'RUB')),
-          el('div', { class: 'sub' }, `${cashbox.pending.count} транзакций · отклонено ${cashbox.rejected.count}`),
+          el('div', { class: 'sub' },
+            `${cashbox.pending.count} транзакций · отклонено ${cashbox.rejected.count}`,
+            (cashbox.pending.commission || 0) !== 0
+              ? ` · комиссия ${fmtMoney(Math.abs(cashbox.pending.commission), 'RUB')}`
+              : '',
+          ),
         ),
       ),
     );
@@ -2810,23 +2815,20 @@ export async function renderCashbox(main) {
         el(
           'td',
           {},
-          // Для split-расходов (комиссия — отдельной строкой) поле комиссии больше не
-          // редактируем — комиссия сама по себе строка. Inline-редактор оставляем только
-          // для старых записей и приходов с платформной комиссией.
+          // Для суб-строки комиссии (split-расход) и для split-родителя комиссия не
+          // редактируется. Pending-транзакции (приход/расход без split-комиссии) →
+          // кнопка «Изменить» открывает модалку с % и ₽.
           isCommissionRow || (p.kind === 'expense' && (p.commission || 0) === 0)
             ? '—'
-            : (canConfirm || p.manager_id === me.id)
-              ? (() => {
-                  const ci = el('input', { type: 'number', min: '0', step: 'any', value: p.commission ?? '', style: { width: '90px' }, placeholder: '—' });
-                  ci.addEventListener('change', async () => {
-                    try {
-                      await api.update('payments', p.id, { commission: ci.value === '' ? null : Number(ci.value) });
-                      toast('Комиссия сохранена', 'success');
-                    } catch (e) { toast(e.message, 'error'); }
-                  });
-                  return ci;
-                })()
-              : (p.commission != null ? fmtMoney(p.commission, p.currency) : '—'),
+            : p.status === 'pending' && (canConfirm || p.manager_id === me.id)
+              ? el('button', {
+                  class: 'btn btn-xs',
+                  onClick: () => openCommissionEditor(p),
+                  style: { whiteSpace: 'nowrap' },
+                }, p.commission != null && p.commission > 0
+                    ? `${fmtMoney(p.commission, p.currency)} ✏️`
+                    : '+ комиссию')
+              : (p.commission != null && p.commission > 0 ? fmtMoney(p.commission, p.currency) : '—'),
         ),
         el('td', {}, p.method ? tr('payment_method', p.method) : '—'),
         el('td', {}, p.order_id ? `#${p.order_id}` : (p.reference || '—')),
@@ -2889,7 +2891,6 @@ export async function renderCashbox(main) {
       el('option', { value: 'income' }, '+ Приход'),
       el('option', { value: 'expense' }, '− Расход (списание со счёта)'),
     );
-    const commissionI = el('input', { type: 'number', min: '0', step: 'any', placeholder: '0' });
     const methodI = el(
       'select',
       {},
@@ -2902,48 +2903,14 @@ export async function renderCashbox(main) {
     const orderI = el('input', { type: 'number', min: '1', step: '1', placeholder: 'ID заказа (необязательно)' });
     const notesI = el('textarea', {});
     const orderDevHint = el('div', { class: 'hint' });
+    const hintBlock = el('div', { class: 'hint', style: { marginBottom: '8px' } });
 
-    // Блок «Комиссия + сумма к выводу» — виден только для расхода.
-    const commissionRow = el('div', { class: 'form-row' }, el('label', {}, 'Комиссия'), commissionI);
-    const payoutHint = el('div', {
-      class: 'card',
-      style: { padding: '12px', textAlign: 'center', background: '#f0f9ff', border: '1px solid #bae6fd', marginBottom: '8px', display: 'none' },
-    });
-
-    function updatePayoutHint() {
-      const isExpense = kindI.value === 'expense';
-      commissionRow.style.display = isExpense ? '' : 'none';
-      const amount = Number(amountI.value) || 0;
-      const commission = Number(commissionI.value) || 0;
-      if (!isExpense || amount <= 0) {
-        payoutHint.style.display = 'none';
-        return;
-      }
-      const payout = amount - commission;
-      payoutHint.style.display = '';
-      clear(payoutHint);
-      if (payout <= 0) {
-        payoutHint.style.background = '#fef2f2';
-        payoutHint.style.borderColor = '#fecaca';
-        payoutHint.append(
-          el('div', { style: { color: '#991b1b', fontWeight: 600 } }, '⚠️ Комиссия больше суммы — нечего выводить'),
-        );
-      } else {
-        payoutHint.style.background = '#f0f9ff';
-        payoutHint.style.borderColor = '#bae6fd';
-        payoutHint.append(
-          el('div', { style: { fontSize: '13px', color: 'var(--text-muted)' } }, 'Сумма к выводу'),
-          el('div', { style: { fontSize: '26px', fontWeight: 700, color: '#0369a1', marginTop: '2px' } }, fmtMoney(payout, 'RUB')),
-          commission > 0
-            ? el('div', { style: { fontSize: '12px', color: 'var(--text-muted)', marginTop: '4px' } },
-                `${fmtMoney(amount, 'RUB')} − комиссия ${fmtMoney(commission, 'RUB')} · создадутся 2 транзакции`)
-            : el('div', { style: { fontSize: '12px', color: 'var(--text-muted)', marginTop: '4px' } }, 'Без комиссии — одна транзакция'),
-        );
-      }
+    function updateHint() {
+      hintBlock.textContent = kindI.value === 'expense'
+        ? 'Расход без комиссии. Чтобы добавить комиссию к списанию — сначала создайте, потом откройте строку в таблице.'
+        : 'Приход. Комиссия (если есть) — задаётся в строке транзакции после создания.';
     }
-    kindI.addEventListener('change', updatePayoutHint);
-    amountI.addEventListener('input', updatePayoutHint);
-    commissionI.addEventListener('input', updatePayoutHint);
+    kindI.addEventListener('change', updateHint);
 
     // При привязке к заказу с отклонением цены — показываем и добавляем пометку в заметки кассы.
     orderI.addEventListener('change', async () => {
@@ -2970,15 +2937,13 @@ export async function renderCashbox(main) {
       {},
       el('div', { class: 'form-row' }, el('label', {}, 'Тип'), kindI),
       el('div', { class: 'form-row' }, el('label', {}, 'Сумма *'), amountI),
-      commissionRow,
-      payoutHint,
+      hintBlock,
       el('div', { class: 'form-row' }, el('label', {}, 'Метод'), methodI),
       el('div', { class: 'form-row' }, el('label', {}, 'Номер транзакции'), referenceI),
       el('div', { class: 'form-row' }, el('label', {}, 'Привязать к заказу (id)'), orderI, orderDevHint),
       el('div', { class: 'form-row' }, el('label', {}, 'Заметки'), notesI),
     );
-    // Начальное состояние: приход → комиссия скрыта.
-    updatePayoutHint();
+    updateHint();
 
     await openModal('Добавить транзакцию', body, {
       primaryLabel: 'Добавить',
@@ -2988,26 +2953,89 @@ export async function renderCashbox(main) {
           toast('Укажите сумму', 'error');
           return false;
         }
-        const commission = kindI.value === 'expense' && commissionI.value ? Number(commissionI.value) : null;
-        if (kindI.value === 'expense' && commission != null && commission >= amount) {
-          toast('Комиссия больше или равна сумме', 'error');
-          return false;
-        }
         await api.create('payments', {
           amount,
           kind: kindI.value,
-          // Для прихода комиссия не используется — передаём null
-          commission: kindI.value === 'expense' ? commission : null,
+          // Комиссия только при создании авто-расхода через order (двухтранзакционный split);
+          // здесь, в ручной форме, комиссию не передаём — её ставят потом в строке.
           method: methodI.value || null,
           reference: referenceI.value || null,
           order_id: orderI.value ? Number(orderI.value) : null,
           notes: notesI.value || null,
         });
-        toast(
-          kindI.value === 'expense' && commission ? 'Создано 2 транзакции (вывод + комиссия)' : 'Транзакция добавлена, ждёт подтверждения',
-          'success',
-        );
+        toast('Транзакция добавлена, ждёт подтверждения', 'success');
         reload();
+      },
+    });
+  }
+
+  // Редактирование комиссии: модалка с двумя полями % и ₽, любое из них считает второе.
+  // Сохраняет в БД ₽ (commission column). Доступно для pending-транзакций (после
+  // подтверждения комиссию уже не меняем — может «уехать» баланс).
+  async function openCommissionEditor(payment) {
+    const amount = Number(payment.amount) || 0;
+    const currentRub = Number(payment.commission) || 0;
+    const currentPct = amount > 0 ? Math.round((currentRub / amount) * 10000) / 100 : 0;
+    const pctI = el('input', { type: 'number', min: '0', step: '0.01', value: currentPct || '', style: { width: '120px' } });
+    const rubI = el('input', { type: 'number', min: '0', step: 'any', value: currentRub || '', style: { width: '120px' } });
+    const netLine = el('div', {
+      style: { padding: '12px', background: '#f0f9ff', border: '1px solid #bae6fd', borderRadius: '6px', marginTop: '12px', textAlign: 'center' },
+    });
+
+    function refreshNet() {
+      const rub = Number(rubI.value) || 0;
+      const net = amount - rub;
+      clear(netLine);
+      netLine.append(
+        el('div', { style: { fontSize: '13px', color: 'var(--text-muted)' } }, 'К зачислению на баланс'),
+        el('div', { style: { fontSize: '24px', fontWeight: 700, color: '#0369a1', marginTop: '2px' } }, fmtMoney(net, payment.currency || 'RUB')),
+        el('div', { style: { fontSize: '12px', color: 'var(--text-muted)', marginTop: '4px' } },
+          `${fmtMoney(amount, payment.currency || 'RUB')} − комиссия ${fmtMoney(rub, payment.currency || 'RUB')}`,
+        ),
+      );
+    }
+
+    pctI.addEventListener('input', () => {
+      const pct = Number(pctI.value) || 0;
+      rubI.value = Math.round(amount * pct) / 100;
+      refreshNet();
+    });
+    rubI.addEventListener('input', () => {
+      const rub = Number(rubI.value) || 0;
+      pctI.value = amount > 0 ? Math.round((rub / amount) * 10000) / 100 : 0;
+      refreshNet();
+    });
+
+    const body = el('div', {},
+      el('div', { class: 'form-row' },
+        el('label', {}, 'Сумма транзакции'),
+        el('div', {}, el('b', {}, fmtMoney(amount, payment.currency || 'RUB'))),
+      ),
+      el('div', { class: 'form-row' },
+        el('label', {}, 'Комиссия %'),
+        el('div', { style: { display: 'flex', alignItems: 'center', gap: '4px' } }, pctI, el('span', {}, '%')),
+      ),
+      el('div', { class: 'form-row' },
+        el('label', {}, 'Комиссия ₽'),
+        el('div', { style: { display: 'flex', alignItems: 'center', gap: '4px' } }, rubI, el('span', {}, '₽')),
+      ),
+      el('div', { class: 'hint', style: { marginTop: '4px' } },
+        'Любое поле — второе пересчитается автоматически. Сохраняется ₽.'),
+      netLine,
+    );
+    refreshNet();
+
+    await openModal(`Комиссия к транзакции #${payment.id}`, body, {
+      primaryLabel: 'Сохранить',
+      onSubmit: async () => {
+        const rub = Number(rubI.value) || 0;
+        if (rub < 0) { toast('Комиссия не может быть отрицательной', 'error'); return false; }
+        if (rub > amount) { toast('Комиссия больше суммы транзакции', 'error'); return false; }
+        try {
+          await api.update('payments', payment.id, { commission: rub === 0 ? null : rub });
+          toast('Комиссия сохранена', 'success');
+          reload();
+        } catch (e) { toast(e.message, 'error'); return false; }
       },
     });
   }
