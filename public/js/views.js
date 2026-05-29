@@ -2994,7 +2994,10 @@ export async function renderCashbox(main) {
     const currentPct = amount > 0 ? Math.round((currentRub / amount) * 10000) / 100 : 0;
     const pctI = el('input', { type: 'number', min: '0', step: '0.01', value: currentPct || '', style: { width: '120px' } });
     const rubI = el('input', { type: 'number', min: '0', step: 'any', value: currentRub || '', style: { width: '120px' } });
-    const grossI = el('input', { type: 'number', min: '0', step: 'any', value: currentRub > 0 ? amount + currentRub : '', style: { width: '120px' } });
+    // «Сумма с комиссией» — сумма после удержания комиссии (нетто, то что фактически
+     // приходит на счёт). = amount − commission. Заполнить можно вместо комиссии:
+     // знаешь сколько пришло — впиши, комиссия посчитается обратно.
+    const netI = el('input', { type: 'number', min: '0', step: 'any', value: currentRub > 0 ? Math.round((amount - currentRub) * 100) / 100 : '', style: { width: '120px' } });
     const netLine = el('div', {
       style: { padding: '12px', background: '#f0f9ff', border: '1px solid #bae6fd', borderRadius: '6px', marginTop: '12px', textAlign: 'center' },
     });
@@ -3013,23 +3016,23 @@ export async function renderCashbox(main) {
     }
 
     // Связь трёх полей: при изменении любого — остальные два пересчитываются.
-    // amount фиксирован (это сумма транзакции из БД).
+    // amount фиксирован (это сумма транзакции из БД). net = amount − commission.
     pctI.addEventListener('input', () => {
       const pct = Number(pctI.value) || 0;
       const rub = Math.round(amount * pct) / 100;
       rubI.value = rub;
-      grossI.value = rub > 0 ? Math.round((amount + rub) * 100) / 100 : '';
+      netI.value = Math.round((amount - rub) * 100) / 100;
       refreshNet();
     });
     rubI.addEventListener('input', () => {
       const rub = Number(rubI.value) || 0;
       pctI.value = amount > 0 ? Math.round((rub / amount) * 10000) / 100 : 0;
-      grossI.value = rub > 0 ? Math.round((amount + rub) * 100) / 100 : '';
+      netI.value = Math.round((amount - rub) * 100) / 100;
       refreshNet();
     });
-    grossI.addEventListener('input', () => {
-      const gross = Number(grossI.value) || 0;
-      const rub = Math.max(0, Math.round((gross - amount) * 100) / 100);
+    netI.addEventListener('input', () => {
+      const net = Number(netI.value) || 0;
+      const rub = Math.max(0, Math.round((amount - net) * 100) / 100);
       rubI.value = rub > 0 ? rub : '';
       pctI.value = amount > 0 && rub > 0 ? Math.round((rub / amount) * 10000) / 100 : '';
       refreshNet();
@@ -3050,10 +3053,10 @@ export async function renderCashbox(main) {
       ),
       el('div', { class: 'form-row' },
         el('label', {}, 'Сумма с комиссией'),
-        el('div', { style: { display: 'flex', alignItems: 'center', gap: '4px' } }, grossI, el('span', {}, '₽')),
+        el('div', { style: { display: 'flex', alignItems: 'center', gap: '4px' } }, netI, el('span', {}, '₽')),
       ),
       el('div', { class: 'hint', style: { marginTop: '4px' } },
-        'Заполни любое из трёх полей — остальные пересчитаются. «Сумма с комиссией» = сумма транзакции + комиссия (если знаешь валовую сумму до удержания).'),
+        'Заполни любое из трёх полей — остальные пересчитаются. «Сумма с комиссией» = сколько реально пришло на счёт после удержания комиссии (= сумма транзакции − комиссия).'),
       netLine,
     );
     refreshNet();
