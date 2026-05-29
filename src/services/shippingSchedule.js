@@ -25,28 +25,35 @@ export function parseCutoff(cutoff) {
 }
 
 // Вычисляет ближайшую дату отгрузки от now с учётом графика.
-// Возвращает Date с часом = cutoff (т.е. дата+время дедлайна на тот день).
-// Если сегодня — отгрузочный день и время до cutoff: возвращает сегодня.
-// Иначе: следующий день из расписания.
+// Время cutoff трактуется в МСК (Europe/Moscow, фикс UTC+3 — РФ без перехода
+// на летнее время). На Vercel сервер в UTC, поэтому без сдвига cutoff 10:00
+// превращался бы в МСК 13:00. Возвращаем Date — абсолютный момент (UTC),
+// который при форматировании в МСК даёт нужный час.
+const MSK_OFFSET_MS = 3 * 60 * 60 * 1000;
+const toMsk = (d) => new Date(d.getTime() + MSK_OFFSET_MS);
+const fromMsk = (d) => new Date(d.getTime() - MSK_OFFSET_MS);
+
 export function nextShippingDate(scheduleDays, cutoffTime, now = new Date()) {
   const allowed = parseDays(scheduleDays);
   if (allowed.size === 0) return null;
   const { hours, minutes } = parseCutoff(cutoffTime);
 
-  const result = new Date(now);
-  result.setHours(hours, minutes, 0, 0);
+  // Работаем в «псевдо-UTC, который на самом деле МСК».
+  const mskNow = toMsk(now);
+  const mskResult = new Date(mskNow);
+  mskResult.setUTCHours(hours, minutes, 0, 0);
 
-  // Сегодня — отгрузочный и ещё не прошёл дедлайн
-  if (allowed.has(now.getDay()) && now.getTime() < result.getTime()) {
-    return result;
+  // Сегодня в МСК — отгрузочный и ещё не прошёл дедлайн.
+  if (allowed.has(mskNow.getUTCDay()) && mskNow.getTime() < mskResult.getTime()) {
+    return fromMsk(mskResult);
   }
 
-  // Ищем ближайший следующий день
+  // Ищем ближайший следующий день (по МСК-календарю).
   for (let i = 1; i <= 7; i += 1) {
-    const candidate = new Date(now);
-    candidate.setDate(now.getDate() + i);
-    candidate.setHours(hours, minutes, 0, 0);
-    if (allowed.has(candidate.getDay())) return candidate;
+    const candidate = new Date(mskNow);
+    candidate.setUTCDate(mskNow.getUTCDate() + i);
+    candidate.setUTCHours(hours, minutes, 0, 0);
+    if (allowed.has(candidate.getUTCDay())) return fromMsk(candidate);
   }
   return null;
 }

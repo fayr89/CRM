@@ -3506,7 +3506,12 @@ export async function renderDashboard(main) {
 async function renderWarehouseDashboard(container) {
   const r = await api.readyToShip();
   const orders = r.data || [];
-  const nextDate = r.next_shipping_date ? fmtDateTime(r.next_shipping_date) : '—';
+  const nextDate = r.next_shipping_date
+    ? new Intl.DateTimeFormat('ru-RU', {
+        day: '2-digit', month: 'long', hour: '2-digit', minute: '2-digit',
+        timeZone: 'Europe/Moscow',
+      }).format(new Date(r.next_shipping_date)) + ' МСК'
+    : '—';
   const needQr = orders.filter((o) => o.marketplace === 'Avito' && o.payment_method === 'avito_delivery' && !o.shipment_qr).length;
   container.append(
     el('div', { class: 'dashboard-grid' },
@@ -7130,13 +7135,14 @@ function renderContent(container, schedule, readyList, canEdit, reload) {
         'div',
         { style: { fontSize: '24px', fontWeight: '700', marginTop: '4px' } },
         next
-          ? next.toLocaleDateString('ru-RU', {
+          ? new Intl.DateTimeFormat('ru-RU', {
               weekday: 'long',
               day: 'numeric',
               month: 'long',
               hour: '2-digit',
               minute: '2-digit',
-            })
+              timeZone: 'Europe/Moscow',
+            }).format(next) + ' МСК'
           : '—',
       ),
       el(
