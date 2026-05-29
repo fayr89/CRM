@@ -2707,17 +2707,22 @@ export async function renderCashbox(main) {
   const me = JSON.parse(localStorage.getItem('crm_user') || '{}');
   const isAdmin = me.role === 'admin';
   const canConfirm = ['admin', 'finance'].includes(me.role); // подтверждение транзакций
+  const canFilterByManager = ['admin', 'finance'].includes(me.role);
+  const state = { managerId: '' };
   const tableArea = el('div');
   const summaryArea = el('div');
+  const filterArea = el('div', { class: 'filter-bar', style: { marginBottom: '12px' } });
 
   async function reload() {
     clear(summaryArea);
     clear(tableArea);
     summaryArea.append(el('div', { class: 'loading' }, 'Загрузка…'));
     try {
+      const paymentsQuery = { limit: 50 };
+      if (state.managerId) paymentsQuery.manager_id = state.managerId;
       const [cashbox, payments] = await Promise.all([
-        api.cashbox(),
-        api.list('payments', { limit: 50 }),
+        api.cashbox(undefined, state.managerId || undefined),
+        api.list('payments', paymentsQuery),
       ]);
       renderSummary(cashbox);
       renderPayments(payments);
@@ -2725,6 +2730,22 @@ export async function renderCashbox(main) {
       clear(summaryArea);
       summaryArea.append(el('div', { class: 'empty' }, `Ошибка: ${e.message}`));
     }
+  }
+
+  function renderFilter() {
+    clear(filterArea);
+    if (!canFilterByManager) return;
+    const sel = el('select', {},
+      el('option', { value: '' }, '— Все менеджеры —'),
+      ...CACHE.users
+        .filter((u) => ['admin', 'manager', 'sales', 'rop'].includes(u.role))
+        .map((u) => el('option', { value: u.id, selected: String(u.id) === String(state.managerId) }, `${u.name} (${tr('role', u.role)})`)),
+    );
+    sel.addEventListener('change', () => {
+      state.managerId = sel.value;
+      reload();
+    });
+    filterArea.append(el('label', {}, '👤 Менеджер: ', sel));
   }
 
   function renderSummary(cashbox) {
@@ -2772,29 +2793,40 @@ export async function renderCashbox(main) {
       el('th', {}, 'Статус'),
       el('th', { style: { textAlign: 'right' } }, 'Действия'),
     );
-    const body = rows.map((p) =>
-      el(
+    const body = rows.map((p) => {
+      // Помечаем суб-строки (комиссия к выводу) визуально и не даём редактировать.
+      const isCommissionRow = p.parent_payment_id != null;
+      const typeLabel = isCommissionRow
+        ? el('span', { class: 'dev-down', title: `Комиссия к выводу #${p.parent_payment_id}` }, '↳ комиссия')
+        : p.kind === 'expense'
+          ? el('span', { class: 'dev-down' }, '− расход')
+          : el('span', { class: 'dev-up' }, '+ приход');
+      return el(
         'tr',
-        {},
+        { style: isCommissionRow ? { background: '#f9fafb' } : {} },
         el('td', {}, fmtDateTime(p.created_at)),
-        el('td', {}, p.kind === 'expense' ? el('span', { class: 'dev-down' }, '− расход') : el('span', { class: 'dev-up' }, '+ приход')),
+        el('td', {}, typeLabel),
         el('td', {}, fmtMoney(p.amount, p.currency)),
         el(
           'td',
           {},
-          // Комиссию вводит менеджер (своя транзакция) или финансист/админ (любая).
-          (canConfirm || p.manager_id === me.id)
-            ? (() => {
-                const ci = el('input', { type: 'number', min: '0', step: 'any', value: p.commission ?? '', style: { width: '90px' }, placeholder: '—' });
-                ci.addEventListener('change', async () => {
-                  try {
-                    await api.update('payments', p.id, { commission: ci.value === '' ? null : Number(ci.value) });
-                    toast('Комиссия сохранена', 'success');
-                  } catch (e) { toast(e.message, 'error'); }
-                });
-                return ci;
-              })()
-            : (p.commission != null ? fmtMoney(p.commission, p.currency) : '—'),
+          // Для split-расходов (комиссия — отдельной строкой) поле комиссии больше не
+          // редактируем — комиссия сама по себе строка. Inline-редактор оставляем только
+          // для старых записей и приходов с платформной комиссией.
+          isCommissionRow || (p.kind === 'expense' && (p.commission || 0) === 0)
+            ? '—'
+            : (canConfirm || p.manager_id === me.id)
+              ? (() => {
+                  const ci = el('input', { type: 'number', min: '0', step: 'any', value: p.commission ?? '', style: { width: '90px' }, placeholder: '—' });
+                  ci.addEventListener('change', async () => {
+                    try {
+                      await api.update('payments', p.id, { commission: ci.value === '' ? null : Number(ci.value) });
+                      toast('Комиссия сохранена', 'success');
+                    } catch (e) { toast(e.message, 'error'); }
+                  });
+                  return ci;
+                })()
+              : (p.commission != null ? fmtMoney(p.commission, p.currency) : '—'),
         ),
         el('td', {}, p.method ? tr('payment_method', p.method) : '—'),
         el('td', {}, p.order_id ? `#${p.order_id}` : (p.reference || '—')),
@@ -2838,8 +2870,8 @@ export async function renderCashbox(main) {
             ? el('span', { class: 'hint' }, p.rejection_reason)
             : null,
         ),
-      ),
-    );
+      );
+    });
     tableArea.append(
       el(
         'div',
@@ -2855,9 +2887,9 @@ export async function renderCashbox(main) {
       'select',
       {},
       el('option', { value: 'income' }, '+ Приход'),
-      el('option', { value: 'expense' }, '− Расход'),
+      el('option', { value: 'expense' }, '− Расход (списание со счёта)'),
     );
-    const commissionI = el('input', { type: 'number', min: '0', step: 'any', placeholder: 'Комиссия площадки (необязательно)' });
+    const commissionI = el('input', { type: 'number', min: '0', step: 'any', placeholder: '0' });
     const methodI = el(
       'select',
       {},
@@ -2870,6 +2902,48 @@ export async function renderCashbox(main) {
     const orderI = el('input', { type: 'number', min: '1', step: '1', placeholder: 'ID заказа (необязательно)' });
     const notesI = el('textarea', {});
     const orderDevHint = el('div', { class: 'hint' });
+
+    // Блок «Комиссия + сумма к выводу» — виден только для расхода.
+    const commissionRow = el('div', { class: 'form-row' }, el('label', {}, 'Комиссия'), commissionI);
+    const payoutHint = el('div', {
+      class: 'card',
+      style: { padding: '12px', textAlign: 'center', background: '#f0f9ff', border: '1px solid #bae6fd', marginBottom: '8px', display: 'none' },
+    });
+
+    function updatePayoutHint() {
+      const isExpense = kindI.value === 'expense';
+      commissionRow.style.display = isExpense ? '' : 'none';
+      const amount = Number(amountI.value) || 0;
+      const commission = Number(commissionI.value) || 0;
+      if (!isExpense || amount <= 0) {
+        payoutHint.style.display = 'none';
+        return;
+      }
+      const payout = amount - commission;
+      payoutHint.style.display = '';
+      clear(payoutHint);
+      if (payout <= 0) {
+        payoutHint.style.background = '#fef2f2';
+        payoutHint.style.borderColor = '#fecaca';
+        payoutHint.append(
+          el('div', { style: { color: '#991b1b', fontWeight: 600 } }, '⚠️ Комиссия больше суммы — нечего выводить'),
+        );
+      } else {
+        payoutHint.style.background = '#f0f9ff';
+        payoutHint.style.borderColor = '#bae6fd';
+        payoutHint.append(
+          el('div', { style: { fontSize: '13px', color: 'var(--text-muted)' } }, 'Сумма к выводу'),
+          el('div', { style: { fontSize: '26px', fontWeight: 700, color: '#0369a1', marginTop: '2px' } }, fmtMoney(payout, 'RUB')),
+          commission > 0
+            ? el('div', { style: { fontSize: '12px', color: 'var(--text-muted)', marginTop: '4px' } },
+                `${fmtMoney(amount, 'RUB')} − комиссия ${fmtMoney(commission, 'RUB')} · создадутся 2 транзакции`)
+            : el('div', { style: { fontSize: '12px', color: 'var(--text-muted)', marginTop: '4px' } }, 'Без комиссии — одна транзакция'),
+        );
+      }
+    }
+    kindI.addEventListener('change', updatePayoutHint);
+    amountI.addEventListener('input', updatePayoutHint);
+    commissionI.addEventListener('input', updatePayoutHint);
 
     // При привязке к заказу с отклонением цены — показываем и добавляем пометку в заметки кассы.
     orderI.addEventListener('change', async () => {
@@ -2896,12 +2970,15 @@ export async function renderCashbox(main) {
       {},
       el('div', { class: 'form-row' }, el('label', {}, 'Тип'), kindI),
       el('div', { class: 'form-row' }, el('label', {}, 'Сумма *'), amountI),
-      el('div', { class: 'form-row' }, el('label', {}, 'Комиссия'), commissionI),
+      commissionRow,
+      payoutHint,
       el('div', { class: 'form-row' }, el('label', {}, 'Метод'), methodI),
       el('div', { class: 'form-row' }, el('label', {}, 'Номер транзакции'), referenceI),
       el('div', { class: 'form-row' }, el('label', {}, 'Привязать к заказу (id)'), orderI, orderDevHint),
       el('div', { class: 'form-row' }, el('label', {}, 'Заметки'), notesI),
     );
+    // Начальное состояние: приход → комиссия скрыта.
+    updatePayoutHint();
 
     await openModal('Добавить транзакцию', body, {
       primaryLabel: 'Добавить',
@@ -2911,16 +2988,25 @@ export async function renderCashbox(main) {
           toast('Укажите сумму', 'error');
           return false;
         }
+        const commission = kindI.value === 'expense' && commissionI.value ? Number(commissionI.value) : null;
+        if (kindI.value === 'expense' && commission != null && commission >= amount) {
+          toast('Комиссия больше или равна сумме', 'error');
+          return false;
+        }
         await api.create('payments', {
           amount,
           kind: kindI.value,
-          commission: commissionI.value ? Number(commissionI.value) : null,
+          // Для прихода комиссия не используется — передаём null
+          commission: kindI.value === 'expense' ? commission : null,
           method: methodI.value || null,
           reference: referenceI.value || null,
           order_id: orderI.value ? Number(orderI.value) : null,
           notes: notesI.value || null,
         });
-        toast('Транзакция добавлена, ждёт подтверждения', 'success');
+        toast(
+          kindI.value === 'expense' && commission ? 'Создано 2 транзакции (вывод + комиссия)' : 'Транзакция добавлена, ждёт подтверждения',
+          'success',
+        );
         reload();
       },
     });
@@ -2934,10 +3020,12 @@ export async function renderCashbox(main) {
       el('button', { class: 'btn btn-primary', onClick: openAddPayment }, 'Добавить транзакцию'),
     ),
     el('div', { class: 'help-row' }, helpButton('cashbox')),
+    filterArea,
     summaryArea,
     el('h3', { class: 'page-subtitle', style: { marginTop: '16px', marginBottom: '8px' } }, 'Транзакции'),
     tableArea,
   );
+  renderFilter();
   reload();
 }
 

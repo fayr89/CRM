@@ -50,12 +50,19 @@ async function cashboxSummary(scopeSql, params) {
   };
 }
 
-// Касса текущего пользователя (admin/finance — вся касса, остальные — своя).
+// Касса текущего пользователя (admin/finance — вся касса либо по фильтру manager_id,
+// остальные — только своя).
 router.get(
   '/',
   asyncHandler(async (req, res) => {
     if (['admin', 'finance'].includes(req.user.role)) {
-      res.json(await cashboxSummary('', []));
+      // Опциональный фильтр по конкретному менеджеру.
+      const mid = req.query.manager_id ? Number(req.query.manager_id) : null;
+      if (mid) {
+        res.json(await cashboxSummary('p.manager_id = ?', [mid]));
+      } else {
+        res.json(await cashboxSummary('', []));
+      }
     } else {
       res.json(await cashboxSummary('p.manager_id = ?', [req.user.id]));
     }

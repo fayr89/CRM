@@ -488,6 +488,12 @@ export async function ensureInitialized() {
       // Касса: комиссия площадки и тип транзакции (income/expense), привязка авто-транзакции к заказу.
       await pool.query('ALTER TABLE payments ADD COLUMN IF NOT EXISTS commission REAL');
       await pool.query("ALTER TABLE payments ADD COLUMN IF NOT EXISTS kind TEXT DEFAULT 'income'");
+      // Связь вывод↔комиссия: при списании со счёта формируется ДВЕ транзакции
+      // (одна на сумму к выводу, одна на комиссию). parent_payment_id у комиссии
+      // указывает на родительский «вывод». При удалении родителя комиссия каскадно
+      // удаляется — данные не висят сиротами.
+      await pool.query('ALTER TABLE payments ADD COLUMN IF NOT EXISTS parent_payment_id INTEGER REFERENCES payments(id) ON DELETE CASCADE');
+      await pool.query('CREATE INDEX IF NOT EXISTS idx_payments_parent ON payments(parent_payment_id) WHERE parent_payment_id IS NOT NULL');
       // Возвраты: отменённый заказ → склад возвращает в сток или списывает (с пруфом-фото).
       await pool.query('ALTER TABLE orders ADD COLUMN IF NOT EXISTS return_status TEXT');
       await pool.query('ALTER TABLE orders ADD COLUMN IF NOT EXISTS return_proof TEXT');

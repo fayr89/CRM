@@ -128,8 +128,10 @@ export const api = {
   rejectPayment: (id, reason) =>
     request('POST', `/api/payments/${id}/reject`, { body: { reason } }),
 
-  cashbox: (userId) =>
-    request('GET', userId ? `/api/cashbox/${userId}` : '/api/cashbox'),
+  cashbox: (userId, managerId) =>
+    request('GET', userId ? `/api/cashbox/${userId}` : '/api/cashbox', {
+      query: managerId ? { manager_id: String(managerId) } : {},
+    }),
 
   // Интеграции и уведомления
   notifications: (unread) =>

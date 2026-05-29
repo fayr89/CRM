@@ -126,6 +126,59 @@ router.post(
       const order = await db.get('SELECT * FROM orders WHERE id = ?', data.order_id);
       if (!order) throw BadRequest('Указанный заказ не найден');
     }
+
+    // Расход с комиссией → две транзакции (вывод + комиссия) в одной БД-транзакции.
+    // Это списание со счёта в кассе: менеджер хочет вывести `amount`, банк/маркетплейс
+    // удерживает `commission`, на руки получит `amount - commission`.
+    if (data.kind === 'expense' && (data.commission || 0) > 0) {
+      const payout = Math.round((data.amount - data.commission) * 100) / 100;
+      if (payout <= 0) {
+        throw BadRequest('Комиссия больше или равна сумме вывода');
+      }
+      const created = await db.withTransaction(async (tx) => {
+        // 1) Основная транзакция «вывод» — на сумму к выводу (amount - commission).
+        const parent = await tx.run(
+          `INSERT INTO payments (manager_id, order_id, amount, currency, method, reference, notes, commission, kind)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
+          req.user.id,
+          data.order_id ?? null,
+          payout,
+          data.currency ?? 'RUB',
+          data.method ?? null,
+          data.reference ?? null,
+          `Вывод${data.notes ? ' · ' + data.notes : ''}`,
+          0,
+          'expense',
+        );
+        // 2) Транзакция комиссии — со ссылкой parent_payment_id на вывод.
+        await tx.run(
+          `INSERT INTO payments (manager_id, order_id, amount, currency, method, reference, notes, commission, kind, parent_payment_id)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          req.user.id,
+          data.order_id ?? null,
+          data.commission,
+          data.currency ?? 'RUB',
+          data.method ?? null,
+          data.reference ?? null,
+          `Комиссия к выводу #${parent.lastInsertRowid}`,
+          0,
+          'expense',
+          parent.lastInsertRowid,
+        );
+        return parent.lastInsertRowid;
+      });
+      await logAction(req, {
+        action: 'payment.created',
+        entity_type: 'payment',
+        entity_id: created,
+        details: { kind: 'expense', payout, commission: data.commission, total: data.amount, split: true },
+      });
+      return res
+        .status(201)
+        .json(await db.get('SELECT * FROM payments WHERE id = ?', created));
+    }
+
+    // Обычный случай: одна транзакция (приход или расход без комиссии).
     const result = await db.run(
       `INSERT INTO payments (manager_id, order_id, amount, currency, method, reference, notes, commission, kind)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
