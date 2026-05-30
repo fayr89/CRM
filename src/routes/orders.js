@@ -747,6 +747,49 @@ router.post(
     if (!order.shipment_qr || !String(order.shipment_qr).trim()) {
       throw BadRequest('Заполните «Номер отправления» в заказе — он обязателен при резерве.');
     }
+    // Проверка остатков на складе списания: available = stock − reserve.
+    // Позиции без product_id (ручные) пропускаем — учёт по ним не ведём.
+    // Если хоть одна позиция превышает доступное — возвращаем 400 со списком,
+    // менеджер увидит конкретные товары и корректирует или ждёт прихода.
+    // Админ/склад могут передать ?force=1 чтобы зарезервировать в обход (срочно).
+    const force = req.query.force === '1' && ['admin', 'warehouse'].includes(req.user.role);
+    if (!force) {
+      const items = await db.all(
+        `SELECT oi.id, oi.name, oi.quantity, oi.product_id, oi.sku, p.stock_by_store
+         FROM order_items oi LEFT JOIN products p ON p.id = oi.product_id
+         WHERE oi.order_id = ?`,
+        order.id,
+      );
+      const wh = (order.warehouse || '').trim();
+      const issues = [];
+      for (const it of items) {
+        if (!it.product_id) continue;
+        if (!wh) {
+          issues.push({ name: it.name, sku: it.sku, qty: it.quantity, available: 0, reason: 'не задан склад списания' });
+          continue;
+        }
+        const sbs = Array.isArray(it.stock_by_store) ? it.stock_by_store
+          : (typeof it.stock_by_store === 'string' ? JSON.parse(it.stock_by_store || '[]') : []);
+        const row = sbs.find((e) => String(e.store || '').trim() === wh);
+        const stock = Number(row?.stock) || 0;
+        const reserve = Number(row?.reserve) || 0;
+        const available = Math.max(0, stock - reserve);
+        if (it.quantity > available) {
+          issues.push({ name: it.name, sku: it.sku, qty: it.quantity, available });
+        }
+      }
+      if (issues.length) {
+        const lines = issues.map((i) =>
+          `• ${i.name}${i.sku ? ' (' + i.sku + ')' : ''}: нужно ${i.qty}, доступно ${i.available}${i.reason ? ' — ' + i.reason : ''}`,
+        ).join('\n');
+        throw BadRequest(
+          `Недостаточно товара на складе «${wh || '—'}»:\n${lines}\n\n` +
+          (['admin', 'warehouse'].includes(req.user.role)
+            ? 'Если уверены — нажмите «Зарезервировать всё равно».'
+            : 'Обратитесь к складу или дождитесь поставки.'),
+        );
+      }
+    }
     // Смена статуса + создание кассового прихода — в одной БД-транзакции, чтобы
     // не было рассинхрона: либо заказ зарезервирован И транзакция создана, либо ничего.
     await db.withTransaction(async (tx) => {

@@ -108,7 +108,9 @@ export const api = {
     a.remove();
     URL.revokeObjectURL(downloadUrl);
   },
-  reserveOrder: (id) => request('POST', `/api/orders/${id}/reserve`),
+  reserveOrder: (id, opts = {}) => request('POST', `/api/orders/${id}/reserve`, {
+    query: opts.force ? { force: '1' } : {},
+  }),
   unreserveOrder: (id) => request('POST', `/api/orders/${id}/unreserve`),
   shipOrder: (id) => request('POST', `/api/orders/${id}/ship`),
   shipBulk: (ids) => request('POST', '/api/orders/ship-bulk', { body: { ids } }),

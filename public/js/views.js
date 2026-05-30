@@ -2055,6 +2055,50 @@ async function openSplitDialog(order, onDone) {
   });
 }
 
+// Резерв с проверкой остатков: бэк возвращает 400 с многострочным сообщением
+// «Недостаточно товара…». Для admin/warehouse предлагаем кнопку «всё равно»,
+// которая повторяет вызов с force=1. Возвращает true если резерв успешен.
+async function reserveOrderWithStockCheck(orderId) {
+  const me = JSON.parse(localStorage.getItem('crm_user') || '{}');
+  const canForce = ['admin', 'warehouse'].includes(me.role);
+  try {
+    await api.reserveOrder(orderId);
+    return true;
+  } catch (e) {
+    const msg = e.message || '';
+    const isStockIssue = msg.startsWith('Недостаточно товара');
+    if (!isStockIssue) {
+      toast(msg || 'Ошибка резерва', 'error');
+      return false;
+    }
+    if (!canForce) {
+      // Менеджер просто видит проблему — кнопки force нет.
+      const body = el('div', {},
+        el('div', { style: { whiteSpace: 'pre-wrap', fontSize: '13px' } }, msg),
+      );
+      await openModal('❌ Недостаточно товара', body, { primaryLabel: 'Понятно', onSubmit: () => true });
+      return false;
+    }
+    // admin/warehouse — даём override.
+    const body = el('div', {},
+      el('div', { style: { whiteSpace: 'pre-wrap', fontSize: '13px', background: '#fef2f2', border: '1px solid #fecaca', borderRadius: '6px', padding: '10px', color: '#7f1d1d' } }, msg),
+    );
+    const confirmed = await openModal('⚠️ Резерв при нехватке остатка', body, {
+      primaryLabel: '⚠️ Зарезервировать всё равно',
+      onSubmit: () => true,
+    });
+    if (!confirmed) return false;
+    try {
+      await api.reserveOrder(orderId, { force: true });
+      toast('Зарезервировано в обход проверки остатков', '');
+      return true;
+    } catch (e2) {
+      toast(e2.message || 'Ошибка', 'error');
+      return false;
+    }
+  }
+}
+
 export async function renderOrders(main) {
   await loadLookups();
   const me = JSON.parse(localStorage.getItem('crm_user') || '{}');
@@ -2215,7 +2259,11 @@ export async function renderOrders(main) {
     if (src === 'new' && dst === 'reserved') {
       const ok = await confirm('Перевести заказ в «Зарезервирован»? Товар будет зарезервирован в МойСклад на складе списания.');
       if (!ok) return false;
-      return api.reserveOrder(id);
+      const success = await reserveOrderWithStockCheck(id);
+      // Возвращаем «как бы успех», чтобы caller не показывал свой toast при отмене —
+      // если success=false, уже показали диалог об ошибке.
+      if (!success) return false;
+      return true;
     }
     if (src === 'reserved' && dst === 'new') {
       const ok = await confirm('Снять резерв? Резерв в МойСклад снимется, незаконченная транзакция в кассе удалится.');
@@ -2281,7 +2329,8 @@ export async function renderOrders(main) {
               class: 'btn btn-sm',
               onClick: async (e) => {
                 e.stopPropagation();
-                await api.reserveOrder(r.id);
+                const ok = await reserveOrderWithStockCheck(r.id);
+                if (!ok) return;
                 toast('Зарезервировано', 'success');
                 reload();
               },
