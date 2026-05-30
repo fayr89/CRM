@@ -2668,9 +2668,40 @@ async function showOrderDetails(order, reload) {
     ),
   );
 
+  // Подсветка статуса возврата (если есть): сразу под заголовком, до кнопок.
+  const returnStatusLabels = {
+    pending: '⏳ Возврат ожидает обработки',
+    restocked: '↩️ Возвращён в сток',
+    markdown: '🏷️ Возвращён в уценку',
+    written_off: '🗑 Списан',
+    lost: '❓ Товар потерян',
+  };
+  const returnBanner = order.return_status ? el('div', {
+    style: {
+      padding: '10px 12px', borderRadius: '8px', marginBottom: '12px',
+      background: '#fef3c7', border: '1px solid #fbbf24', color: '#78350f',
+    },
+  },
+    el('div', { style: { fontWeight: 600, fontSize: '14px', marginBottom: '4px' } },
+      returnStatusLabels[order.return_status] || `Возврат: ${order.return_status}`),
+    order.cancel_reason ? el('div', { style: { fontSize: '13px' } },
+      el('b', {}, 'Причина: '), order.cancel_reason) : null,
+    order.return_resolved_at ? el('div', { style: { fontSize: '12px', color: '#92400e', marginTop: '4px' } },
+      `Обработан: ${fmtDateTime(order.return_resolved_at)}${order.return_resolved_by_name ? ' · ' + order.return_resolved_by_name : ''}`) : null,
+    order.return_proof ? el('div', { style: { marginTop: '8px' } },
+      el('button', {
+        class: 'btn btn-sm',
+        onClick: () => {
+          openModal('Фото-пруф', el('img', { src: order.return_proof, style: { maxWidth: '100%', borderRadius: '8px' } }), { primaryLabel: null });
+        },
+      }, '📷 Открыть фото-пруф'),
+    ) : null,
+  ) : null;
+
   const body = el(
     'div',
     {},
+    returnBanner,
     (canCancel || canSplit || canMarkReady || canMarkWaitingFromReserved || canUnreserve || canUnship)
       ? el('div', { style: { marginBottom: '12px', display: 'flex', gap: '8px', flexWrap: 'wrap' } },
           canMarkReady
@@ -6898,7 +6929,19 @@ export async function renderReturns(main) {
             }, '📷 Пруф'));
           }
         }
-        return el('tr', {},
+        return el('tr', {
+          style: { cursor: 'pointer' },
+          onClick: async (e) => {
+            // Клик по ячейке actions (кнопки) — не открывать модалку.
+            if (e.target.closest('button')) return;
+            try {
+              const full = await api.get('orders', o.id);
+              await showOrderDetails(full, load);
+            } catch (err) {
+              toast(err.message || 'Не удалось открыть заказ', 'error');
+            }
+          },
+        },
           el('td', {}, '#' + o.id),
           el('td', {}, o.marketplace || '—'),
           el('td', {}, o.client_name || '—'),
@@ -6908,6 +6951,8 @@ export async function renderReturns(main) {
           actions,
         );
       });
+      container.append(el('div', { class: 'hint', style: { marginBottom: '8px' } },
+        '💡 Клик по строке открывает полную карточку заказа.'));
       container.append(el('div', { class: 'table-wrap' },
         el('table', { class: 'data' }, el('thead', {}, head), el('tbody', {}, ...body))));
     } catch (e) {
@@ -7901,12 +7946,20 @@ export async function renderMyFeedback(main) {
         el('td', {}, catLabel(it.category)),
         el('td', {}, it.subject),
         el('td', {}, fmtDateTime(it.created_at)),
+        // Явная кнопка — клик по строке тоже работает, но не у всех это очевидно.
+        el('td', { style: { textAlign: 'right' }, onClick: (e) => e.stopPropagation() },
+          el('button', {
+            class: 'btn btn-sm btn-primary',
+            onClick: () => openDetail(it),
+          }, '💬 Открыть'),
+        ),
       ));
       tableArea.append(el('div', { class: 'card' },
         el('div', { class: 'table-wrap' }, el('table', { class: 'data' },
           el('thead', {}, el('tr', {},
             el('th', {}, '№'), el('th', {}, 'Статус'),
-            el('th', {}, 'Категория'), el('th', {}, 'Тема'), el('th', {}, 'Когда'))),
+            el('th', {}, 'Категория'), el('th', {}, 'Тема'), el('th', {}, 'Когда'),
+            el('th', { style: { textAlign: 'right' } }, ''))),
           el('tbody', {}, ...rowsEl),
         )),
       ));
@@ -7958,8 +8011,15 @@ export async function renderMyFeedback(main) {
             } catch (e) { toast(e.message, 'error'); }
           },
         }, '↩️ Не принято — вернуть в работу'),
+        el('button', {
+          class: 'btn',
+          onClick: () => openDetail(item),
+        }, '💬 Открыть переписку в окне'),
       ),
-      renderFeedbackThread(item.id, 'author'),
+      el('details', { style: { marginTop: '12px' }, open: true },
+        el('summary', { style: { cursor: 'pointer', fontWeight: 600, color: '#0369a1' } }, '💬 Переписка по обращению'),
+        renderFeedbackThread(item.id, 'author'),
+      ),
     );
     return card;
   }
