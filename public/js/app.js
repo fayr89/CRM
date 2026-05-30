@@ -12,6 +12,7 @@ import {
   openFeedbackDialog,
   openMaxBindDialog,
   renderFeedback,
+  renderMyFeedback,
   renderIntegrations,
   renderInvitations,
   renderOrders,
@@ -282,6 +283,29 @@ function renderShell() {
     bellCounter,
   );
 
+  const myFeedbackCounter = el('span', { class: 'nav-counter', style: { display: 'none' } });
+  const myFeedbackBtn = el(
+    'a',
+    {
+      href: '#/my-feedback',
+      class: 'sidebar-bell' + (path.startsWith('#/my-feedback') ? ' active' : ''),
+      title: 'Мои обращения и подтверждение выполненных задач',
+    },
+    el('span', {}, '📋 Мои обращения'),
+    myFeedbackCounter,
+  );
+  // Подгружаем счётчик «требует подтверждения» в фоне.
+  (async () => {
+    try {
+      const r = await api.myFeedback();
+      const n = r?.awaiting_count || 0;
+      if (n > 0) {
+        myFeedbackCounter.textContent = String(n);
+        myFeedbackCounter.style.display = '';
+      }
+    } catch { /* ignore */ }
+  })();
+
   const feedbackBtn = el(
     'a',
     {
@@ -300,6 +324,7 @@ function renderShell() {
     searchBtn,
     bellBtn,
     feedbackBtn,
+    myFeedbackBtn,
     el('nav', { class: 'sidebar-nav' }, ...navChildren),
     el(
       'div',
@@ -530,6 +555,7 @@ const ROUTES = {
   '#/analytics': renderAnalytics,
   '#/integrations': renderIntegrations,
   '#/feedback': renderFeedback,
+  '#/my-feedback': renderMyFeedback,
   '#/audit': renderAudit,
 };
 

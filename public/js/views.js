@@ -7559,7 +7559,12 @@ export async function renderFeedback(main) {
   }
 
   function statusBadge(s) {
-    const map = { open: ['Открыто', '#fef3c7', '#92400e'], in_progress: ['В работе', '#dbeafe', '#1e40af'], closed: ['Закрыто', '#dcfce7', '#166534'] };
+    const map = {
+      open: ['Открыто', '#fef3c7', '#92400e'],
+      in_progress: ['В работе', '#dbeafe', '#1e40af'],
+      awaiting_approval: ['Ждёт подтверждения автора', '#fed7aa', '#9a3412'],
+      closed: ['Закрыто', '#dcfce7', '#166534'],
+    };
     const [label, bg, fg] = map[s] || [s, '#eee', '#444'];
     return el('span', { style: { background: bg, color: fg, padding: '2px 8px', borderRadius: '4px', fontSize: '12px', fontWeight: 600 } }, label);
   }
@@ -7574,7 +7579,8 @@ export async function renderFeedback(main) {
     const statusSel = el('select', {},
       el('option', { value: 'open', selected: item.status === 'open' }, 'Открыто'),
       el('option', { value: 'in_progress', selected: item.status === 'in_progress' }, 'В работе'),
-      el('option', { value: 'closed', selected: item.status === 'closed' }, 'Закрыто'),
+      el('option', { value: 'awaiting_approval', selected: item.status === 'awaiting_approval' }, 'На подтверждение автору'),
+      el('option', { value: 'closed', selected: item.status === 'closed' }, 'Закрыто (без подтверждения)'),
     );
     const body = el('div', {},
       el('div', { class: 'detail-grid' },
@@ -7587,7 +7593,15 @@ export async function renderFeedback(main) {
       el('h4', { style: { marginTop: '16px' } }, 'Сообщение'),
       el('pre', { style: { background: '#f9fafb', padding: '10px', borderRadius: '6px', whiteSpace: 'pre-wrap', fontSize: '13px', fontFamily: 'inherit' } }, item.message),
       renderFeedbackAttachments(item.attachments),
+      item.rejected_reason ? el('div', {
+        style: { background: '#fef2f2', border: '1px solid #fecaca', padding: '10px', borderRadius: '6px', marginTop: '12px' },
+      },
+        el('b', {}, '⚠️ Автор вернул в работу: '),
+        item.rejected_reason,
+      ) : null,
       el('div', { class: 'form-row' }, el('label', {}, 'Статус'), statusSel),
+      el('div', { class: 'hint', style: { color: '#0369a1' } },
+        'Переведи на «На подтверждение автору», когда задача выполнена — автор увидит уведомление и нажмёт «Принимаю» либо вернёт в работу.'),
       el('div', { class: 'form-row' }, el('label', {}, 'Заметка / ответ'), replyI),
     );
     await openModal(`Обращение #${item.id}`, body, {
@@ -7653,6 +7667,7 @@ export async function renderFeedback(main) {
     el('option', { value: '', selected: !state.status }, 'Все'),
     el('option', { value: 'open' }, 'Открытые'),
     el('option', { value: 'in_progress' }, 'В работе'),
+    el('option', { value: 'awaiting_approval' }, 'Ждут подтверждения'),
     el('option', { value: 'closed' }, 'Закрытые'),
   );
   filterSel.addEventListener('change', () => { state.status = filterSel.value; state.page = 1; reload(); });
@@ -7664,6 +7679,164 @@ export async function renderFeedback(main) {
     el('div', { class: 'filter-bar', style: { marginBottom: '12px' } },
       el('label', {}, 'Статус: ', filterSel),
     ),
+    tableArea,
+  );
+  await reload();
+}
+
+// Страница «Мои обращения» — для всех ролей. Показывает свои обращения и для
+// каждой записи в статусе «awaiting_approval» — карточку с «Принимаю / Не принимаю».
+export async function renderMyFeedback(main) {
+  const tableArea = el('div');
+
+  function statusBadge(s) {
+    const map = {
+      open: ['Открыто', '#fef3c7', '#92400e'],
+      in_progress: ['В работе', '#dbeafe', '#1e40af'],
+      awaiting_approval: ['Подтвердите', '#fed7aa', '#9a3412'],
+      closed: ['Закрыто', '#dcfce7', '#166534'],
+    };
+    const [label, bg, fg] = map[s] || [s, '#eee', '#444'];
+    return el('span', { style: { background: bg, color: fg, padding: '2px 8px', borderRadius: '4px', fontSize: '12px', fontWeight: 600 } }, label);
+  }
+  function catLabel(c) {
+    return (FEEDBACK_CATEGORIES.find((x) => x.value === c) || { label: c }).label;
+  }
+
+  async function reload() {
+    clear(tableArea);
+    tableArea.append(el('div', { class: 'loading' }, 'Загрузка…'));
+    try {
+      const r = await api.myFeedback();
+      renderList(r.data || []);
+    } catch (e) {
+      clear(tableArea);
+      tableArea.append(el('div', { class: 'card error' }, e.message || 'Ошибка'));
+    }
+  }
+
+  function renderList(rows) {
+    clear(tableArea);
+    if (!rows.length) {
+      tableArea.append(emptyState({
+        icon: '📋',
+        title: 'У вас пока нет обращений',
+        description: 'Нажмите «📮 Помощь / Баг» в сайдбаре, чтобы отправить вопрос или сообщить о проблеме.',
+      }));
+      return;
+    }
+
+    // Сначала большие карточки для «требует подтверждения», потом таблица остальных.
+    const awaiting = rows.filter((r) => r.status === 'awaiting_approval');
+    const others = rows.filter((r) => r.status !== 'awaiting_approval');
+
+    if (awaiting.length) {
+      tableArea.append(el('h3', { style: { color: '#9a3412', marginTop: 0 } }, '⏳ Требуют вашего подтверждения'));
+      for (const item of awaiting) {
+        tableArea.append(buildApprovalCard(item));
+      }
+    }
+
+    if (others.length) {
+      tableArea.append(el('h3', { style: { marginTop: awaiting.length ? '24px' : '0' } }, 'Остальные обращения'));
+      const rowsEl = others.map((it) => el('tr', {
+        style: { cursor: 'pointer' },
+        onClick: () => openDetail(it),
+      },
+        el('td', {}, '#' + it.id),
+        el('td', {}, statusBadge(it.status)),
+        el('td', {}, catLabel(it.category)),
+        el('td', {}, it.subject),
+        el('td', {}, fmtDateTime(it.created_at)),
+      ));
+      tableArea.append(el('div', { class: 'card' },
+        el('div', { class: 'table-wrap' }, el('table', { class: 'data' },
+          el('thead', {}, el('tr', {},
+            el('th', {}, '№'), el('th', {}, 'Статус'),
+            el('th', {}, 'Категория'), el('th', {}, 'Тема'), el('th', {}, 'Когда'))),
+          el('tbody', {}, ...rowsEl),
+        )),
+      ));
+    }
+  }
+
+  function buildApprovalCard(item) {
+    const card = el('div', {
+      class: 'card',
+      style: { border: '2px solid #fb923c', background: '#fff7ed', marginBottom: '12px' },
+    });
+    card.append(
+      el('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '8px', flexWrap: 'wrap' } },
+        el('div', {},
+          el('div', { style: { fontSize: '12px', color: 'var(--text-muted)' } }, `#${item.id} · ${catLabel(item.category)}`),
+          el('div', { style: { fontSize: '17px', fontWeight: 600, marginTop: '4px' } }, item.subject),
+        ),
+        el('div', {}, statusBadge(item.status)),
+      ),
+      el('div', { style: { marginTop: '12px' } },
+        el('div', { style: { fontSize: '13px', color: 'var(--text-muted)', marginBottom: '4px' } }, 'Ваше обращение:'),
+        el('pre', { style: { background: '#fff', padding: '8px 10px', borderRadius: '6px', whiteSpace: 'pre-wrap', fontSize: '13px', fontFamily: 'inherit', margin: 0 } }, item.message),
+      ),
+      item.admin_reply ? el('div', { style: { marginTop: '12px' } },
+        el('div', { style: { fontSize: '13px', color: 'var(--text-muted)', marginBottom: '4px' } }, 'Ответ исполнителя:'),
+        el('pre', { style: { background: '#f0f9ff', padding: '8px 10px', borderRadius: '6px', whiteSpace: 'pre-wrap', fontSize: '13px', fontFamily: 'inherit', margin: 0, border: '1px solid #bae6fd' } }, item.admin_reply),
+      ) : null,
+      el('div', { style: { marginTop: '16px', display: 'flex', gap: '8px', flexWrap: 'wrap' } },
+        el('button', {
+          class: 'btn btn-primary',
+          onClick: async () => {
+            if (!(await confirm('Подтвердить выполнение? Обращение перейдёт в «Закрыто».'))) return;
+            try {
+              await api.approveFeedback(item.id);
+              toast('Спасибо, обращение закрыто', 'success');
+              await reload();
+            } catch (e) { toast(e.message, 'error'); }
+          },
+        }, '✅ Принимаю — выполнено'),
+        el('button', {
+          class: 'btn btn-danger',
+          onClick: async () => {
+            const reason = prompt('Что не так? Опишите, почему не принимаете:');
+            if (!reason || !reason.trim()) return;
+            try {
+              await api.rejectFeedback(item.id, reason.trim());
+              toast('Возвращено в работу. Админ получил уведомление.', '');
+              await reload();
+            } catch (e) { toast(e.message, 'error'); }
+          },
+        }, '↩️ Не принято — вернуть в работу'),
+      ),
+    );
+    return card;
+  }
+
+  async function openDetail(item) {
+    const body = el('div', {},
+      el('div', { class: 'detail-grid' },
+        el('div', { class: 'k' }, 'Тема'), el('div', {}, el('b', {}, item.subject)),
+        el('div', { class: 'k' }, 'Категория'), el('div', {}, catLabel(item.category)),
+        el('div', { class: 'k' }, 'Статус'), el('div', {}, statusBadge(item.status)),
+        el('div', { class: 'k' }, 'Создано'), el('div', {}, fmtDateTime(item.created_at)),
+        item.resolved_at ? el('div', { class: 'k' }, 'Решено') : null,
+        item.resolved_at ? el('div', {}, fmtDateTime(item.resolved_at)) : null,
+      ),
+      el('h4', { style: { marginTop: '16px' } }, 'Сообщение'),
+      el('pre', { style: { background: '#f9fafb', padding: '10px', borderRadius: '6px', whiteSpace: 'pre-wrap', fontSize: '13px', fontFamily: 'inherit' } }, item.message),
+      item.admin_reply ? el('div', {},
+        el('h4', { style: { marginTop: '16px' } }, 'Ответ исполнителя'),
+        el('pre', { style: { background: '#f0f9ff', padding: '10px', borderRadius: '6px', whiteSpace: 'pre-wrap', fontSize: '13px', fontFamily: 'inherit' } }, item.admin_reply),
+      ) : null,
+      item.rejected_reason ? el('div', { style: { marginTop: '12px', padding: '10px', background: '#fef2f2', border: '1px solid #fecaca', borderRadius: '6px' } },
+        el('b', {}, 'Возвращено в работу: '), item.rejected_reason,
+      ) : null,
+    );
+    await openModal(`Обращение #${item.id}`, body, { primaryLabel: 'Закрыть', onSubmit: () => true });
+  }
+
+  main.innerHTML = '';
+  main.append(
+    el('h1', { class: 'page-title' }, '📋 Мои обращения'),
+    el('div', { class: 'page-subtitle' }, 'Здесь видны ваши обращения через «📮 Помощь / Баг». Когда задача выполнена — подтвердите приёмку или верните в работу.'),
     tableArea,
   );
   await reload();

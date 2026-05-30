@@ -143,6 +143,9 @@ export const api = {
   listFeedback: (query) => request('GET', '/api/feedback', { query }),
   feedbackOpenCount: () => request('GET', '/api/feedback/open-count'),
   updateFeedback: (id, body) => request('PATCH', `/api/feedback/${id}`, { body }),
+  myFeedback: () => request('GET', '/api/feedback/my'),
+  approveFeedback: (id) => request('POST', `/api/feedback/${id}/approve`),
+  rejectFeedback: (id, reason) => request('POST', `/api/feedback/${id}/reject`, { body: { reason } }),
   // МойСклад: интеграция списания/прихода
   msStatus: () => request('GET', '/api/admin/ms/status'),
   msInit: (body) => request('POST', '/api/admin/ms/init', { body }),

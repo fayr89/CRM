@@ -3,9 +3,9 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { authenticate, requireRole } from '../auth.js';
 import { db } from '../db.js';
-import { BadRequest, NotFound, asyncHandler } from '../errors.js';
+import { BadRequest, Forbidden, NotFound, asyncHandler } from '../errors.js';
 import { parsePagination, paginated } from '../query.js';
-import { notifyAdmins } from '../services/notifications.js';
+import { notify, notifyAdmins } from '../services/notifications.js';
 
 const router = Router();
 
@@ -37,8 +37,12 @@ const createSchema = z.object({
 });
 
 const updateSchema = z.object({
-  status: z.enum(['open', 'in_progress', 'closed']).optional(),
+  status: z.enum(['open', 'in_progress', 'awaiting_approval', 'closed']).optional(),
   admin_reply: z.string().max(5000).optional().nullable(),
+});
+
+const rejectSchema = z.object({
+  reason: z.string().min(1, 'Укажите причину отказа').max(2000),
 });
 
 router.use(authenticate);
@@ -131,6 +135,87 @@ router.get(
   }),
 );
 
+// Список своих обращений + счётчик «требуется ваше подтверждение».
+// Доступно любой залогиненной роли.
+router.get(
+  '/my',
+  asyncHandler(async (req, res) => {
+    const rows = await db.all(
+      `SELECT f.*, u.name AS user_name, u.role AS user_role,
+              r.name AS resolved_by_name
+       FROM feedback f
+       LEFT JOIN users u ON u.id = f.user_id
+       LEFT JOIN users r ON r.id = f.resolved_by
+       WHERE f.user_id = ?
+       ORDER BY (CASE f.status WHEN 'awaiting_approval' THEN 0 WHEN 'in_progress' THEN 1
+                 WHEN 'open' THEN 2 ELSE 3 END), f.created_at DESC`,
+      req.user.id,
+    );
+    const { awaiting } = await db.get(
+      `SELECT COUNT(*)::int AS awaiting FROM feedback
+       WHERE user_id = ? AND status = 'awaiting_approval'`,
+      req.user.id,
+    );
+    res.json({ data: rows, awaiting_count: awaiting || 0 });
+  }),
+);
+
+// Подтвердить, что задача принята (только автор обращения). awaiting → closed.
+router.post(
+  '/:id/approve',
+  asyncHandler(async (req, res) => {
+    const cur = await db.get('SELECT * FROM feedback WHERE id = ?', req.params.id);
+    if (!cur) throw NotFound('Обращение не найдено');
+    if (cur.user_id !== req.user.id && req.user.role !== 'admin') {
+      throw Forbidden('Подтвердить может только автор обращения');
+    }
+    if (cur.status !== 'awaiting_approval') {
+      throw BadRequest('Обращение не в статусе «На подтверждении»');
+    }
+    await db.run(
+      `UPDATE feedback SET status = 'closed', resolved_at = NOW(),
+       updated_at = NOW() WHERE id = ?`,
+      cur.id,
+    );
+    res.json(await db.get('SELECT * FROM feedback WHERE id = ?', cur.id));
+  }),
+);
+
+// Отказаться от приёмки (только автор). awaiting → open, с причиной.
+// Админ получает уведомление, что задача возвращена в работу.
+router.post(
+  '/:id/reject',
+  asyncHandler(async (req, res) => {
+    const { reason } = rejectSchema.parse(req.body || {});
+    const cur = await db.get('SELECT * FROM feedback WHERE id = ?', req.params.id);
+    if (!cur) throw NotFound('Обращение не найдено');
+    if (cur.user_id !== req.user.id && req.user.role !== 'admin') {
+      throw Forbidden('Отклонить может только автор обращения');
+    }
+    if (cur.status !== 'awaiting_approval') {
+      throw BadRequest('Обращение не в статусе «На подтверждении»');
+    }
+    await db.run(
+      `UPDATE feedback SET status = 'open', rejected_reason = ?,
+       resolved_at = NULL, updated_at = NOW() WHERE id = ?`,
+      reason,
+      cur.id,
+    );
+    try {
+      await notifyAdmins(
+        'feedback.rejected',
+        `📮 Обращение #${cur.id} возвращено в работу`,
+        `${req.user.name || 'Пользователь'}: ${reason.slice(0, 200)}`,
+        '#/feedback',
+      );
+    } catch (e) {
+      // eslint-disable-next-line no-console
+      console.error('[feedback reject] notify:', e.message);
+    }
+    res.json(await db.get('SELECT * FROM feedback WHERE id = ?', cur.id));
+  }),
+);
+
 // Сменить статус / ответить — только админ.
 router.patch(
   '/:id',
@@ -143,14 +228,19 @@ router.patch(
       throw BadRequest('Нечего обновлять');
     }
     const newStatus = data.status ?? cur.status;
-    const resolvedAtSql = newStatus === 'closed' && cur.status !== 'closed' ? 'NOW()' : null;
-    const resolvedBy = newStatus === 'closed' && cur.status !== 'closed' ? req.user.id : cur.resolved_by;
+    // resolved_by/at: фиксируем кто и когда «исполнил» — это момент перехода в
+    // awaiting_approval (а не closed, как было раньше). При закрытии — оставляем
+    // как есть, при возврате в open чистится отдельно через /reject.
+    const justResolved = (newStatus === 'awaiting_approval' || newStatus === 'closed')
+      && cur.status !== 'awaiting_approval' && cur.status !== 'closed';
+    const resolvedAtSql = justResolved ? 'NOW()' : 'resolved_at';
+    const resolvedBy = justResolved ? req.user.id : cur.resolved_by;
     await db.run(
       `UPDATE feedback SET
          status = ?,
          admin_reply = COALESCE(?, admin_reply),
          resolved_by = ?,
-         resolved_at = ${resolvedAtSql ? 'NOW()' : 'resolved_at'},
+         resolved_at = ${resolvedAtSql === 'NOW()' ? 'NOW()' : 'resolved_at'},
          updated_at = NOW()
        WHERE id = ?`,
       newStatus,
@@ -158,6 +248,21 @@ router.patch(
       resolvedBy,
       req.params.id,
     );
+    // Уведомляем автора если перевели на подтверждение.
+    if (newStatus === 'awaiting_approval' && cur.status !== 'awaiting_approval' && cur.user_id) {
+      try {
+        await notify(
+          cur.user_id,
+          'feedback.awaiting_approval',
+          `📮 Подтвердите выполнение: ${cur.subject}`,
+          (data.admin_reply || cur.admin_reply || 'Админ отметил задачу как выполненную. Проверьте и подтвердите.').slice(0, 300),
+          '#/my-feedback',
+        );
+      } catch (e) {
+        // eslint-disable-next-line no-console
+        console.error('[feedback awaiting] notify:', e.message);
+      }
+    }
     const row = await db.get(
       `SELECT f.*, u.name AS user_name, u.email AS user_email, u.role AS user_role,
               r.name AS resolved_by_name

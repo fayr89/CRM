@@ -594,6 +594,18 @@ export async function ensureInitialized() {
       // Вложения к обращению: массив объектов { filename, content (data URL), type, size }.
       // Хранится в БД — для бага «как воспроизвести» удобно скриншот посмотреть.
       await pool.query('ALTER TABLE feedback ADD COLUMN IF NOT EXISTS attachments JSONB DEFAULT NULL');
+      // Flow апрува: после исполнения админом статус → 'awaiting_approval', автор
+      // обращения подтверждает «принято» (closed) или отклоняет с причиной (обратно в open).
+      // Расширяем CHECK-констрейнт, добавляем колонку rejected_reason.
+      await pool.query(`
+        DO $$ BEGIN
+          ALTER TABLE feedback DROP CONSTRAINT IF EXISTS feedback_status_check;
+          ALTER TABLE feedback ADD CONSTRAINT feedback_status_check
+            CHECK (status IN ('open','in_progress','awaiting_approval','closed'));
+        EXCEPTION WHEN duplicate_object THEN NULL;
+        END $$;
+      `);
+      await pool.query('ALTER TABLE feedback ADD COLUMN IF NOT EXISTS rejected_reason TEXT');
       // МАХ-бот: chat_id пользователя для пушей; одноразовый код для привязки (с TTL).
       await pool.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS max_chat_id BIGINT');
       await pool.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS max_bind_code TEXT');
