@@ -1515,8 +1515,12 @@ async function openProductPicker(marketplace, hiddenSet = new Set(), warehouse =
   });
 }
 
+// `order` со свойством `__template = true` означает «повторить»: предзаполняем поля,
+// но не редактируем существующий заказ (создаём новый). track-номер не копируем —
+// он уникален на отправление.
 async function openOrderForm(order, onSaved) {
-  const isEdit = !!order;
+  const isTemplate = order && order.__template === true;
+  const isEdit = !!order && !isTemplate;
   const cur = order || {};
 
   // Правила цен (необязательно): проценты по оплате + пороги по сумме.
@@ -1631,8 +1635,76 @@ async function openOrderForm(order, onSaved) {
     el('option', { value: 'B2C', selected: (cur.client_classification || 'B2C') === 'B2C' }, 'B2C (физлицо)'),
     el('option', { value: 'B2B', selected: cur.client_classification === 'B2B' }, 'B2B (компания)'),
   );
-  const clientI = el('input', { type: 'text', value: cur.client_name || '' });
-  const clientPhoneI = el('input', { type: 'tel', value: cur.client_phone || '', placeholder: '+7…' });
+  const clientI = el('input', { type: 'text', value: cur.client_name || '', autocomplete: 'off' });
+  const clientPhoneI = el('input', { type: 'tel', value: cur.client_phone || '', placeholder: '+7…', autocomplete: 'off' });
+
+  // Автоподсказка клиента: при наборе 2+ символов → /api/orders/clients/suggest.
+  // Выбор подставляет имя/телефон/классификацию из истории заказов.
+  const clientSuggestions = el('div', {
+    style: {
+      position: 'absolute', zIndex: 1000, background: '#fff', border: '1px solid var(--border)',
+      borderRadius: '6px', boxShadow: '0 4px 12px rgba(0,0,0,0.1)',
+      maxHeight: '240px', overflowY: 'auto', display: 'none',
+      left: 0, right: 0, top: '100%', marginTop: '2px',
+    },
+  });
+  // Обёртка для позиционирования suggestions.
+  const clientWrap = el('div', { style: { position: 'relative' } }, clientI, clientSuggestions);
+
+  let clientSuggestController = null;
+  let clientSuggestTimer = null;
+  function hideClientSuggestions() {
+    clientSuggestions.style.display = 'none';
+  }
+  async function loadClientSuggestions(q) {
+    if (q.length < 2) { hideClientSuggestions(); return; }
+    if (clientSuggestController) clientSuggestController.abort?.();
+    try {
+      const r = await api.suggestClients(q);
+      const rows = r.data || [];
+      clear(clientSuggestions);
+      if (!rows.length) { hideClientSuggestions(); return; }
+      for (const c of rows) {
+        const item = el('div', {
+          style: {
+            padding: '8px 10px', cursor: 'pointer', borderBottom: '1px solid var(--border)',
+            display: 'flex', justifyContent: 'space-between', gap: '8px', alignItems: 'center',
+          },
+          onMouseover: (e) => { e.currentTarget.style.background = '#f3f4f6'; },
+          onMouseout: (e) => { e.currentTarget.style.background = ''; },
+          onClick: () => {
+            clientI.value = c.client_name || '';
+            if (c.client_phone) clientPhoneI.value = c.client_phone;
+            if (c.client_classification) classI.value = c.client_classification;
+            hideClientSuggestions();
+          },
+        },
+          el('div', {},
+            el('div', { style: { fontSize: '14px', fontWeight: 500 } }, c.client_name),
+            el('div', { style: { fontSize: '12px', color: 'var(--text-muted)' } },
+              [c.client_phone, c.marketplace, `${c.count} заказ(ов)`].filter(Boolean).join(' · ')),
+          ),
+          el('div', { style: { fontSize: '11px', color: 'var(--text-muted)', whiteSpace: 'nowrap' } },
+            c.last_at ? fmtDate(c.last_at) : ''),
+        );
+        clientSuggestions.append(item);
+      }
+      clientSuggestions.style.display = 'block';
+    } catch {
+      hideClientSuggestions();
+    }
+  }
+  clientI.addEventListener('input', () => {
+    clearTimeout(clientSuggestTimer);
+    clientSuggestTimer = setTimeout(() => loadClientSuggestions(clientI.value.trim()), 250);
+  });
+  clientI.addEventListener('blur', () => {
+    // Задержка чтобы клик по item успел обработаться до закрытия.
+    setTimeout(hideClientSuggestions, 200);
+  });
+  clientI.addEventListener('focus', () => {
+    if (clientI.value.trim().length >= 2) loadClientSuggestions(clientI.value.trim());
+  });
   const currencyI = el('input', { type: 'text', value: cur.currency || 'RUB', maxlength: '3', style: { width: '80px' } });
   const notesI = el('textarea', {}, cur.notes || '');
   // Ссылка на диалог Avito — обязательна при площадке Avito.
@@ -1642,7 +1714,7 @@ async function openOrderForm(order, onSaved) {
   // Номер отправления (трек-номер). Храним в shipment_qr. Обязателен при резерве.
   const qrI = el('input', {
     type: 'text',
-    value: (cur.shipment_qr && !String(cur.shipment_qr).startsWith('data:')) ? cur.shipment_qr : '',
+    value: (!isTemplate && cur.shipment_qr && !String(cur.shipment_qr).startsWith('data:')) ? cur.shipment_qr : '',
     placeholder: 'Номер отправления',
   });
   const deliveryI = el(
@@ -1825,7 +1897,7 @@ async function openOrderForm(order, onSaved) {
       el('div', { class: 'form-row' }, el('label', {}, 'Склад списания'), warehouseI),
       statusI ? el('div', { class: 'form-row' }, el('label', {}, 'Стартовый статус'), statusI) : null,
       el('div', { class: 'form-row' }, el('label', {}, 'Классификация клиента'), classI),
-      el('div', { class: 'form-row' }, el('label', {}, 'Клиент / компания'), clientI),
+      el('div', { class: 'form-row' }, el('label', {}, 'Клиент / компания'), clientWrap),
       el('div', { class: 'form-row' }, el('label', {}, 'Телефон клиента'), clientPhoneI),
       payI ? el('div', { class: 'form-row' }, el('label', {}, 'Способ оплаты'), payI) : null,
       deliveryRow,
@@ -2698,10 +2770,28 @@ async function showOrderDetails(order, reload) {
     ) : null,
   ) : null;
 
+  // «Повторить заказ» — менеджер/админ/sales могут на любом статусе. Создаёт новый
+  // с теми же позициями/клиентом/площадкой, чтобы не вводить повторно. trackномер
+  // не копируется (он уникален на отправление).
+  const canRepeat = ['admin', 'manager', 'sales'].includes(me.role);
+  const repeatBtn = canRepeat ? el('button', {
+    class: 'btn btn-sm btn-primary',
+    onClick: async () => {
+      const template = { ...order, __template: true, items: order.items || [] };
+      // Закрываем текущую модалку перед открытием новой через onSubmit — но проще
+      // открыть форму поверх и при закрытии вызвать reload. Для UX нормально: при
+      // создании повторника текущая карточка остаётся под ней.
+      await openOrderForm(template, () => { reload?.(); });
+    },
+  }, '🔁 Повторить заказ') : null;
+
   const body = el(
     'div',
     {},
     returnBanner,
+    canRepeat
+      ? el('div', { style: { marginBottom: '12px', display: 'flex', gap: '8px', flexWrap: 'wrap' } }, repeatBtn)
+      : null,
     (canCancel || canSplit || canMarkReady || canMarkWaitingFromReserved || canUnreserve || canUnship)
       ? el('div', { style: { marginBottom: '12px', display: 'flex', gap: '8px', flexWrap: 'wrap' } },
           canMarkReady

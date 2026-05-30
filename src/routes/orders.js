@@ -385,6 +385,42 @@ router.get(
   }),
 );
 
+// Автоподсказка клиентов из истории заказов — для формы создания заказа.
+// Подбор по фрагменту имени или телефона. Видимость ограничена правами:
+// admin/finance видят всех клиентов, остальные — только из своих заказов.
+router.get(
+  '/clients/suggest',
+  asyncHandler(async (req, res) => {
+    const q = String(req.query.q || '').trim();
+    if (q.length < 2) return res.json({ data: [] });
+    const ids = await getAccessibleUserIds(req.user);
+    const scopeSql = ids === null ? '' : 'AND manager_id = ANY(?)';
+    const scopeParams = ids === null ? [] : [ids];
+    const like = `%${q}%`;
+    // GROUP BY (LOWER(name), phone) — один клиент = одна строка. ARRAY_AGG с
+    // ORDER BY даёт значения из последнего заказа этого клиента (классификация,
+    // площадка). Свежие клиенты сверху.
+    const rows = await db.all(
+      `SELECT MAX(client_name) AS client_name,
+              client_phone,
+              (ARRAY_AGG(client_classification ORDER BY created_at DESC))[1] AS client_classification,
+              (ARRAY_AGG(marketplace ORDER BY created_at DESC))[1] AS marketplace,
+              MAX(created_at) AS last_at,
+              COUNT(*)::int AS count
+       FROM orders
+       WHERE client_name IS NOT NULL
+         AND (client_name ILIKE ? OR COALESCE(client_phone, '') ILIKE ?)
+         ${scopeSql}
+       GROUP BY LOWER(client_name), client_phone
+       ORDER BY MAX(created_at) DESC
+       LIMIT 10`,
+      like, like,
+      ...scopeParams,
+    );
+    res.json({ data: rows });
+  }),
+);
+
 // Возвраты: отменённые заказы, по которым товар был зарезервирован/отгружен.
 // Видят склад и админ. status=pending — ждут обработки, else — все возвраты.
 router.get(

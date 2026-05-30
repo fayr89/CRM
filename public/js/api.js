@@ -111,6 +111,7 @@ export const api = {
   reserveOrder: (id, opts = {}) => request('POST', `/api/orders/${id}/reserve`, {
     query: opts.force ? { force: '1' } : {},
   }),
+  suggestClients: (q) => request('GET', '/api/orders/clients/suggest', { query: { q } }),
   unreserveOrder: (id) => request('POST', `/api/orders/${id}/unreserve`),
   shipOrder: (id) => request('POST', `/api/orders/${id}/ship`),
   shipBulk: (ids) => request('POST', '/api/orders/ship-bulk', { body: { ids } }),
