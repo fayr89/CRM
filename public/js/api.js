@@ -148,6 +148,8 @@ export const api = {
   myFeedback: () => request('GET', '/api/feedback/my'),
   approveFeedback: (id) => request('POST', `/api/feedback/${id}/approve`),
   rejectFeedback: (id, reason) => request('POST', `/api/feedback/${id}/reject`, { body: { reason } }),
+  feedbackMessages: (id) => request('GET', `/api/feedback/${id}/messages`),
+  postFeedbackMessage: (id, text) => request('POST', `/api/feedback/${id}/messages`, { body: { text } }),
   // МойСклад: интеграция списания/прихода
   msStatus: () => request('GET', '/api/admin/ms/status'),
   msInit: (body) => request('POST', '/api/admin/ms/init', { body }),

@@ -606,6 +606,21 @@ export async function ensureInitialized() {
         END $$;
       `);
       await pool.query('ALTER TABLE feedback ADD COLUMN IF NOT EXISTS rejected_reason TEXT');
+      // Thread обсуждения внутри обращения: админ может задать уточняющие вопросы,
+      // автор отвечает. У сообщения роль помечается ('admin' или 'author' — для
+      // визуального различения, даже если admin потом сменится).
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS feedback_messages (
+          id BIGSERIAL PRIMARY KEY,
+          feedback_id INTEGER NOT NULL REFERENCES feedback(id) ON DELETE CASCADE,
+          user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+          user_name TEXT,
+          role TEXT NOT NULL CHECK (role IN ('admin', 'author')),
+          text TEXT NOT NULL,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+      `);
+      await pool.query('CREATE INDEX IF NOT EXISTS idx_feedback_msgs_fid ON feedback_messages(feedback_id, created_at)');
       // МАХ-бот: chat_id пользователя для пушей; одноразовый код для привязки (с TTL).
       await pool.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS max_chat_id BIGINT');
       await pool.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS max_bind_code TEXT');

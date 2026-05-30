@@ -276,4 +276,78 @@ router.patch(
   }),
 );
 
+// --- Thread обсуждения внутри обращения (уточнения админ ↔ автор) ---
+
+// Доступ: автор обращения или админ. Возвращаем сообщения в хронологическом порядке.
+async function canSeeThread(req, feedback) {
+  if (!feedback) return false;
+  return req.user.role === 'admin' || feedback.user_id === req.user.id;
+}
+
+router.get(
+  '/:id/messages',
+  asyncHandler(async (req, res) => {
+    const fb = await db.get('SELECT id, user_id FROM feedback WHERE id = ?', req.params.id);
+    if (!fb) throw NotFound('Обращение не найдено');
+    if (!(await canSeeThread(req, fb))) throw Forbidden();
+    const rows = await db.all(
+      `SELECT id, user_id, user_name, role, text, created_at
+       FROM feedback_messages WHERE feedback_id = ? ORDER BY created_at ASC, id ASC`,
+      fb.id,
+    );
+    res.json({ data: rows });
+  }),
+);
+
+const messageSchema = z.object({
+  text: z.string().min(1, 'Введите текст').max(5000),
+});
+router.post(
+  '/:id/messages',
+  asyncHandler(async (req, res) => {
+    const fb = await db.get('SELECT id, user_id, subject FROM feedback WHERE id = ?', req.params.id);
+    if (!fb) throw NotFound('Обращение не найдено');
+    if (!(await canSeeThread(req, fb))) throw Forbidden();
+    const { text } = messageSchema.parse(req.body || {});
+    const role = req.user.role === 'admin' ? 'admin' : 'author';
+    const r = await db.run(
+      `INSERT INTO feedback_messages (feedback_id, user_id, user_name, role, text)
+       VALUES (?, ?, ?, ?, ?) RETURNING id`,
+      fb.id,
+      req.user.id,
+      req.user.name || null,
+      role,
+      text,
+    );
+    // Уведомления: админ задал вопрос → автору; автор ответил → админам.
+    try {
+      if (role === 'admin' && fb.user_id && fb.user_id !== req.user.id) {
+        await notify(
+          fb.user_id,
+          'feedback.message',
+          `💬 Вопрос по обращению: ${fb.subject}`,
+          text.slice(0, 300),
+          '#/my-feedback',
+        );
+      } else if (role === 'author') {
+        await notifyAdmins(
+          'feedback.message',
+          `💬 Ответ по обращению #${fb.id}: ${fb.subject}`,
+          `${req.user.name || 'Автор'}: ${text.slice(0, 200)}`,
+          '#/feedback',
+        );
+      }
+    } catch (e) {
+      // eslint-disable-next-line no-console
+      console.error('[feedback msg] notify:', e.message);
+    }
+    const created = await db.get(
+      `SELECT id, user_id, user_name, role, text, created_at
+       FROM feedback_messages WHERE id = ?`,
+      r.lastInsertRowid,
+    );
+    res.status(201).json(created);
+  }),
+);
+
 export default router;

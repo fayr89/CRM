@@ -7429,6 +7429,109 @@ const FEEDBACK_CATEGORIES = [
   { value: 'other', label: '📝 Другое' },
 ];
 
+// Виджет thread'а обсуждения обращения: список сообщений + поле ответа.
+// Используется и в админ-карточке, и в «Моих обращениях». Авто-обновление по
+// кнопке «🔄» (полл по таймеру слишком тяжело — лишний трафик при множестве вкладок).
+function renderFeedbackThread(feedbackId, currentUserRole) {
+  const list = el('div', { style: { maxHeight: '320px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '8px', padding: '8px', background: '#f9fafb', borderRadius: '6px', marginTop: '8px' } });
+  const input = el('textarea', {
+    rows: '2',
+    placeholder: 'Напишите вопрос или ответ…',
+    style: { width: '100%', resize: 'vertical' },
+  });
+  const sendBtn = el('button', { class: 'btn btn-primary btn-sm' }, 'Отправить');
+  const refreshBtn = el('button', { class: 'btn btn-sm', title: 'Обновить' }, '🔄');
+
+  function renderRow(m) {
+    const isAdmin = m.role === 'admin';
+    return el('div', {
+      style: {
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: isAdmin ? 'flex-start' : 'flex-end',
+        gap: '2px',
+      },
+    },
+      el('div', { style: { fontSize: '11px', color: 'var(--text-muted)' } },
+        `${isAdmin ? '🛠 Админ' : '👤 Автор'} · ${m.user_name || ''} · ${fmtDateTime(m.created_at)}`),
+      el('div', {
+        style: {
+          maxWidth: '85%',
+          padding: '8px 12px',
+          borderRadius: '10px',
+          background: isAdmin ? '#dbeafe' : '#dcfce7',
+          color: isAdmin ? '#1e3a8a' : '#14532d',
+          whiteSpace: 'pre-wrap',
+          fontSize: '14px',
+          wordBreak: 'break-word',
+        },
+      }, m.text),
+    );
+  }
+
+  async function reload() {
+    clear(list);
+    list.append(el('div', { class: 'hint', style: { textAlign: 'center' } }, 'Загрузка…'));
+    try {
+      const r = await api.feedbackMessages(feedbackId);
+      clear(list);
+      const rows = r.data || [];
+      if (!rows.length) {
+        list.append(el('div', { class: 'hint', style: { textAlign: 'center', padding: '8px' } },
+          'Пока нет сообщений. Задайте вопрос или ответьте.'));
+        return;
+      }
+      for (const m of rows) list.append(renderRow(m));
+      list.scrollTop = list.scrollHeight;
+    } catch (e) {
+      clear(list);
+      list.append(el('div', { class: 'error', style: { color: '#991b1b' } }, e.message || 'Ошибка'));
+    }
+  }
+
+  sendBtn.addEventListener('click', async () => {
+    const text = input.value.trim();
+    if (!text) { toast('Введите текст', 'error'); return; }
+    sendBtn.disabled = true;
+    try {
+      await api.postFeedbackMessage(feedbackId, text);
+      input.value = '';
+      await reload();
+    } catch (e) {
+      toast(e.message, 'error');
+    } finally {
+      sendBtn.disabled = false;
+    }
+  });
+  refreshBtn.addEventListener('click', reload);
+  // Enter без Shift → отправка.
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      sendBtn.click();
+    }
+  });
+
+  const node = el('div', { style: { marginTop: '12px' } },
+    el('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' } },
+      el('b', {}, '💬 Обсуждение'),
+      refreshBtn,
+    ),
+    list,
+    el('div', { style: { marginTop: '8px', display: 'flex', gap: '8px', alignItems: 'flex-end' } },
+      input,
+      sendBtn,
+    ),
+    el('div', { class: 'hint', style: { fontSize: '11px' } },
+      currentUserRole === 'admin'
+        ? 'Задайте уточняющий вопрос — автор получит уведомление и ответит здесь.'
+        : 'Ответьте — админ увидит уведомление.'),
+  );
+
+  reload();
+  return node;
+}
+
 // Превью вложений в карточке обращения у админа. Картинки кликабельны (открываются
 // в новой вкладке), остальное — ссылка для скачивания. Скачивание через data URL
 // работает напрямую — файлы маленькие (≤2МБ).
@@ -7652,6 +7755,7 @@ export async function renderFeedback(main) {
       el('div', { class: 'hint', style: { color: '#0369a1' } },
         'Переведи на «На подтверждение автору», когда задача выполнена — автор увидит уведомление и нажмёт «Принимаю» либо вернёт в работу.'),
       el('div', { class: 'form-row' }, el('label', {}, 'Заметка / ответ'), replyI),
+      renderFeedbackThread(item.id, 'admin'),
     );
     await openModal(`Обращение #${item.id}`, body, {
       primaryLabel: 'Сохранить',
@@ -7855,6 +7959,7 @@ export async function renderMyFeedback(main) {
           },
         }, '↩️ Не принято — вернуть в работу'),
       ),
+      renderFeedbackThread(item.id, 'author'),
     );
     return card;
   }
@@ -7878,6 +7983,7 @@ export async function renderMyFeedback(main) {
       item.rejected_reason ? el('div', { style: { marginTop: '12px', padding: '10px', background: '#fef2f2', border: '1px solid #fecaca', borderRadius: '6px' } },
         el('b', {}, 'Возвращено в работу: '), item.rejected_reason,
       ) : null,
+      renderFeedbackThread(item.id, 'author'),
     );
     await openModal(`Обращение #${item.id}`, body, { primaryLabel: 'Закрыть', onSubmit: () => true });
   }
