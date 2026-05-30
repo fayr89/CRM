@@ -27,7 +27,7 @@ router.post(
     const out = [];
     for (const it of items) {
       const fb = await db.get(
-        'SELECT id, user_id, subject FROM feedback WHERE id = ?',
+        'SELECT id, user_id, subject, status FROM feedback WHERE id = ?',
         Number(it.feedback_id),
       );
       if (!fb) { out.push({ feedback_id: it.feedback_id, skipped: 'not found' }); continue; }
@@ -39,13 +39,29 @@ router.post(
         admin.name,
         String(it.text),
       );
+      // Опциональное изменение статуса (для готовых задач → awaiting_approval).
+      let statusChanged = false;
+      if (it.set_status === 'awaiting_approval' && fb.status !== 'awaiting_approval') {
+        await db.run(
+          `UPDATE feedback SET status = 'awaiting_approval',
+           admin_reply = COALESCE(?, admin_reply),
+           resolved_by = ?, resolved_at = NOW(), updated_at = NOW() WHERE id = ?`,
+          it.admin_reply || null,
+          admin.id,
+          fb.id,
+        );
+        statusChanged = true;
+      }
       // Уведомляем автора.
       try {
         if (fb.user_id) {
+          const title = statusChanged
+            ? `📮 Подтвердите выполнение: ${fb.subject}`
+            : `💬 Вопрос по обращению: ${fb.subject}`;
           await notify(
             fb.user_id,
-            'feedback.message',
-            `💬 Вопрос по обращению: ${fb.subject}`,
+            statusChanged ? 'feedback.awaiting_approval' : 'feedback.message',
+            title,
             String(it.text).slice(0, 300),
             '#/my-feedback',
           );
@@ -54,7 +70,7 @@ router.post(
         // eslint-disable-next-line no-console
         console.error('[diag clarif] notify:', e.message);
       }
-      out.push({ feedback_id: fb.id, message_id: r.lastInsertRowid });
+      out.push({ feedback_id: fb.id, message_id: r.lastInsertRowid, status_changed: statusChanged });
     }
     res.json({ ok: true, posted: out });
   }),
