@@ -156,9 +156,8 @@ router.get(
     }
     const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
 
-    // ВАЖНО: в листинге НЕ отдаём shipment_qr и return_proof — они могут содержать
-    // base64 изображения, на канбане в 200 строк это сотни МБ. Полные поля доступны
-    // через GET /api/orders/:id. Здесь — только флаг has_qr (для бейджа «✓/✗»).
+    // ВАЖНО: в листинге НЕ отдаём return_proof (может содержать base64).
+    // shipment_qr теперь только текст (трек-номер), поэтому отдаём — нужен в канбане.
     const rows = await db.all(
       `SELECT o.id, o.reference_number, o.marketplace, o.client_classification, o.client_name,
               o.total_amount, o.currency, o.manager_id, o.warehouse_user_id, o.status,
@@ -167,6 +166,7 @@ router.get(
               o.price_deviation, o.recommended_total, o.delivery_method, o.client_phone,
               o.avito_dialog_url, o.return_status, o.return_resolved_by, o.return_resolved_at,
               o.warehouse, o.loss_voided, o.cancelled_from_status, o.parent_order_id,
+              o.shipment_qr,
               (o.shipment_qr IS NOT NULL AND o.shipment_qr <> '') AS has_qr,
               u.name AS manager_name, w.name AS warehouse_user_name,
               (SELECT COUNT(*)::int FROM order_items WHERE order_id = o.id) AS items_count,

@@ -755,7 +755,11 @@ router.get(
       .get(`SELECT value FROM app_settings WHERE key = 'marketplaces.default'`)
       .catch(() => null);
     const default_marketplace = defMarketSetting?.value || '';
-    res.json({ all, hidden, default_writeoff, default_marketplace });
+    const defPaymentSetting = await db
+      .get(`SELECT value FROM app_settings WHERE key = 'payment_method.default'`)
+      .catch(() => null);
+    const default_payment_method = defPaymentSetting?.value || '';
+    res.json({ all, hidden, default_writeoff, default_marketplace, default_payment_method });
   }),
 );
 
@@ -790,6 +794,23 @@ router.put(
       req.user.id,
     );
     res.json({ ok: true, default_marketplace: marketplace || '' });
+  }),
+);
+
+// Способ оплаты по умолчанию (подставляется в форму заказа). Меняет только админ.
+router.put(
+  '/payment-method/default',
+  requireRole('admin'),
+  asyncHandler(async (req, res) => {
+    const payment_method = z.object({ payment_method: z.string() }).parse(req.body || {}).payment_method;
+    await db.run(
+      `INSERT INTO app_settings (key, value, updated_by, updated_at)
+       VALUES ('payment_method.default', ?::jsonb, ?, NOW())
+       ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_by = EXCLUDED.updated_by, updated_at = NOW()`,
+      JSON.stringify(payment_method || ''),
+      req.user.id,
+    );
+    res.json({ ok: true, default_payment_method: payment_method || '' });
   }),
 );
 

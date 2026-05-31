@@ -1540,12 +1540,14 @@ async function openOrderForm(order, onSaved) {
   let allWarehouses = [];
   let defaultWarehouse = '';
   let defaultMarketplace = '';
+  let defaultPaymentMethod = '';
   try {
     const w = await api.warehousesList();
     hiddenSet = new Set(w.hidden || []);
     allWarehouses = (w.all || []).filter((s) => !hiddenSet.has(s));
     defaultWarehouse = w.default_writeoff || '';
     defaultMarketplace = w.default_marketplace || '';
+    defaultPaymentMethod = w.default_payment_method || '';
   } catch {
     /* нет настройки — покажем все склады */
   }
@@ -1725,6 +1727,9 @@ async function openOrderForm(order, onSaved) {
   );
   const deliveryRow = el('div', { class: 'form-row' }, el('label', {}, 'Способ отправки'), deliveryI);
 
+  // При создании нового заказа cur.payment_method пуст → используем default из настроек.
+  // При редактировании — сохранённое значение приоритетнее.
+  const initialPayment = cur.payment_method || defaultPaymentMethod || '';
   const payI = paymentMethods.length
     ? el(
         'select',
@@ -1732,7 +1737,7 @@ async function openOrderForm(order, onSaved) {
         ...paymentMethods.map((m) =>
           el(
             'option',
-            { value: m.key, selected: m.key === cur.payment_method ? true : false },
+            { value: m.key, selected: m.key === initialPayment ? true : false },
             `${m.label}${m.percent ? ` (${m.percent > 0 ? '+' : ''}${m.percent}%)` : ''}`,
           ),
         ),
@@ -2297,6 +2302,14 @@ export async function renderOrders(main) {
               ),
               r.reference_number
                 ? el('div', { class: 'meta' }, '№ ' + r.reference_number)
+                : null,
+              // Трек-номер + способ отправки в канбане — чтобы было видно сразу, без открытия карточки.
+              (r.shipment_qr || r.delivery_method)
+                ? el('div', { class: 'meta', style: { color: 'var(--text-muted)' } },
+                    r.delivery_method ? '🚚 ' + r.delivery_method : '',
+                    r.delivery_method && r.shipment_qr ? ' · ' : '',
+                    r.shipment_qr ? '🏷 ' + r.shipment_qr : '',
+                  )
                 : null,
               el('div', { class: 'meta' }, '👤 ' + (r.manager_name || '—') + ' · 📅 ' + fmtDate(r.created_at)),
               r.items_preview
@@ -4818,6 +4831,39 @@ async function renderWarehousesSection(area) {
     }, 'Сохранить');
     area.append(el('div', { class: 'form-row' }, el('label', {}, 'Канал'), mktSel));
     area.append(el('div', { class: 'warehouse-toggle-actions' }, mktSaveBtn, mktStatus));
+
+    // Способ оплаты по умолчанию — подставляется в форму заказа.
+    area.append(el('div', { class: 'section-header', style: { marginTop: '20px' } }, el('h2', {}, '💳 Способ оплаты по умолчанию')));
+    area.append(el('p', { class: 'page-subtitle' },
+      'Этот способ оплаты будет автоматически выбираться при создании нового заказа. Менеджер может изменить при необходимости.'));
+    let pricing = { payment_methods: [] };
+    try { pricing = await api.pricingSettings(); } catch { /* ignore */ }
+    const payments = pricing.payment_methods || [];
+    const paySel = el(
+      'select',
+      {},
+      el('option', { value: '' }, '— не задан —'),
+      ...payments.map((m) =>
+        el('option', { value: m.key, selected: m.key === (data.default_payment_method || '') ? true : false },
+          `${m.label}${m.percent ? ` (${m.percent > 0 ? '+' : ''}${m.percent}%)` : ''}`),
+      ),
+    );
+    const payStatus = el('span', { class: 'save-status' });
+    const paySaveBtn = el('button', {
+      class: 'btn btn-primary',
+      onClick: async () => {
+        payStatus.textContent = 'Сохраняю…';
+        try {
+          await api.setDefaultPaymentMethod(paySel.value);
+          payStatus.textContent = '✅ Сохранено';
+          toast('Способ оплаты по умолчанию сохранён', 'success');
+        } catch (e) {
+          payStatus.textContent = `❌ ${e.message}`;
+        }
+      },
+    }, 'Сохранить');
+    area.append(el('div', { class: 'form-row' }, el('label', {}, 'Способ оплаты'), paySel));
+    area.append(el('div', { class: 'warehouse-toggle-actions' }, paySaveBtn, payStatus));
   } else {
     area.append(el('p', { class: 'muted' }, 'Менять настройку может только администратор.'));
   }

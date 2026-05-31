@@ -625,6 +625,13 @@ export async function ensureInitialized() {
       await pool.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS max_chat_id BIGINT');
       await pool.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS max_bind_code TEXT');
       await pool.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS max_bind_expires TIMESTAMPTZ');
+      // Способ оплаты по умолчанию: при старте чистой БД — Авито-доставка.
+      // Если запись уже есть (DO NOTHING) — не трогаем выбор админа.
+      await pool.query(`
+        INSERT INTO app_settings (key, value, updated_at)
+        VALUES ('payment_method.default', '"avito_delivery"'::jsonb, NOW())
+        ON CONFLICT (key) DO NOTHING
+      `);
       await pool.query('CREATE INDEX IF NOT EXISTS idx_users_max_chat ON users(max_chat_id) WHERE max_chat_id IS NOT NULL');
       await pool.query('CREATE INDEX IF NOT EXISTS idx_users_max_code ON users(max_bind_code) WHERE max_bind_code IS NOT NULL');
       // Прайс с привязкой к складу: товар × канал × склад. Старое UNIQUE(product,market) снимаем.
