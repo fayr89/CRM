@@ -1046,6 +1046,20 @@ table.data tbody tr:last-child td { border-bottom: none; }
     border-top: 1px solid var(--border); padding: 10px 12px;
   }
   .modal-footer button { min-height: 44px; flex: 1; font-weight: 600; }
+  /* Шапка модалки — sticky сверху, чтобы кнопка закрытия всегда была видна. */
+  .modal-header {
+    position: sticky; top: 0; z-index: 5;
+    background: var(--surface); padding: 12px 14px;
+  }
+  /* Кнопка закрытия — крупная и заметная на телефоне. */
+  .modal-close {
+    width: 40px; height: 40px; min-width: 40px;
+    border-radius: 50%; background: #f3f4f6; color: #111827;
+    font-size: 24px; line-height: 1; display: flex;
+    align-items: center; justify-content: center;
+    border: 1px solid var(--border);
+  }
+  .modal-close:active { background: #e5e7eb; }
 
   /* Любая таблица .data — горизонтальный скролл вместо обрезания. */
   .table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
