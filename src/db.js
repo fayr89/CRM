@@ -450,6 +450,11 @@ export const db = {
   },
 };
 
+// БАМПАЙ ПРИ КАЖДОМ ДОБАВЛЕНИИ МИГРАЦИИ. Текущие миграции прогоняются
+// только если запись в app_settings.schema_version отличается. Это экономит
+// ~500-2000мс на каждом холодном старте serverless-лямбды.
+const SCHEMA_VERSION = 12;
+
 export async function ensureInitialized() {
   if (globalThis.__crmInitialized) return;
   let lastErr;
@@ -461,10 +466,32 @@ export async function ensureInitialized() {
       // Схема уже создана после первого деплоя — не гоняем весь DDL на каждом
       // холодном старте. Тяжёлую схему запускаем только если базовой таблицы нет.
       const probe = await pool.query("SELECT to_regclass('public.users') AS t");
-      if (!probe.rows[0]?.t) {
+      const freshDb = !probe.rows[0]?.t;
+      if (freshDb) {
         await pool.query(SCHEMA);
         await ensureDefaultAdmin();
       }
+
+      // Гейт миграций: на холодном старте читаем сохранённую schema_version.
+      // Если совпадает с текущей — пропускаем все ALTER/CREATE INDEX (это
+      // 80+ запросов, на холодной лямбде они дают +0.5-2с).
+      let needsMigration = freshDb;
+      if (!freshDb) {
+        try {
+          const v = await pool.query(`SELECT value FROM app_settings WHERE key = 'schema_version'`);
+          const stored = v.rows[0]?.value;
+          if (stored !== SCHEMA_VERSION) needsMigration = true;
+        } catch {
+          // app_settings ещё нет (старая БД) — нужно прогнать миграции.
+          needsMigration = true;
+        }
+      }
+
+      if (!needsMigration) {
+        globalThis.__crmInitialized = true;
+        return;
+      }
+
       // Лёгкие миграции для уже существующей БД (заодно освежают схему на этом соединении).
       await pool.query('ALTER TABLE products ADD COLUMN IF NOT EXISTS stock REAL');
       await pool.query('ALTER TABLE products ADD COLUMN IF NOT EXISTS stock_by_store JSONB');
@@ -666,6 +693,13 @@ export async function ensureInitialized() {
         EXCEPTION WHEN duplicate_object THEN NULL;
         END $$;
       `);
+      // Маркер успешно прогнанных миграций — следующие холодные старты пропустят DDL.
+      await pool.query(
+        `INSERT INTO app_settings (key, value, updated_at)
+         VALUES ('schema_version', $1::jsonb, NOW())
+         ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`,
+        [JSON.stringify(SCHEMA_VERSION)],
+      );
       globalThis.__crmInitialized = true;
       return;
     } catch (e) {

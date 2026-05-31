@@ -1515,6 +1515,24 @@ async function openProductPicker(marketplace, hiddenSet = new Set(), warehouse =
   });
 }
 
+// SWR-кеш для редко-меняющихся настроек формы заказа. TTL 60 сек: для повторных
+// открытий формы данные берутся мгновенно, а в фоне освежаются — следующий клик
+// получит свежие. На первом открытии после загрузки страницы — обычный fetch.
+const ORDER_FORM_CACHE = { pricing: null, warehouses: null, schedule: null, at: 0 };
+const ORDER_FORM_CACHE_TTL = 60_000;
+function refreshOrderFormCache() {
+  return Promise.allSettled([
+    api.pricingSettings(),
+    api.warehousesList(),
+    api.warehouseSchedule(),
+  ]).then(([p, w, s]) => {
+    ORDER_FORM_CACHE.pricing = p.status === 'fulfilled' ? p.value : ORDER_FORM_CACHE.pricing;
+    ORDER_FORM_CACHE.warehouses = w.status === 'fulfilled' ? w.value : ORDER_FORM_CACHE.warehouses;
+    ORDER_FORM_CACHE.schedule = s.status === 'fulfilled' ? s.value : ORDER_FORM_CACHE.schedule;
+    ORDER_FORM_CACHE.at = Date.now();
+  });
+}
+
 // `order` со свойством `__template = true` означает «повторить»: предзаполняем поля,
 // но не редактируем существующий заказ (создаём новый). track-номер не копируем —
 // он уникален на отправление.
@@ -1523,13 +1541,19 @@ async function openOrderForm(order, onSaved) {
   const isEdit = !!order && !isTemplate;
   const cur = order || {};
 
-  // Параллельный fetch всех данных формы: было 3 sequential-запроса (на холодных
-  // лямбдах ≈3-5 сек), теперь Promise.all укладывается в 1-1.5 сек.
-  const [pricingRes, whRes, schedRes] = await Promise.allSettled([
-    api.pricingSettings(),
-    api.warehousesList(),
-    api.warehouseSchedule(),
-  ]);
+  // Если в кеше есть свежие (TTL 60с) — используем мгновенно, иначе ждём fetch.
+  const hasCache = ORDER_FORM_CACHE.pricing && ORDER_FORM_CACHE.warehouses
+    && (Date.now() - ORDER_FORM_CACHE.at) < ORDER_FORM_CACHE_TTL;
+  if (!hasCache) {
+    await refreshOrderFormCache();
+  } else {
+    // Свежие — отдаём сразу, а в фоне обновим (на случай если админ менял настройки).
+    refreshOrderFormCache();
+  }
+  // Соответствие старым переменным; ниже код этим уже пользуется.
+  const pricingRes = { status: 'fulfilled', value: ORDER_FORM_CACHE.pricing || { payment_methods: [], order_tiers: [] } };
+  const whRes = { status: ORDER_FORM_CACHE.warehouses ? 'fulfilled' : 'rejected', value: ORDER_FORM_CACHE.warehouses || {} };
+  const schedRes = { status: ORDER_FORM_CACHE.schedule ? 'fulfilled' : 'rejected', value: ORDER_FORM_CACHE.schedule || {} };
   const pricing = pricingRes.status === 'fulfilled' ? pricingRes.value : { payment_methods: [], order_tiers: [] };
   const paymentMethods = pricing.payment_methods || [];
   const orderTiers = pricing.order_tiers || [];
@@ -2178,6 +2202,12 @@ export async function renderOrders(main) {
   const isWarehouse = me.role === 'warehouse';
   const isAdmin = me.role === 'admin';
   const canCreate = ['admin', 'manager', 'sales'].includes(me.role);
+
+  // Прогрев кеша формы заказа: пока пользователь смотрит на список, в фоне
+  // загружаем pricing/warehouses/schedule. Когда нажмёт «Новый заказ» — будет мгновенно.
+  if (canCreate && (!ORDER_FORM_CACHE.pricing || (Date.now() - ORDER_FORM_CACHE.at) > ORDER_FORM_CACHE_TTL)) {
+    refreshOrderFormCache();
+  }
 
   let state = { page: 1, status: '', marketplace: '', search: '', view: localStorage.getItem('orders_view') || 'table' };
   const tableArea = el('div');
