@@ -171,7 +171,7 @@ router.get(
               o.price_deviation, o.recommended_total, o.delivery_method, o.client_phone,
               o.avito_dialog_url, o.return_status, o.return_resolved_by, o.return_resolved_at,
               o.warehouse, o.loss_voided, o.cancelled_from_status, o.parent_order_id,
-              o.shipment_qr,
+              o.shipment_qr, o.manager_note,
               (o.shipment_qr IS NOT NULL AND o.shipment_qr <> '') AS has_qr,
               u.name AS manager_name, w.name AS warehouse_user_name
        FROM orders o
@@ -215,6 +215,10 @@ router.get(
       `SELECT COUNT(*)::int AS total FROM orders o ${whereSql}`,
       ...params,
     );
+    // Заметка для менеджера — склад не видит (защита и на бэке, не только в UI).
+    if (req.user.role === 'warehouse') {
+      for (const r of rows) r.manager_note = null;
+    }
     res.json(paginated(rows, total, page, limit));
   }),
 );

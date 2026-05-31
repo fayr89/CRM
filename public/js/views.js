@@ -2295,6 +2295,7 @@ export async function renderOrders(main) {
               'div',
               {
                 class: 'pipeline-card',
+                style: { position: 'relative' },
                 draggable: 'true',
                 onDragstart: (e) => {
                   e.dataTransfer.setData('text/plain', String(r.id));
@@ -2371,6 +2372,29 @@ export async function renderOrders(main) {
                     'div',
                     { class: r.price_deviation > 0 ? 'order-card-dev up' : 'order-card-dev down' },
                     `${r.price_deviation > 0 ? '▲ выше' : '▼ ниже'} прайса на ${Math.abs(r.price_deviation).toLocaleString('ru-RU')} ₽`,
+                  )
+                : null,
+              // Заметка для менеджеров — бумажный стикер в правом верхнем углу карточки.
+              // Жёлтый фон, лёгкий поворот, тень. Видна всем кроме склада (бэк не отдаёт).
+              r.manager_note
+                ? el('div', {
+                    title: r.manager_note,
+                    style: {
+                      position: 'absolute', top: '8px', right: '8px',
+                      maxWidth: '40%', minWidth: '90px',
+                      background: '#fef9c3', border: '1px solid #facc15',
+                      color: '#713f12', fontSize: '12px', lineHeight: '1.3',
+                      padding: '6px 8px', borderRadius: '2px',
+                      transform: 'rotate(1.5deg)',
+                      boxShadow: '1px 2px 4px rgba(0,0,0,0.12)',
+                      whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+                      overflow: 'hidden', display: '-webkit-box',
+                      WebkitLineClamp: '4', WebkitBoxOrient: 'vertical',
+                      pointerEvents: 'none', // не мешает перетаскиванию карточки
+                    },
+                  },
+                    el('div', { style: { fontSize: '10px', color: '#a16207', marginBottom: '2px', fontWeight: 600 } }, '📌 заметка'),
+                    r.manager_note,
                   )
                 : null,
             ),
