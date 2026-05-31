@@ -1706,10 +1706,10 @@ async function openOrderForm(order, onSaved) {
   const managerNoteI = meRole !== 'warehouse'
     ? el('textarea', { rows: '2', placeholder: 'Заметка только для менеджеров (склад не увидит)' }, cur.manager_note || '')
     : null;
-  // Ссылка на диалог Avito — обязательна при площадке Avito.
+  // Ссылка на диалог Avito — опциональная, заполняется по желанию.
   const avitoDialogI = el('input', { type: 'url', value: cur.avito_dialog_url || '', placeholder: 'https://www.avito.ru/...' });
   const avitoDialogRow = el('div', { class: 'form-row', style: { gridColumn: '1 / -1' } },
-    el('label', {}, 'Ссылка на диалог Avito *'), avitoDialogI);
+    el('label', {}, 'Ссылка на диалог Avito'), avitoDialogI);
   // Номер отправления (трек-номер). Храним в shipment_qr. Обязателен при резерве.
   const qrI = el('input', {
     type: 'text',
@@ -1926,11 +1926,7 @@ async function openOrderForm(order, onSaved) {
         toast('Добавьте хотя бы одну позицию', 'error');
         return false;
       }
-      // Валидации новых требований.
-      if (marketI.value === 'Avito' && !avitoDialogI.value.trim()) {
-        toast('Для Avito укажите ссылку на диалог с клиентом', 'error');
-        return false;
-      }
+      // Ссылка на диалог Avito теперь опциональная — менеджеры заносят её по желанию.
       if (classI.value === 'B2B' && (!clientI.value.trim() || !clientPhoneI.value.trim())) {
         toast('Для B2B обязательны имя клиента и телефон', 'error');
         return false;
@@ -2276,9 +2272,22 @@ export async function renderOrders(main) {
                   e.currentTarget.classList.add('dragging');
                 },
                 onDragend: (e) => e.currentTarget.classList.remove('dragging'),
-                onClick: async () => {
-                  const full = await api.get('orders', r.id);
-                  await showOrderDetails(full, reload);
+                onClick: async (e) => {
+                  const card = e.currentTarget;
+                  if (card.dataset.loading === '1') return;
+                  card.dataset.loading = '1';
+                  card.style.opacity = '0.5';
+                  card.style.pointerEvents = 'none';
+                  try {
+                    const full = await api.get('orders', r.id);
+                    await showOrderDetails(full, reload);
+                  } catch (err) {
+                    toast(err.message || 'Не удалось открыть заказ', 'error');
+                  } finally {
+                    card.dataset.loading = '';
+                    card.style.opacity = '';
+                    card.style.pointerEvents = '';
+                  }
                 },
               },
               el(
@@ -2291,7 +2300,10 @@ export async function renderOrders(main) {
                       alt: '',
                     })
                   : el('div', { class: 'order-card-thumb empty' }, '📦'),
-                el('div', { class: 'title' }, `#${r.id} · ${r.client_name || 'Клиент'}`),
+                el('div', { class: 'title' },
+                  el('span', { style: { fontSize: '20px', fontWeight: 700, color: '#0f172a' } }, `#${r.id}`),
+                  el('span', { style: { fontSize: '14px', color: 'var(--text-muted)', marginLeft: '6px' } }, '· ' + (r.client_name || 'Клиент')),
+                ),
               ),
               el(
                 'div',
@@ -2477,10 +2489,22 @@ export async function renderOrders(main) {
       return el(
         'tr',
         {
-          onClick: async () => {
-            // Открыть детали заказа
-            const full = await api.get('orders', r.id);
-            await showOrderDetails(full, reload);
+          onClick: async (e) => {
+            const row = e.currentTarget;
+            if (row.dataset.loading === '1') return;
+            row.dataset.loading = '1';
+            row.style.opacity = '0.5';
+            row.style.pointerEvents = 'none';
+            try {
+              const full = await api.get('orders', r.id);
+              await showOrderDetails(full, reload);
+            } catch (err) {
+              toast(err.message || 'Не удалось открыть заказ', 'error');
+            } finally {
+              row.dataset.loading = '';
+              row.style.opacity = '';
+              row.style.pointerEvents = '';
+            }
           },
         },
         el('td', {}, `#${r.id}`),
