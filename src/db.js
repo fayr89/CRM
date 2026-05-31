@@ -632,6 +632,8 @@ export async function ensureInitialized() {
         VALUES ('payment_method.default', '"avito_delivery"'::jsonb, NOW())
         ON CONFLICT (key) DO NOTHING
       `);
+      // Заметка для менеджера (склад не видит). Хранится отдельно от общих notes.
+      await pool.query('ALTER TABLE orders ADD COLUMN IF NOT EXISTS manager_note TEXT');
       await pool.query('CREATE INDEX IF NOT EXISTS idx_users_max_chat ON users(max_chat_id) WHERE max_chat_id IS NOT NULL');
       await pool.query('CREATE INDEX IF NOT EXISTS idx_users_max_code ON users(max_bind_code) WHERE max_bind_code IS NOT NULL');
       // Прайс с привязкой к складу: товар × канал × склад. Старое UNIQUE(product,market) снимаем.

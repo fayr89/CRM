@@ -47,6 +47,7 @@ const createSchema = z.object({
   client_name: z.string().optional().nullable(),
   currency: z.string().length(3).optional().default('RUB'),
   notes: z.string().optional().nullable(),
+  manager_note: z.string().optional().nullable(),
   items: z.array(itemSchema).min(1, 'В заказе должна быть хотя бы одна позиция'),
   // Менеджер может создать заказ сразу в статусе «Ожидает товара» (товара ещё нет на складе).
   status: z.enum(['new', 'waiting_stock']).optional(),
@@ -60,6 +61,7 @@ const updateSchema = z.object({
   client_name: z.string().optional().nullable(),
   currency: z.string().length(3).optional(),
   notes: z.string().optional().nullable(),
+  manager_note: z.string().optional().nullable(),
   items: z.array(itemSchema).min(1).optional(),
   ...pricingMeta,
 });
@@ -602,6 +604,8 @@ router.get(
       'SELECT * FROM order_items WHERE order_id = ? ORDER BY id',
       order.id,
     );
+    // Заметка для менеджера — склад не видит.
+    if (req.user.role === 'warehouse') order.manager_note = null;
     res.json({ ...order, items });
   }),
 );
@@ -622,8 +626,8 @@ router.post(
       const r = await tx.run(
         `INSERT INTO orders
          (reference_number, marketplace, client_classification, client_name,
-          total_amount, currency, manager_id, notes, status)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
+          total_amount, currency, manager_id, notes, manager_note, status)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
         data.reference_number ?? null,
         data.marketplace ?? null,
         data.client_classification ?? null,
@@ -632,6 +636,7 @@ router.post(
         data.currency ?? 'RUB',
         req.user.id,
         data.notes ?? null,
+        data.manager_note ?? null,
         data.status ?? 'new',
       );
       const orderId = r.lastInsertRowid;
@@ -717,6 +722,7 @@ router.patch(
         'client_name',
         'currency',
         'notes',
+        'manager_note',
       ]) {
         if (data[key] !== undefined) {
           updates.push(`${key} = ?`);

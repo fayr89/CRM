@@ -1523,41 +1523,34 @@ async function openOrderForm(order, onSaved) {
   const isEdit = !!order && !isTemplate;
   const cur = order || {};
 
-  // Правила цен (необязательно): проценты по оплате + пороги по сумме.
-  // Если бэкенд старый/недоступен — форма работает как раньше, без расчёта прайса.
-  let pricing = { payment_methods: [], order_tiers: [] };
-  try {
-    pricing = await api.pricingSettings();
-  } catch {
-    /* правила недоступны */
-  }
+  // Параллельный fetch всех данных формы: было 3 sequential-запроса (на холодных
+  // лямбдах ≈3-5 сек), теперь Promise.all укладывается в 1-1.5 сек.
+  const [pricingRes, whRes, schedRes] = await Promise.allSettled([
+    api.pricingSettings(),
+    api.warehousesList(),
+    api.warehouseSchedule(),
+  ]);
+  const pricing = pricingRes.status === 'fulfilled' ? pricingRes.value : { payment_methods: [], order_tiers: [] };
   const paymentMethods = pricing.payment_methods || [];
   const orderTiers = pricing.order_tiers || [];
 
-  // Скрытые склады — чтобы наличие в позициях показывалось только по нужным складам.
-  // Список складов + склад списания по умолчанию (из администрирования).
   let hiddenSet = new Set();
   let allWarehouses = [];
   let defaultWarehouse = '';
   let defaultMarketplace = '';
   let defaultPaymentMethod = '';
-  try {
-    const w = await api.warehousesList();
+  if (whRes.status === 'fulfilled') {
+    const w = whRes.value;
     hiddenSet = new Set(w.hidden || []);
     allWarehouses = (w.all || []).filter((s) => !hiddenSet.has(s));
     defaultWarehouse = w.default_writeoff || '';
     defaultMarketplace = w.default_marketplace || '';
     defaultPaymentMethod = w.default_payment_method || '';
-  } catch {
-    /* нет настройки — покажем все склады */
   }
 
-  // Ближайший день отгрузки + cutoff (в МСК). Помогает менеджеру сразу сказать
-  // клиенту реалистичную дату. Расписание — из shipping_schedule (админ ведёт
-  // в Настройках → Склады → График отгрузок).
   let shippingBanner = null;
-  try {
-    const sched = await api.warehouseSchedule();
+  if (schedRes.status === 'fulfilled') {
+    const sched = schedRes.value;
     if (sched?.next_shipping_date) {
       const d = new Date(sched.next_shipping_date);
       const now = new Date();
@@ -1602,8 +1595,6 @@ async function openOrderForm(order, onSaved) {
         '⚠️ График отгрузок не настроен. Админ → Настройки → Склады → График отгрузок.',
       );
     }
-  } catch {
-    /* нет расписания — не критично, форма работает */
   }
   // Склад списания заказа (для МойСклад и подбора прайса по складу).
   const warehouseI = el(
@@ -1709,6 +1700,12 @@ async function openOrderForm(order, onSaved) {
   });
   const currencyI = el('input', { type: 'text', value: cur.currency || 'RUB', maxlength: '3', style: { width: '80px' } });
   const notesI = el('textarea', {}, cur.notes || '');
+  // Заметка для менеджера — склад не видит. На форме рендерим только не-складу
+  // (склад заказы редко создаёт, но на всякий случай).
+  const meRole = JSON.parse(localStorage.getItem('crm_user') || '{}').role;
+  const managerNoteI = meRole !== 'warehouse'
+    ? el('textarea', { rows: '2', placeholder: 'Заметка только для менеджеров (склад не увидит)' }, cur.manager_note || '')
+    : null;
   // Ссылка на диалог Avito — обязательна при площадке Avito.
   const avitoDialogI = el('input', { type: 'url', value: cur.avito_dialog_url || '', placeholder: 'https://www.avito.ru/...' });
   const avitoDialogRow = el('div', { class: 'form-row', style: { gridColumn: '1 / -1' } },
@@ -1911,6 +1908,8 @@ async function openOrderForm(order, onSaved) {
       el('div', { class: 'form-row', style: { gridColumn: '1 / -1' } },
         el('label', {}, 'Номер отправления'), qrI),
       el('div', { class: 'form-row' }, el('label', {}, 'Заметки'), notesI),
+      managerNoteI ? el('div', { class: 'form-row', style: { gridColumn: '1 / -1' } },
+        el('label', {}, '🔒 Заметка для менеджеров'), managerNoteI) : null,
     ),
     el('div', { class: 'form-row' }, el('label', {}, 'Позиции заказа *'), items.node),
     pricingPanel,
@@ -1953,6 +1952,7 @@ async function openOrderForm(order, onSaved) {
         client_phone: clientPhoneI.value.trim() || null,
         currency: currencyI.value || 'RUB',
         notes: notesI.value || null,
+        manager_note: managerNoteI ? (managerNoteI.value.trim() || null) : undefined,
         items: orderItems,
         payment_method: payI ? payI.value || null : cur.payment_method ?? null,
         price_deviation: p.hasRule ? p.deviation : null,
@@ -2620,14 +2620,24 @@ export async function renderOrders(main) {
       '⬇ Excel',
     ),
     canCreate
-      ? el(
-          'button',
-          {
-            class: 'btn btn-primary',
-            onClick: () => openOrderForm(null, reload),
-          },
-          'Новый заказ',
-        )
+      ? (() => {
+          // Кнопка с состоянием загрузки — форма открывается через ~1с (3 API-запроса
+          // параллельно). Без индикации пользователь думает что клик не сработал.
+          const btn = el('button', { class: 'btn btn-primary' }, 'Новый заказ');
+          btn.addEventListener('click', async () => {
+            if (btn.disabled) return;
+            btn.disabled = true;
+            const orig = btn.textContent;
+            btn.textContent = '⏳ Загрузка…';
+            try {
+              await openOrderForm(null, reload);
+            } finally {
+              btn.disabled = false;
+              btn.textContent = orig;
+            }
+          });
+          return btn;
+        })()
       : null,
   );
 
@@ -2787,16 +2797,23 @@ async function showOrderDetails(order, reload) {
   // с теми же позициями/клиентом/площадкой, чтобы не вводить повторно. trackномер
   // не копируется (он уникален на отправление).
   const canRepeat = ['admin', 'manager', 'sales'].includes(me.role);
-  const repeatBtn = canRepeat ? el('button', {
-    class: 'btn btn-sm btn-primary',
-    onClick: async () => {
-      const template = { ...order, __template: true, items: order.items || [] };
-      // Закрываем текущую модалку перед открытием новой через onSubmit — но проще
-      // открыть форму поверх и при закрытии вызвать reload. Для UX нормально: при
-      // создании повторника текущая карточка остаётся под ней.
-      await openOrderForm(template, () => { reload?.(); });
-    },
-  }, '🔁 Повторить заказ') : null;
+  const repeatBtn = canRepeat ? (() => {
+    const btn = el('button', { class: 'btn btn-sm btn-primary' }, '🔁 Повторить заказ');
+    btn.addEventListener('click', async () => {
+      if (btn.disabled) return;
+      btn.disabled = true;
+      const orig = btn.textContent;
+      btn.textContent = '⏳ Загрузка…';
+      try {
+        const template = { ...order, __template: true, items: order.items || [] };
+        await openOrderForm(template, () => { reload?.(); });
+      } finally {
+        btn.disabled = false;
+        btn.textContent = orig;
+      }
+    });
+    return btn;
+  })() : null;
 
   const body = el(
     'div',
@@ -2922,6 +2939,9 @@ async function showOrderDetails(order, reload) {
         : null,
     ),
     order.notes ? el('p', { style: { marginTop: '12px' } }, order.notes) : null,
+    order.manager_note ? el('div', {
+      style: { marginTop: '12px', padding: '10px 12px', background: '#f0f9ff', border: '1px dashed #0369a1', borderRadius: '6px', fontSize: '13px' },
+    }, el('b', {}, '🔒 Заметка для менеджеров: '), order.manager_note) : null,
     el('h3', { style: { marginTop: '16px' } }, 'Позиции'),
     itemsTable,
   );
