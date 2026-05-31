@@ -10,6 +10,26 @@ import { encryptSecret, decryptSecret } from '../services/secrets.js';
 
 const router = Router();
 
+// Умный поиск товара: разбивает запрос на слова, каждое должно встречаться
+// в name+sku (в любом порядке). Возвращает { whereExpr, params, orderExpr }.
+// Поле haystack — LOWER(name || ' ' || sku).
+function buildSmartSearch(rawQuery, haystackExpr = "LOWER(COALESCE(p.name, '') || ' ' || COALESCE(p.sku, ''))") {
+  const q = String(rawQuery || '').trim();
+  if (!q) return { whereParts: [], params: [], orderExpr: null };
+  const words = q.toLowerCase().split(/\s+/).filter(Boolean);
+  const whereParts = [];
+  const params = [];
+  for (const w of words) {
+    whereParts.push(`${haystackExpr} ILIKE ?`);
+    params.push(`%${w}%`);
+  }
+  // Сортировка по релевантности через pg_trgm.similarity. Если расширения нет,
+  // СУБД упадёт с ошибкой function does not exist — для устойчивости заворачиваем
+  // в SELECT с fallback на 0.
+  const orderExpr = `COALESCE((SELECT similarity(${haystackExpr}, ?)), 0) DESC, LENGTH(p.name) ASC`;
+  return { whereParts, params, orderExpr, similarityArg: q.toLowerCase() };
+}
+
 // Возвращает токен МойСклад: из тела запроса, иначе сохранённый в БД (шифрованный), иначе env.
 async function resolveMoyskladToken(bodyToken) {
   if (bodyToken) return bodyToken;
@@ -92,10 +112,10 @@ router.get(
     const sort = parseSort(req.query, SORT_COLUMNS, 'name', 'ASC');
     const where = [];
     const params = [];
-    if (req.query.search) {
-      where.push('(p.name ILIKE ? OR p.sku ILIKE ?)');
-      const s = `%${req.query.search}%`;
-      params.push(s, s);
+    const ssCat = buildSmartSearch(req.query.search || '');
+    if (ssCat.whereParts.length) {
+      where.push(...ssCat.whereParts);
+      params.push(...ssCat.params);
     }
     if (req.query.active === 'true') where.push('p.active = TRUE');
     if (req.query.active === 'false') where.push('p.active = FALSE');
@@ -153,22 +173,46 @@ router.get(
     const search = String(req.query.search || '').trim();
     const where = ['p.active = TRUE'];
     const params = [];
-    if (search) {
-      where.push('(p.name ILIKE ? OR p.sku ILIKE ?)');
-      const s = `%${search}%`;
-      params.push(s, s);
+    const ss = buildSmartSearch(search);
+    if (ss.whereParts.length) {
+      where.push(...ss.whereParts);
+      params.push(...ss.params);
     }
-    const rows = await db.all(
-      `SELECT p.id, p.sku, p.name, p.image_url, p.cost_price, p.unit, p.stock, p.stock_by_store,
-              pp.price AS marketplace_price
-       FROM products p
-       LEFT JOIN product_prices pp ON pp.product_id = p.id AND pp.marketplace = ? AND pp.warehouse = ?
-       WHERE ${where.join(' AND ')}
-       ORDER BY p.name ASC LIMIT 50`,
-      marketplace,
-      warehouse,
-      ...params,
-    );
+    const orderClause = ss.orderExpr
+      ? `ORDER BY ${ss.orderExpr}, p.name ASC`
+      : 'ORDER BY p.name ASC';
+    let rows;
+    try {
+      rows = await db.all(
+        `SELECT p.id, p.sku, p.name, p.image_url, p.cost_price, p.unit, p.stock, p.stock_by_store,
+                pp.price AS marketplace_price
+         FROM products p
+         LEFT JOIN product_prices pp ON pp.product_id = p.id AND pp.marketplace = ? AND pp.warehouse = ?
+         WHERE ${where.join(' AND ')}
+         ${orderClause} LIMIT 50`,
+        marketplace,
+        warehouse,
+        ...params,
+        ...(ss.similarityArg ? [ss.similarityArg] : []),
+      );
+    } catch (e) {
+      // Fallback если pg_trgm недоступен (function similarity does not exist).
+      if (e.message?.includes('similarity') || e.code === '42883') {
+        rows = await db.all(
+          `SELECT p.id, p.sku, p.name, p.image_url, p.cost_price, p.unit, p.stock, p.stock_by_store,
+                  pp.price AS marketplace_price
+           FROM products p
+           LEFT JOIN product_prices pp ON pp.product_id = p.id AND pp.marketplace = ? AND pp.warehouse = ?
+           WHERE ${where.join(' AND ')}
+           ORDER BY p.name ASC LIMIT 50`,
+          marketplace,
+          warehouse,
+          ...params,
+        );
+      } else {
+        throw e;
+      }
+    }
     res.json({ data: rows, marketplace, warehouse });
   }),
 );

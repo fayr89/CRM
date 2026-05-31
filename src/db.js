@@ -453,7 +453,7 @@ export const db = {
 // БАМПАЙ ПРИ КАЖДОМ ДОБАВЛЕНИИ МИГРАЦИИ. Текущие миграции прогоняются
 // только если запись в app_settings.schema_version отличается. Это экономит
 // ~500-2000мс на каждом холодном старте serverless-лямбды.
-const SCHEMA_VERSION = 12;
+const SCHEMA_VERSION = 13;
 
 export async function ensureInitialized() {
   if (globalThis.__crmInitialized) return;
@@ -661,6 +661,14 @@ export async function ensureInitialized() {
       `);
       // Заметка для менеджера (склад не видит). Хранится отдельно от общих notes.
       await pool.query('ALTER TABLE orders ADD COLUMN IF NOT EXISTS manager_note TEXT');
+      // pg_trgm для умного поиска товаров: многословный + similarity (опечатки).
+      // Если расширение недоступно — миграция не падает (catch), поиск работает в режиме fallback.
+      try {
+        await pool.query('CREATE EXTENSION IF NOT EXISTS pg_trgm');
+      } catch (e) {
+        // eslint-disable-next-line no-console
+        console.warn('[db-init] pg_trgm unavailable (search будет в обычном ILIKE):', e.message);
+      }
       await pool.query('CREATE INDEX IF NOT EXISTS idx_users_max_chat ON users(max_chat_id) WHERE max_chat_id IS NOT NULL');
       await pool.query('CREATE INDEX IF NOT EXISTS idx_users_max_code ON users(max_bind_code) WHERE max_bind_code IS NOT NULL');
       // Прайс с привязкой к складу: товар × канал × склад. Старое UNIQUE(product,market) снимаем.
