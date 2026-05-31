@@ -182,7 +182,9 @@ export function greeting(name) {
 export function openModal(title, body, { primaryLabel = 'Сохранить', onSubmit, size } = {}) {
   return new Promise((resolve) => {
     const root = document.getElementById('modal-root');
+    let saving = false; // блокирует Esc-закрытие во время API-запроса
     const close = (result) => {
+      if (saving) return;
       backdrop.remove();
       document.removeEventListener('keydown', onKey);
       resolve(result);
@@ -192,27 +194,48 @@ export function openModal(title, body, { primaryLabel = 'Сохранить', on
     };
     document.addEventListener('keydown', onKey);
 
+    // Защита от двойного клика: пока onSubmit (часто async API-вызов) не завершился,
+    // кнопка disabled и показывает «⏳ Сохраняю…». Кнопка «Отмена» тоже блокируется,
+    // чтобы не закрыть модалку посреди запроса (заказ создаётся, но юзер думает что нет).
+    const cancelBtn = el('button', { class: 'btn' }, 'Отмена');
+    cancelBtn.addEventListener('click', () => close(null));
+    const primaryBtn = onSubmit
+      ? el('button', { class: 'btn btn-primary' }, primaryLabel)
+      : null;
+    if (primaryBtn) {
+      primaryBtn.addEventListener('click', async () => {
+        if (primaryBtn.disabled || saving) return;
+        saving = true;
+        primaryBtn.disabled = true;
+        cancelBtn.disabled = true;
+        const orig = primaryBtn.textContent;
+        primaryBtn.textContent = '⏳ Сохраняю…';
+        try {
+          const result = await onSubmit();
+          if (result !== false) {
+            saving = false;
+            close(result);
+          } else {
+            // onSubmit вернул false — оставляем модалку открытой, восстанавливаем кнопку.
+            saving = false;
+            primaryBtn.disabled = false;
+            cancelBtn.disabled = false;
+            primaryBtn.textContent = orig;
+          }
+        } catch (e) {
+          toast(e.message || 'Ошибка', 'error');
+          saving = false;
+          primaryBtn.disabled = false;
+          cancelBtn.disabled = false;
+          primaryBtn.textContent = orig;
+        }
+      });
+    }
     const footer = el(
       'div',
       { class: 'modal-footer' },
-      el('button', { class: 'btn', onClick: () => close(null) }, 'Отмена'),
-      onSubmit
-        ? el(
-            'button',
-            {
-              class: 'btn btn-primary',
-              onClick: async () => {
-                try {
-                  const result = await onSubmit();
-                  if (result !== false) close(result);
-                } catch (e) {
-                  toast(e.message || 'Ошибка', 'error');
-                }
-              },
-            },
-            primaryLabel,
-          )
-        : null,
+      cancelBtn,
+      primaryBtn,
     );
 
     const modal = el(
