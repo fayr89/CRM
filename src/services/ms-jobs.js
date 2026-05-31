@@ -80,12 +80,14 @@ export async function enqueueMsJob(orderId, action, payload = {}) {
     result = { skipped: false, id: r.lastInsertRowid };
   }
   // Жёсткий таймаут на синхронное исполнение, чтобы не задерживать ответ
-  // пользователю — если МС не ответил за 12 сек, ответ уходит, задача остаётся
-  // в очереди и подберётся следующим request'ом через middleware.
+  // пользователю. 2 секунды — баланс: типичный ответ МС 0.3-1.5с укладывается,
+  // редкие медленные хвосты уходят в фоновую очередь (tickMsQueue подберёт
+  // на следующем /api запросе или через recovery sweep). Раньше было 12с —
+  // это было слишком долго для UX перевода статуса в канбане.
   try {
     await Promise.race([
       runPendingMsJobs(3),
-      new Promise((resolve) => setTimeout(resolve, 12_000)),
+      new Promise((resolve) => setTimeout(resolve, 2_000)),
     ]);
   } catch (e) {
     console.warn('[ms] inline run after enqueue:', e.message);
