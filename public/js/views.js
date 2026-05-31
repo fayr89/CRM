@@ -2315,12 +2315,16 @@ export async function renderOrders(main) {
               r.reference_number
                 ? el('div', { class: 'meta' }, '№ ' + r.reference_number)
                 : null,
-              // Трек-номер + способ отправки в канбане — чтобы было видно сразу, без открытия карточки.
+              // Трек-номер крупно, способ отправки рядом мельче — на канбане сразу
+              // видно номер отправления, который менеджеру/складу важнее всего.
               (r.shipment_qr || r.delivery_method)
-                ? el('div', { class: 'meta', style: { color: 'var(--text-muted)' } },
-                    r.delivery_method ? '🚚 ' + r.delivery_method : '',
-                    r.delivery_method && r.shipment_qr ? ' · ' : '',
-                    r.shipment_qr ? '🏷 ' + r.shipment_qr : '',
+                ? el('div', { class: 'meta', style: { marginTop: '4px' } },
+                    r.shipment_qr
+                      ? el('span', { style: { fontSize: '17px', fontWeight: 700, color: '#0f172a' } }, '🏷 ' + r.shipment_qr)
+                      : null,
+                    r.delivery_method
+                      ? el('span', { style: { fontSize: '13px', color: 'var(--text-muted)', marginLeft: r.shipment_qr ? '8px' : '0' } }, '🚚 ' + r.delivery_method)
+                      : null,
                   )
                 : null,
               el('div', { class: 'meta' }, '👤 ' + (r.manager_name || '—') + ' · 📅 ' + fmtDate(r.created_at)),
