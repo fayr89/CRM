@@ -112,6 +112,9 @@ export const api = {
     query: opts.force ? { force: '1' } : {},
   }),
   suggestClients: (q) => request('GET', '/api/orders/clients/suggest', { query: { q } }),
+  checkShipmentQr: (qr, excludeId) => request('GET', '/api/orders/check-shipment-qr', {
+    query: { qr, ...(excludeId ? { exclude_id: String(excludeId) } : {}) },
+  }),
   unreserveOrder: (id) => request('POST', `/api/orders/${id}/unreserve`),
   shipOrder: (id) => request('POST', `/api/orders/${id}/ship`),
   shipBulk: (ids) => request('POST', '/api/orders/ship-bulk', { body: { ids } }),

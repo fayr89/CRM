@@ -66,6 +66,31 @@ const updateSchema = z.object({
   ...pricingMeta,
 });
 
+// Реестр номеров отправления: каждый трек должен быть уникален среди
+// активных заказов. Возвращает конфликтующую запись или null.
+// Отменённые заказы не блокируют (трек можно использовать заново).
+async function checkShipmentQrConflict(qr, excludeOrderId = null) {
+  if (!qr || !String(qr).trim()) return null;
+  const normalized = String(qr).trim();
+  const where = ["TRIM(shipment_qr) = ?", "status != 'cancelled'"];
+  const params = [normalized];
+  if (excludeOrderId) {
+    where.push('id != ?');
+    params.push(Number(excludeOrderId));
+  }
+  return await db.get(
+    `SELECT id, status, reference_number, client_name, marketplace, manager_id, created_at
+     FROM orders WHERE ${where.join(' AND ')} ORDER BY id DESC LIMIT 1`,
+    ...params,
+  );
+}
+
+function shipmentQrConflictMessage(conflict) {
+  const who = conflict.client_name || conflict.reference_number || ('заказ #' + conflict.id);
+  const status = conflict.status || '—';
+  return `Этот номер отправления уже используется в заказе #${conflict.id} (${who}, статус: ${status}). Если предыдущий заказ был отменён — обновите страницу. Если ошиблись — поправьте номер.`;
+}
+
 // Пишем метаданные прайса отдельным «best-effort» запросом ПОСЛЕ создания/обновления
 // заказа: даже если колонок ещё нет на этом соединении, сам заказ не сломается.
 async function saveOrderPricingMeta(orderId, data) {
@@ -419,6 +444,22 @@ router.get(
 // Автоподсказка клиентов из истории заказов — для формы создания заказа.
 // Подбор по фрагменту имени или телефона. Видимость ограничена правами:
 // admin/finance видят всех клиентов, остальные — только из своих заказов.
+// Проверка трека на дубль — для live-валидации в форме при наборе.
+router.get(
+  '/check-shipment-qr',
+  asyncHandler(async (req, res) => {
+    const qr = String(req.query.qr || '').trim();
+    const excludeId = req.query.exclude_id ? Number(req.query.exclude_id) : null;
+    if (!qr) return res.json({ ok: true });
+    const conflict = await checkShipmentQrConflict(qr, excludeId);
+    if (conflict) {
+      res.json({ ok: false, conflict, message: shipmentQrConflictMessage(conflict) });
+    } else {
+      res.json({ ok: true });
+    }
+  }),
+);
+
 router.get(
   '/clients/suggest',
   asyncHandler(async (req, res) => {
@@ -646,6 +687,11 @@ router.post(
       throw Forbidden('Создавать заказы могут менеджеры и продажники');
     }
     const data = createSchema.parse(req.body);
+    // Реестр треков: один и тот же shipment_qr не должен быть на двух активных заказах.
+    if (data.shipment_qr) {
+      const conflict = await checkShipmentQrConflict(data.shipment_qr);
+      if (conflict) throw BadRequest(shipmentQrConflictMessage(conflict));
+    }
     const totalAmount = data.items.reduce(
       (sum, i) => sum + i.quantity * i.unit_price,
       0,
@@ -739,6 +785,11 @@ router.patch(
     if (!(await canAccessOrder(req.user, order))) throw Forbidden();
     if (req.user.role !== 'admin' && order.status !== 'new') {
       throw BadRequest('Менять заказ можно только пока он в статусе «новый»');
+    }
+    // Реестр треков: тот же qr на другом активном заказе — запрещаем.
+    if (data.shipment_qr) {
+      const conflict = await checkShipmentQrConflict(data.shipment_qr, order.id);
+      if (conflict) throw BadRequest(shipmentQrConflictMessage(conflict));
     }
 
     await db.withTransaction(async (tx) => {

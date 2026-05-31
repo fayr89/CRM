@@ -1735,11 +1735,51 @@ async function openOrderForm(order, onSaved) {
   const avitoDialogRow = el('div', { class: 'form-row', style: { gridColumn: '1 / -1' } },
     el('label', {}, 'Ссылка на диалог Avito'), avitoDialogI);
   // Номер отправления (трек-номер). Храним в shipment_qr. Обязателен при резерве.
+  // Live-проверка дубля по реестру треков: меняешь номер → debounced GET к бэку.
+  // Если занят другим активным заказом — красная плашка с № конфликта.
   const qrI = el('input', {
     type: 'text',
     value: (!isTemplate && cur.shipment_qr && !String(cur.shipment_qr).startsWith('data:')) ? cur.shipment_qr : '',
     placeholder: 'Номер отправления',
+    autocomplete: 'off',
   });
+  const qrWarning = el('div', {
+    style: {
+      display: 'none', marginTop: '6px', padding: '10px 12px',
+      background: '#fef2f2', border: '2px solid #ef4444', borderRadius: '6px',
+      color: '#991b1b', fontSize: '14px', fontWeight: 500,
+    },
+  });
+  let qrConflictId = null;
+  let qrCheckTimer = null;
+  async function checkQrLive() {
+    const qr = qrI.value.trim();
+    qrConflictId = null;
+    qrWarning.style.display = 'none';
+    qrI.style.borderColor = '';
+    if (!qr) return;
+    try {
+      const r = await api.checkShipmentQr(qr, isEdit ? cur.id : null);
+      if (!r.ok && r.conflict) {
+        qrConflictId = r.conflict.id;
+        qrI.style.borderColor = '#ef4444';
+        clear(qrWarning);
+        qrWarning.append(
+          el('div', { style: { fontSize: '15px', marginBottom: '4px' } }, '⛔ Этот номер отправления уже используется'),
+          el('div', { style: { fontSize: '13px' } }, r.message || ''),
+        );
+        qrWarning.style.display = 'block';
+      }
+    } catch {
+      // молча — серверная валидация сработает при сохранении
+    }
+  }
+  qrI.addEventListener('input', () => {
+    clearTimeout(qrCheckTimer);
+    qrCheckTimer = setTimeout(checkQrLive, 400);
+  });
+  // Если в форму подставили существующий трек (при template/edit) — проверим сразу.
+  if (qrI.value.trim()) setTimeout(checkQrLive, 100);
   const deliveryI = el(
     'select',
     {},
@@ -1930,7 +1970,7 @@ async function openOrderForm(order, onSaved) {
       el('div', { class: 'form-row' }, el('label', {}, 'Валюта'), currencyI),
       avitoDialogRow,
       el('div', { class: 'form-row', style: { gridColumn: '1 / -1' } },
-        el('label', {}, 'Номер отправления'), qrI),
+        el('label', {}, 'Номер отправления'), el('div', {}, qrI, qrWarning)),
       el('div', { class: 'form-row' }, el('label', {}, 'Заметки'), notesI),
       managerNoteI ? el('div', { class: 'form-row', style: { gridColumn: '1 / -1' } },
         el('label', {}, '🔒 Заметка для менеджеров'), managerNoteI) : null,
@@ -1946,6 +1986,13 @@ async function openOrderForm(order, onSaved) {
     size: 'lg',
     onSubmit: async () => {
       const orderItems = items.getItems();
+      // Дубль трека — блокируем сразу, чтобы избежать лишних запросов на бэк
+      // (бэк всё равно проверит, но так быстрее и понятнее пользователю).
+      if (qrConflictId) {
+        toast(`Номер отправления уже занят заказом #${qrConflictId} — поменяйте трек`, 'error');
+        qrI.focus();
+        return false;
+      }
       if (orderItems.length === 0) {
         toast('Добавьте хотя бы одну позицию', 'error');
         return false;
