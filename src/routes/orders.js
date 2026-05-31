@@ -160,6 +160,9 @@ router.get(
 
     // ВАЖНО: в листинге НЕ отдаём return_proof (может содержать base64).
     // shipment_qr теперь только текст (трек-номер), поэтому отдаём — нужен в канбане.
+    // ОПТИМИЗАЦИЯ: вместо 3 подзапросов на каждую строку (items_count + preview_image
+    // + items_preview = 600 sub-queries на канбан в 200 строк) — один запрос за items
+    // ниже + агрегация в JS. На холодной лямбде это десятки vs сотни мс.
     const rows = await db.all(
       `SELECT o.id, o.reference_number, o.marketplace, o.client_classification, o.client_name,
               o.total_amount, o.currency, o.manager_id, o.warehouse_user_id, o.status,
@@ -170,14 +173,7 @@ router.get(
               o.warehouse, o.loss_voided, o.cancelled_from_status, o.parent_order_id,
               o.shipment_qr,
               (o.shipment_qr IS NOT NULL AND o.shipment_qr <> '') AS has_qr,
-              u.name AS manager_name, w.name AS warehouse_user_name,
-              (SELECT COUNT(*)::int FROM order_items WHERE order_id = o.id) AS items_count,
-              (SELECT image_url FROM order_items
-                 WHERE order_id = o.id AND image_url IS NOT NULL
-                 ORDER BY id LIMIT 1) AS preview_image,
-              (SELECT string_agg(name, ', ') FROM (
-                 SELECT name FROM order_items WHERE order_id = o.id ORDER BY id LIMIT 5
-               ) t) AS items_preview
+              u.name AS manager_name, w.name AS warehouse_user_name
        FROM orders o
        LEFT JOIN users u ON u.id = o.manager_id
        LEFT JOIN users w ON w.id = o.warehouse_user_id
@@ -186,6 +182,35 @@ router.get(
       limit,
       offset,
     );
+    // Подтягиваем items: один запрос для всех order_id, ROW_NUMBER для лимита 5 в preview.
+    if (rows.length) {
+      const orderIds = rows.map((r) => r.id);
+      const itemsRows = await db.all(
+        `SELECT order_id, name, image_url,
+                ROW_NUMBER() OVER (PARTITION BY order_id ORDER BY id) AS rn,
+                COUNT(*) OVER (PARTITION BY order_id)::int AS total_count
+         FROM order_items
+         WHERE order_id = ANY(?)
+         ORDER BY order_id, rn`,
+        orderIds,
+      );
+      const byOrder = new Map();
+      for (const it of itemsRows) {
+        let agg = byOrder.get(it.order_id);
+        if (!agg) {
+          agg = { items_count: it.total_count, preview_image: null, items_preview: [] };
+          byOrder.set(it.order_id, agg);
+        }
+        if (!agg.preview_image && it.image_url) agg.preview_image = it.image_url;
+        if (it.rn <= 5) agg.items_preview.push(it.name);
+      }
+      for (const r of rows) {
+        const agg = byOrder.get(r.id) || { items_count: 0, preview_image: null, items_preview: [] };
+        r.items_count = agg.items_count;
+        r.preview_image = agg.preview_image;
+        r.items_preview = agg.items_preview.join(', ');
+      }
+    }
     const { total } = await db.get(
       `SELECT COUNT(*)::int AS total FROM orders o ${whereSql}`,
       ...params,
