@@ -2350,7 +2350,7 @@ export async function renderOrders(main) {
               (r.shipment_qr || r.delivery_method)
                 ? el('div', { class: 'meta', style: { marginTop: '4px' } },
                     r.shipment_qr
-                      ? el('span', { style: { fontSize: '17px', fontWeight: 700, color: '#0f172a' } }, '🏷 ' + r.shipment_qr)
+                      ? el('span', { style: { fontSize: '17px', color: '#0f172a' } }, '🏷 ' + r.shipment_qr)
                       : null,
                     r.delivery_method
                       ? el('span', { style: { fontSize: '13px', color: 'var(--text-muted)', marginLeft: r.shipment_qr ? '8px' : '0' } }, '🚚 ' + r.delivery_method)
