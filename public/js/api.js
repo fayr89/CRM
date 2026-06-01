@@ -164,6 +164,13 @@ export const api = {
   // Аудит-лог
   listAudit: (query) => request('GET', '/api/admin/audit', { query }),
 
+  // Баннеры уведомлений на сайте
+  activeBanners: () => request('GET', '/api/notice-banners/active'),
+  listBanners: () => request('GET', '/api/notice-banners'),
+  createBanner: (body) => request('POST', '/api/notice-banners', { body }),
+  updateBanner: (id, body) => request('PATCH', `/api/notice-banners/${id}`, { body }),
+  deleteBanner: (id) => request('DELETE', `/api/notice-banners/${id}`),
+
   // AI-предложения (inbox админа)
   listAiProposals: (query) => request('GET', '/api/ai-proposals', { query }),
   aiProposalsPendingCount: () => request('GET', '/api/ai-proposals/pending-count'),

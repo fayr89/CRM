@@ -453,7 +453,7 @@ export const db = {
 // БАМПАЙ ПРИ КАЖДОМ ДОБАВЛЕНИИ МИГРАЦИИ. Текущие миграции прогоняются
 // только если запись в app_settings.schema_version отличается. Это экономит
 // ~500-2000мс на каждом холодном старте serverless-лямбды.
-const SCHEMA_VERSION = 14;
+const SCHEMA_VERSION = 15;
 
 export async function ensureInitialized() {
   if (globalThis.__crmInitialized) return;
@@ -694,6 +694,21 @@ export async function ensureInitialized() {
       await pool.query('CREATE INDEX IF NOT EXISTS idx_ai_proposals_status ON ai_proposals(status)');
       await pool.query('CREATE INDEX IF NOT EXISTS idx_ai_proposals_feedback ON ai_proposals(feedback_id) WHERE feedback_id IS NOT NULL');
       await pool.query('CREATE INDEX IF NOT EXISTS idx_ai_proposals_created ON ai_proposals(created_at DESC)');
+      // Баннеры уведомлений сверху страницы (info/warning) — админ-управляемые.
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS notice_banners (
+          id SERIAL PRIMARY KEY,
+          text TEXT NOT NULL,
+          kind TEXT NOT NULL DEFAULT 'info'
+            CHECK (kind IN ('info','warning','success','error')),
+          starts_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          ends_at TIMESTAMPTZ NOT NULL,
+          dismissible BOOLEAN NOT NULL DEFAULT TRUE,
+          created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+      `);
+      await pool.query('CREATE INDEX IF NOT EXISTS idx_notice_banners_window ON notice_banners(starts_at, ends_at)');
       await pool.query('CREATE INDEX IF NOT EXISTS idx_users_max_chat ON users(max_chat_id) WHERE max_chat_id IS NOT NULL');
       await pool.query('CREATE INDEX IF NOT EXISTS idx_users_max_code ON users(max_bind_code) WHERE max_bind_code IS NOT NULL');
       // Прайс с привязкой к складу: товар × канал × склад. Старое UNIQUE(product,market) снимаем.

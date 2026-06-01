@@ -4382,6 +4382,7 @@ export async function renderIntegrations(main) {
   const msTokenArea = el('div', { class: 'integration-section' });
   const msSyncArea = el('div', { class: 'integration-section' });
   const maxBotArea = el('div', { class: 'integration-section' });
+  const bannersArea = el('div', { class: 'integration-section' });
   const marketplacesArea = el('div', { class: 'integration-section' });
   const deliveryArea = el('div', { class: 'integration-section' });
   const cancelReasonsArea = el('div', { class: 'integration-section' });
@@ -4390,11 +4391,12 @@ export async function renderIntegrations(main) {
   const webhooksArea = el('div', { class: 'integration-section' });
   const docsArea = el('div', { class: 'integration-section' });
 
-  main.append(msTokenArea, msSyncArea, maxBotArea, marketplacesArea, deliveryArea, cancelReasonsArea, warehousesArea, tokensArea, webhooksArea, docsArea);
+  main.append(msTokenArea, msSyncArea, maxBotArea, bannersArea, marketplacesArea, deliveryArea, cancelReasonsArea, warehousesArea, tokensArea, webhooksArea, docsArea);
 
   await renderMoyskladTokenSection(msTokenArea);
   await renderMoyskladSyncSection(msSyncArea);
   await renderMaxBotSection(maxBotArea);
+  await renderNoticeBannersSection(bannersArea);
   await renderMarketplacesSection(marketplacesArea);
   await renderDeliveryMethodsSection(deliveryArea);
   await renderListSettingSection(cancelReasonsArea, {
@@ -8897,4 +8899,111 @@ export async function renderAiInbox(main) {
     tableArea,
   );
   await reload();
+}
+
+// Управление баннерами уведомлений на сайте (Настройки → блок). Только админ.
+async function renderNoticeBannersSection(area) {
+  clear(area);
+  const me = JSON.parse(localStorage.getItem('crm_user') || '{}');
+  if (me.role !== 'admin') return;
+  area.append(
+    el('div', { class: 'section-header' }, el('h2', {}, '📣 Уведомление-полоска сверху сайта')),
+    el('p', { class: 'help-banner' },
+      'Создавайте баннеры (info / warning / success / error) с длительностью в днях. ',
+      'Видят все пользователи; могут закрыть — баннер прячется до следующего входа.'),
+  );
+
+  const listArea = el('div', { style: { marginTop: '10px' } });
+  area.append(listArea);
+
+  async function reload() {
+    clear(listArea);
+    listArea.append(el('div', { class: 'loading' }, 'Загрузка…'));
+    try {
+      const r = await api.listBanners();
+      renderList(r.data || []);
+    } catch (e) {
+      clear(listArea);
+      listArea.append(el('div', { class: 'error' }, e.message || 'Ошибка'));
+    }
+  }
+
+  function kindBadge(k) {
+    const map = { info: '#dbeafe', warning: '#fef3c7', success: '#dcfce7', error: '#fee2e2' };
+    return el('span', { style: { background: map[k] || '#eee', padding: '2px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: 600 } }, k);
+  }
+
+  function renderList(rows) {
+    clear(listArea);
+    if (!rows.length) {
+      listArea.append(el('p', { class: 'muted' }, 'Баннеров пока нет.'));
+    } else {
+      for (const b of rows) {
+        const card = el('div', {
+          class: 'card',
+          style: { marginBottom: '8px', display: 'flex', gap: '12px', alignItems: 'flex-start', borderLeft: `4px solid ${b.is_active ? '#22c55e' : '#9ca3af'}` },
+        },
+          el('div', { style: { flex: 1 } },
+            el('div', { style: { display: 'flex', gap: '8px', alignItems: 'center', marginBottom: '4px' } },
+              kindBadge(b.kind),
+              el('span', { class: 'muted', style: { fontSize: '12px' } },
+                b.is_active ? '🟢 Активен' : '⚪ Истёк',
+                ` · до ${fmtDateTime(b.ends_at)}`,
+              ),
+            ),
+            el('div', { style: { whiteSpace: 'pre-wrap' } }, b.text),
+          ),
+          el('button', {
+            class: 'btn btn-sm btn-danger',
+            onClick: async () => {
+              if (!(await confirm('Удалить баннер?'))) return;
+              try { await api.deleteBanner(b.id); toast('Удалён', 'success'); reload(); }
+              catch (e) { toast(e.message, 'error'); }
+            },
+          }, '🗑 Удалить'),
+        );
+        listArea.append(card);
+      }
+    }
+  }
+
+  // Форма создания.
+  const textI = el('textarea', { rows: '2', placeholder: 'Текст баннера', style: { width: '100%' } });
+  const kindI = el('select', {},
+    el('option', { value: 'info' }, 'ℹ️ Info'),
+    el('option', { value: 'warning', selected: true }, '⚠️ Warning'),
+    el('option', { value: 'success' }, '✅ Success'),
+    el('option', { value: 'error' }, '❌ Error'),
+  );
+  const daysI = el('input', { type: 'number', min: '1', max: '365', value: '3', style: { width: '70px' } });
+  const dismissibleI = el('input', { type: 'checkbox', checked: true });
+  area.append(
+    el('h3', { style: { marginTop: '16px', fontSize: '15px' } }, '➕ Создать баннер'),
+    el('div', { class: 'form-row' }, el('label', {}, 'Текст'), textI),
+    el('div', { class: 'form-row', style: { display: 'flex', gap: '12px', flexWrap: 'wrap', alignItems: 'center' } },
+      el('label', {}, 'Тип: ', kindI),
+      el('label', {}, 'Срок: ', daysI, ' дней'),
+      el('label', { style: { display: 'flex', alignItems: 'center', gap: '4px' } }, dismissibleI, 'Можно скрыть'),
+      el('button', {
+        class: 'btn btn-primary',
+        onClick: async () => {
+          const text = textI.value.trim();
+          if (!text) { toast('Введите текст', 'error'); return; }
+          try {
+            await api.createBanner({
+              text,
+              kind: kindI.value,
+              duration_days: Number(daysI.value) || 3,
+              dismissible: dismissibleI.checked,
+            });
+            toast('Баннер создан', 'success');
+            textI.value = '';
+            reload();
+          } catch (e) { toast(e.message, 'error'); }
+        },
+      }, 'Создать'),
+    ),
+  );
+
+  reload();
 }

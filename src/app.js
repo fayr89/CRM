@@ -32,6 +32,7 @@ import feedbackRoutes from './routes/feedback.js';
 import cronRoutes from './routes/cron.js';
 import maxRoutes from './routes/max.js';
 import aiProposalsRoutes from './routes/aiProposals.js';
+import noticeBannersRoutes from './routes/noticeBanners.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = path.resolve(__dirname, '..', 'public');
@@ -42,6 +43,11 @@ export function createApp({ serveStatic = true } = {}) {
   // Отключаем ETag для API: иначе повторные GET отдают 304, а фронт трактует
   // не-2xx как ошибку (данные теряются — например, не грузились фильтры складов).
   app.set('etag', false);
+  // Trust proxy: на проде стоит nginx-прокси в РФ → Vercel → лямбда. Без trust proxy
+  // req.ip будет адресом ближнего прокси (одинаковый у всех клиентов), и rate-limit
+  // на логине заблокирует ВСЕХ при первой ошибке одного. С trust proxy req.ip берётся
+  // из X-Forwarded-For — настоящий IP клиента.
+  app.set('trust proxy', true);
 
   // CORS: разрешить same-origin, localhost и vercel.app домены
   const extraOrigins = process.env.ALLOWED_ORIGINS
@@ -135,6 +141,7 @@ export function createApp({ serveStatic = true } = {}) {
   app.use('/api/cron', cronRoutes);
   app.use('/api/max', maxRoutes);
   app.use('/api/ai-proposals', aiProposalsRoutes);
+  app.use('/api/notice-banners', noticeBannersRoutes);
 
   app.use((req, res) => {
     res.status(404).json({ error: `Route not found: ${req.method} ${req.path}` });
