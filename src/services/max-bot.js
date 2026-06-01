@@ -40,10 +40,11 @@ export async function setMaxToken(plainToken) {
   await setSetting('max.bot_token', encryptSecret(plainToken));
 }
 
-// MAX API: токен передаётся в Authorization header (Bearer <token>),
-// query-параметр access_token у них deprecated и возвращает 401.
+// MAX API: токен передаётся в Authorization header без префикса (просто значение).
+// Bearer / Bot не подходят — возвращают 401. Query-параметр access_token deprecated.
+// Проверено диагностикой: GET /me с Authorization: <token> → 200 OK с инфой бота.
 function maxAuthHeaders(token) {
-  return { 'authorization': `Bearer ${token}` };
+  return { 'authorization': token };
 }
 
 export async function getMaxBotInfo() {
