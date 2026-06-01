@@ -301,18 +301,23 @@ router.get(
     };
 
     if (apply && warehouse) {
-      let upserted = 0;
-      for (const m of matched) {
+      // Батчевый upsert одним запросом — 233 round-trip в remote PG занимают
+      // 25+ секунд, упирается в 60-сек таймаут лямбды / Cloudflare 502.
+      if (matched.length) {
+        const placeholders = matched.map(() => '(?, ?, ?, ?)').join(', ');
+        const params = [];
+        for (const m of matched) {
+          params.push(m.product_id, 'Avito', warehouse, m.price);
+        }
         await db.run(
           `INSERT INTO product_prices (product_id, marketplace, warehouse, price)
-           VALUES (?, 'Avito', ?, ?)
+           VALUES ${placeholders}
            ON CONFLICT (product_id, marketplace, warehouse)
            DO UPDATE SET price = EXCLUDED.price, updated_at = NOW()`,
-          m.product_id, warehouse, m.price,
+          ...params,
         );
-        upserted += 1;
       }
-      result.upserted = upserted;
+      result.upserted = matched.length;
       result.applied = true;
     }
     if (apply && !warehouse) {
