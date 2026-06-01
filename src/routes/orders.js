@@ -165,6 +165,9 @@ router.get(
       where.push('o.marketplace = ?');
       params.push(req.query.marketplace);
     }
+    if (req.query.direct === '1') {
+      where.push('o.marketplace IS NULL');
+    }
     if (req.query.manager_id) {
       where.push('o.manager_id = ?');
       params.push(Number(req.query.manager_id));
@@ -383,27 +386,43 @@ router.get(
       const ids = idsRaw.split(',').map((s) => Number(s.trim())).filter((n) => Number.isFinite(n) && n > 0);
       if (!ids.length) throw BadRequest('Некорректный параметр ids');
       orders = await db.all(
-        `SELECT id, reference_number, shipment_qr, delivery_method, payment_method, marketplace
-         FROM orders WHERE id = ANY(?) ORDER BY array_position(?::int[], id)`,
+        `SELECT o.id, o.reference_number, o.shipment_qr, o.delivery_method, o.payment_method,
+                o.marketplace, u.name AS manager_name
+         FROM orders o LEFT JOIN users u ON u.id = o.manager_id
+         WHERE o.id = ANY(?) ORDER BY array_position(?::int[], o.id)`,
         ids,
         ids,
       );
     } else {
       // По умолчанию — все reserved (для массовой печати в графике отгрузок).
       const scope = await orderScope(req.user);
-      const where = ['status = ?'];
+      const where = ['o.status = ?'];
       const params = ['reserved'];
       if (scope.sql) {
-        where.push(scope.sql);
+        where.push(scope.sql.replace(/manager_id/g, 'o.manager_id'));
         params.push(...scope.params);
       }
       orders = await db.all(
-        `SELECT id, reference_number, shipment_qr, delivery_method, payment_method, marketplace
-         FROM orders WHERE ${where.join(' AND ')} ORDER BY reserved_at`,
+        `SELECT o.id, o.reference_number, o.shipment_qr, o.delivery_method, o.payment_method,
+                o.marketplace, u.name AS manager_name
+         FROM orders o LEFT JOIN users u ON u.id = o.manager_id
+         WHERE ${where.join(' AND ')} ORDER BY o.reserved_at`,
         ...params,
       );
     }
     if (!orders.length) throw BadRequest('Не найдено заказов для печати этикеток');
+    // Загружаем позиции заказов.
+    const orderIds = orders.map((o) => o.id);
+    const itemRows = await db.all(
+      `SELECT order_id, sku, name, quantity FROM order_items WHERE order_id = ANY(?) ORDER BY order_id, id`,
+      orderIds,
+    );
+    const itemsByOrder = {};
+    for (const it of itemRows) {
+      if (!itemsByOrder[it.order_id]) itemsByOrder[it.order_id] = [];
+      itemsByOrder[it.order_id].push(it);
+    }
+    for (const o of orders) o.items = itemsByOrder[o.id] || [];
     // shipment_qr — обязательное поле этикетки. Если у кого-то пусто — пропускаем (внутри).
     const { generateLabelsPdf } = await import('../services/labels-pdf.js');
     const pdf = await generateLabelsPdf(orders);
@@ -411,6 +430,91 @@ router.get(
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
     res.send(pdf);
+  }),
+);
+
+// Лист сборки/проверки заказов: CSV с детализацией по позициям (одна строка = одна позиция).
+// По умолчанию — зарезервированные заказы (статус reserved). Query: ?status=, ?ids=N,N
+router.get(
+  '/assembly-list.csv',
+  asyncHandler(async (req, res) => {
+    const scope = await orderScope(req.user);
+    const where = [];
+    const params = [];
+    const idsRaw = String(req.query.ids || '').trim();
+    if (idsRaw) {
+      const ids = idsRaw.split(',').map((s) => Number(s.trim())).filter((n) => Number.isFinite(n) && n > 0);
+      if (!ids.length) throw BadRequest('Некорректный параметр ids');
+      where.push('o.id = ANY(?)');
+      params.push(ids);
+    } else {
+      where.push('o.status = ?');
+      params.push(req.query.status || 'reserved');
+    }
+    if (scope.sql) {
+      where.push(scope.sql.replace(/manager_id/g, 'o.manager_id'));
+      params.push(...scope.params);
+    }
+    const whereSql = `WHERE ${where.join(' AND ')}`;
+    const orders = await db.all(
+      `SELECT o.id, o.reference_number, o.client_name, o.marketplace, o.delivery_method,
+              o.shipment_qr, o.warehouse, o.notes, o.reserved_at, o.created_at,
+              u.name AS manager_name
+       FROM orders o
+       LEFT JOIN users u ON u.id = o.manager_id
+       ${whereSql} ORDER BY o.reserved_at NULLS LAST, o.id`,
+      ...params,
+    );
+    const orderIds = orders.map((o) => o.id);
+    const items = orderIds.length
+      ? await db.all(
+          `SELECT order_id, sku, name, quantity FROM order_items
+           WHERE order_id = ANY(?) ORDER BY order_id, id`,
+          orderIds,
+        )
+      : [];
+    const itemsByOrder = new Map();
+    for (const it of items) {
+      if (!itemsByOrder.has(it.order_id)) itemsByOrder.set(it.order_id, []);
+      itemsByOrder.get(it.order_id).push(it);
+    }
+    // Одна строка = одна позиция заказа. Заголовок повторяется один раз.
+    const BOM = '﻿';
+    const header = ['№ п/п', 'ID заказа', 'Внешний №', 'Клиент', 'Маркетплейс',
+      'Способ доставки', 'Трек номер', 'Склад', 'Артикул', 'Наименование', 'Кол-во',
+      'Менеджер', 'Комментарий'];
+    const escape = (v) => {
+      const s = String(v ?? '');
+      return s.includes(',') || s.includes('"') || s.includes('\n')
+        ? `"${s.replace(/"/g, '""')}"` : s;
+    };
+    const shipMethodStr = (o) => {
+      const dm = String(o.delivery_method || '').trim().toLowerCase();
+      const map = { sdek: 'СДЭК', cdek: 'СДЭК', pochta: 'Почта России', pochta_russia: 'Почта России',
+        boxberry: 'Boxberry', yandex: 'Я.Доставка', avito_delivery: 'Avito Доставка',
+        avito: 'Avito Доставка', pickup: 'Самовывоз', courier: 'Курьер' };
+      if (dm) return map[dm] || o.delivery_method;
+      return o.marketplace || '';
+    };
+    const rows = [header.map(escape).join(',')];
+    let seq = 0;
+    for (const o of orders) {
+      const orderItems = itemsByOrder.get(o.id) || [{ sku: '', name: '—', quantity: '' }];
+      for (const it of orderItems) {
+        seq++;
+        rows.push([
+          seq, o.id, o.reference_number || '', o.client_name || '',
+          o.marketplace || '', shipMethodStr(o), o.shipment_qr || '',
+          o.warehouse || '', it.sku || '', it.name || '', it.quantity ?? '',
+          o.manager_name || '', o.notes || '',
+        ].map(escape).join(','));
+      }
+    }
+    const csv = BOM + rows.join('\r\n');
+    const filename = `assembly-${new Date().toISOString().slice(0, 10)}.csv`;
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.send(csv);
   }),
 );
 

@@ -16,6 +16,7 @@ import {
   renderMyFeedback,
   renderIntegrations,
   renderInvitations,
+  renderDirectOrders,
   renderOrders,
   renderLostGoods,
   renderPipeline,
@@ -39,6 +40,7 @@ const NAV_GROUPS = [
     items: [
       { hash: '#/pipeline', label: 'Воронка', roles: SALES_ROLES, block: 'sales' },
       { hash: '#/deals', label: 'Сделки', roles: SALES_ROLES, block: 'sales' },
+      { hash: '#/direct-orders', label: 'Прямые заказы', roles: SALES_ROLES, block: 'direct' },
       { hash: '#/leads', label: 'Лиды', roles: SALES_ROLES, block: 'sales' },
       { hash: '#/contacts', label: 'Контакты', roles: SALES_ROLES, block: 'sales' },
       { hash: '#/companies', label: 'Компании', roles: SALES_ROLES, block: 'sales' },
@@ -614,6 +616,7 @@ const ROUTES = {
   '#/users': (m) => renderResource(m, 'users'),
   '#/invitations': renderInvitations,
   '#/orders': renderOrders,
+  '#/direct-orders': renderDirectOrders,
   '#/shipping': renderShipping,
   '#/returns': renderReturns,
   '#/lost-goods': renderLostGoods,
