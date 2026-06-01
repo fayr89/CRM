@@ -34,7 +34,6 @@ import maxRoutes from './routes/max.js';
 import aiProposalsRoutes from './routes/aiProposals.js';
 import noticeBannersRoutes from './routes/noticeBanners.js';
 import notificationPrefsRoutes from './routes/notificationPrefs.js';
-import diagRoutes from './routes/diag.js'; // TEMP qnBGo-2
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = path.resolve(__dirname, '..', 'public');
@@ -145,7 +144,6 @@ export function createApp({ serveStatic = true } = {}) {
   app.use('/api/ai-proposals', aiProposalsRoutes);
   app.use('/api/notice-banners', noticeBannersRoutes);
   app.use('/api/notification-prefs', notificationPrefsRoutes);
-  app.use('/api/diag', diagRoutes); // TEMP qnBGo-2
 
   app.use((req, res) => {
     res.status(404).json({ error: `Route not found: ${req.method} ${req.path}` });
