@@ -27,6 +27,9 @@ router.get('/', async (req, res) => {
     const proposals_rejected = await db.all(
       `SELECT * FROM ai_proposals WHERE status='rejected' ORDER BY created_at DESC`,
     );
+    const proposals_pending = await db.all(
+      `SELECT id, title, feedback_id, risk, source, created_at FROM ai_proposals WHERE status='pending' ORDER BY created_at DESC`,
+    );
     const feedbacks = await db.all(
       `SELECT f.*, u.name AS user_name, u.email AS user_email, u.role AS user_role
        FROM feedback f LEFT JOIN users u ON u.id = f.user_id
@@ -42,7 +45,7 @@ router.get('/', async (req, res) => {
       );
       threads[fb.id] = msgs;
     }
-    res.json({ proposals_approved, proposals_revision, proposals_rejected, feedbacks, threads });
+    res.json({ proposals_approved, proposals_revision, proposals_rejected, proposals_pending, feedbacks, threads });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
