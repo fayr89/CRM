@@ -322,4 +322,104 @@ router.get(
   }),
 );
 
+// --- TEMP: AI daily run (сессия qnBGo, удалить после использования) ---
+const AI_DAILY_SECRET = '4b8aec9e522948ca409d251e5c429be13e9032d46dcf71f9';
+
+router.get(
+  '/ai-daily',
+  asyncHandler(async (req, res) => {
+    if (req.query.token !== AI_DAILY_SECRET) return res.status(404).json({ error: 'not found' });
+    const proposals = await db.all(
+      `SELECT p.*, f.subject AS feedback_subject FROM ai_proposals p
+       LEFT JOIN feedback f ON f.id = p.feedback_id
+       ORDER BY p.created_at DESC LIMIT 100`,
+    );
+    const feedbacks = await db.all(
+      `SELECT f.id, f.status, f.subject, f.message, f.category, f.admin_reply,
+              f.created_at, f.updated_at,
+              u.name AS user_name, u.email AS user_email, u.role AS user_role
+       FROM feedback f LEFT JOIN users u ON u.id = f.user_id
+       WHERE f.status IN ('open','awaiting_approval')
+       ORDER BY f.created_at DESC LIMIT 50`,
+    );
+    const fbIds = feedbacks.map((f) => f.id);
+    const messages = fbIds.length > 0
+      ? await db.all(
+          `SELECT id, feedback_id, user_name, role, text, created_at
+           FROM feedback_messages WHERE feedback_id = ANY(?)
+           ORDER BY feedback_id, created_at ASC, id ASC`,
+          fbIds,
+        )
+      : [];
+    res.json({ proposals, feedbacks, messages });
+  }),
+);
+
+router.get(
+  '/ai-daily/post-msg',
+  asyncHandler(async (req, res) => {
+    if (req.query.token !== AI_DAILY_SECRET) return res.status(404).json({ error: 'not found' });
+    const fid = Number(req.query.fid);
+    const text = String(req.query.text || '').trim();
+    if (!fid || !text) return res.status(400).json({ error: 'fid and text required' });
+    const r = await db.run(
+      `INSERT INTO feedback_messages (feedback_id, user_id, user_name, role, text)
+       VALUES (?, NULL, 'AI ассистент', 'admin', ?) RETURNING id`,
+      fid, text,
+    );
+    res.json({ ok: true, id: r.lastInsertRowid });
+  }),
+);
+
+router.get(
+  '/ai-daily/patch-feedback',
+  asyncHandler(async (req, res) => {
+    if (req.query.token !== AI_DAILY_SECRET) return res.status(404).json({ error: 'not found' });
+    const id = Number(req.query.id);
+    const status = String(req.query.status || '');
+    const reply = req.query.reply ? String(req.query.reply) : null;
+    if (!id || !status) return res.status(400).json({ error: 'id and status required' });
+    await db.run(
+      `UPDATE feedback SET status = ?, admin_reply = COALESCE(?, admin_reply), updated_at = NOW() WHERE id = ?`,
+      status, reply, id,
+    );
+    res.json({ ok: true });
+  }),
+);
+
+router.get(
+  '/ai-daily/create-proposal',
+  asyncHandler(async (req, res) => {
+    if (req.query.token !== AI_DAILY_SECRET) return res.status(404).json({ error: 'not found' });
+    const title = String(req.query.title || '').trim();
+    const summary = String(req.query.summary || '').trim();
+    const category = req.query.category ? String(req.query.category) : null;
+    const risk = req.query.risk || 'medium';
+    const fid = req.query.fid ? Number(req.query.fid) : null;
+    if (!title || !summary) return res.status(400).json({ error: 'title and summary required' });
+    const r = await db.run(
+      `INSERT INTO ai_proposals (feedback_id, title, summary, category, risk, source, proposed_changes)
+       VALUES (?, ?, ?, ?, ?, ?, NULL) RETURNING id`,
+      fid, title, summary, category, risk, 'daily-run-2026-06-01',
+    );
+    res.json({ ok: true, id: r.lastInsertRowid });
+  }),
+);
+
+router.get(
+  '/ai-daily/patch-proposal',
+  asyncHandler(async (req, res) => {
+    if (req.query.token !== AI_DAILY_SECRET) return res.status(404).json({ error: 'not found' });
+    const id = Number(req.query.id);
+    const decision = String(req.query.decision || '');
+    if (!id || !decision) return res.status(400).json({ error: 'id and decision required' });
+    await db.run(
+      `UPDATE ai_proposals SET status = ?, admin_decision_at = NOW(), updated_at = NOW() WHERE id = ?`,
+      decision, id,
+    );
+    res.json({ ok: true });
+  }),
+);
+// --- END TEMP ---
+
 export default router;
