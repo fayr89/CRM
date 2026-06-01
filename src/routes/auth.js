@@ -170,4 +170,25 @@ router.get('/me', authenticate, (req, res) => {
   res.json({ user: req.user });
 });
 
+const changePasswordSchema = z.object({
+  current: z.string().min(1),
+  next: z.string().min(6, 'Новый пароль должен быть не короче 6 символов'),
+});
+
+router.post(
+  '/change-password',
+  authenticate,
+  asyncHandler(async (req, res) => {
+    const { current, next } = changePasswordSchema.parse(req.body);
+    const u = await db.get('SELECT id, password_hash FROM users WHERE id = ?', req.user.id);
+    if (!u || !verifyPassword(current, u.password_hash)) {
+      throw BadRequest('Неверный текущий пароль');
+    }
+    if (current === next) throw BadRequest('Новый пароль совпадает со старым');
+    await db.run('UPDATE users SET password_hash = ? WHERE id = ?', hashPassword(next), req.user.id);
+    await logAction(req, { action: 'user.password_changed', entity_type: 'user', entity_id: req.user.id, details: { self: true } });
+    res.json({ ok: true });
+  }),
+);
+
 export default router;

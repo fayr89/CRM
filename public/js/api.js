@@ -55,6 +55,7 @@ export const api = {
     request('POST', '/api/auth/login', { body: { email, password } }),
   impersonate: (role) => request('POST', '/api/auth/impersonate', { body: { role } }),
   me: () => request('GET', '/api/auth/me'),
+  changePassword: (current, next) => request('POST', '/api/auth/change-password', { body: { current, next } }),
   acceptInvite: (token, name, password) =>
     request('POST', '/api/auth/accept-invite', { body: { token, name, password } }),
   inviteByToken: (token) => request('GET', `/api/invitations/by-token/${encodeURIComponent(token)}`),
@@ -112,6 +113,7 @@ export const api = {
     query: opts.force ? { force: '1' } : {},
   }),
   suggestClients: (q) => request('GET', '/api/orders/clients/suggest', { query: { q } }),
+  clientRecentItems: (params) => request('GET', '/api/orders/clients/recent-items', { query: params }),
   checkShipmentQr: (qr, excludeId) => request('GET', '/api/orders/check-shipment-qr', {
     query: { qr, ...(excludeId ? { exclude_id: String(excludeId) } : {}) },
   }),
