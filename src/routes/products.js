@@ -365,7 +365,7 @@ const priceSchema = z.object({
 
 router.put(
   '/:id/prices',
-  requireRole('admin', 'manager'),
+  requireRole('admin'),
   asyncHandler(async (req, res) => {
     const data = priceSchema.parse(req.body);
     const product = await db.get('SELECT id FROM products WHERE id = ?', req.params.id);
@@ -393,7 +393,7 @@ router.put(
 
 router.delete(
   '/:id/prices/:marketplace',
-  requireRole('admin', 'manager'),
+  requireRole('admin'),
   asyncHandler(async (req, res) => {
     await db.run(
       'DELETE FROM product_prices WHERE product_id = ? AND marketplace = ? AND warehouse = ?',
