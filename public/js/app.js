@@ -11,6 +11,7 @@ import {
   renderDashboard,
   openFeedbackDialog,
   openMaxBindDialog,
+  renderAiInbox,
   renderFeedback,
   renderMyFeedback,
   renderIntegrations,
@@ -75,6 +76,7 @@ const NAV_GROUPS = [
       { hash: '#/integrations', label: 'Настройки', roles: ['admin', 'aus'] },
       { hash: '#/feedback', label: 'Обращения', roles: ['admin'] },
       { hash: '#/audit', label: 'История действий', roles: ['admin'] },
+      { hash: '#/ai-inbox', label: '🤖 AI-предложения', roles: ['admin'] },
     ],
   },
 ];
@@ -243,12 +245,16 @@ function renderShell() {
   const navChildren = [];
   // Бейдж с числом открытых обращений — рядом с пунктом «Обращения».
   const feedbackCounter = el('span', { class: 'nav-counter', style: { display: 'none' } });
+  // Бейдж AI-предложений ждущих решения админа.
+  const aiInboxCounter = el('span', { class: 'nav-counter', style: { display: 'none' } });
   for (const group of NAV_GROUPS) {
     const items = group.items.filter((it) => navItemVisible(user, it));
     if (!items.length) continue;
     if (group.title) navChildren.push(el('div', { class: 'sidebar-group-title' }, group.title));
     for (const it of items) {
-      const extras = it.hash === '#/feedback' ? [feedbackCounter] : [];
+      const extras = it.hash === '#/feedback' ? [feedbackCounter]
+        : it.hash === '#/ai-inbox' ? [aiInboxCounter]
+        : [];
       navChildren.push(
         el('a', { href: it.hash, class: path.startsWith(it.hash) ? 'active' : '' },
           el('span', {}, it.label), ...extras),
@@ -394,8 +400,30 @@ function renderShell() {
   }
 
   startNotificationsPolling(bellCounter);
-  if (user.role === 'admin') startFeedbackPolling(feedbackCounter);
+  if (user.role === 'admin') {
+    startFeedbackPolling(feedbackCounter);
+    startAiInboxPolling(aiInboxCounter);
+  }
   return main;
+}
+
+let aiInboxTimer = null;
+function startAiInboxPolling(counter) {
+  async function tick() {
+    try {
+      const r = await api.aiProposalsPendingCount();
+      const n = r?.count || 0;
+      if (n > 0) {
+        counter.textContent = String(n);
+        counter.style.display = '';
+      } else {
+        counter.style.display = 'none';
+      }
+    } catch { /* ignore */ }
+  }
+  tick();
+  if (aiInboxTimer) clearInterval(aiInboxTimer);
+  aiInboxTimer = setInterval(tick, 60_000);
 }
 
 // --- Уведомления: дропдаун + поллинг каждые 20 секунд ---
@@ -557,6 +585,7 @@ const ROUTES = {
   '#/feedback': renderFeedback,
   '#/my-feedback': renderMyFeedback,
   '#/audit': renderAudit,
+  '#/ai-inbox': renderAiInbox,
 };
 
 function renderApp() {

@@ -163,6 +163,14 @@ export const api = {
   msRunNow: () => request('POST', '/api/admin/ms/jobs/run-now'),
   // Аудит-лог
   listAudit: (query) => request('GET', '/api/admin/audit', { query }),
+
+  // AI-предложения (inbox админа)
+  listAiProposals: (query) => request('GET', '/api/ai-proposals', { query }),
+  aiProposalsPendingCount: () => request('GET', '/api/ai-proposals/pending-count'),
+  createAiProposal: (body) => request('POST', '/api/ai-proposals', { body }),
+  decideAiProposal: (id, decision, notes) =>
+    request('PATCH', `/api/ai-proposals/${id}`, { body: { decision, notes } }),
+  deleteAiProposal: (id) => request('DELETE', `/api/ai-proposals/${id}`),
   wipeOperational: () => request('POST', '/api/admin/wipe-operational', { body: { confirm: 'УДАЛИТЬ' } }),
 
   // МАХ-бот

@@ -8679,3 +8679,170 @@ export async function renderMaxBotSection(area) {
   area.append(tokenRow, webhookRow, statusBlock, el('div', { style: { marginTop: '8px' } }, testBtn));
 }
 
+
+
+// AI-предложения: inbox админа от AI-ассистента. Каждое предложение можно
+// принять (AI выполнит на следующем обходе), отправить на доработку
+// (с заметкой что AI должен пересмотреть) или отклонить.
+export async function renderAiInbox(main) {
+  const me = JSON.parse(localStorage.getItem('crm_user') || '{}');
+  if (me.role !== 'admin') {
+    main.innerHTML = '';
+    main.append(el('div', { class: 'card' }, 'Раздел доступен только администратору.'));
+    return;
+  }
+
+  const state = { status: 'pending' };
+  const tableArea = el('div');
+
+  function statusBadge(s) {
+    const map = {
+      pending: ['⏳ Ждёт решения', '#fed7aa', '#9a3412'],
+      approved: ['✅ Принято', '#dcfce7', '#166534'],
+      rejected: ['❌ Отклонено', '#fecaca', '#991b1b'],
+      revision: ['↩️ На доработку', '#fef3c7', '#854d0e'],
+      done: ['🎯 Выполнено', '#dbeafe', '#1e40af'],
+    };
+    const [label, bg, fg] = map[s] || [s, '#eee', '#444'];
+    return el('span', { style: { background: bg, color: fg, padding: '2px 10px', borderRadius: '4px', fontSize: '12px', fontWeight: 600 } }, label);
+  }
+
+  function riskBadge(r) {
+    const map = {
+      low: ['🟢 низкий риск', '#dcfce7', '#166534'],
+      medium: ['🟡 средний риск', '#fef3c7', '#854d0e'],
+      high: ['🔴 высокий риск', '#fee2e2', '#991b1b'],
+    };
+    const [label, bg, fg] = map[r] || [r || '—', '#eee', '#444'];
+    return el('span', { style: { background: bg, color: fg, padding: '2px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: 500 } }, label);
+  }
+
+  async function reload() {
+    clear(tableArea);
+    tableArea.append(el('div', { class: 'loading' }, 'Загрузка…'));
+    try {
+      const r = await api.listAiProposals({ status: state.status });
+      renderList(r.data || []);
+    } catch (e) {
+      clear(tableArea);
+      tableArea.append(el('div', { class: 'card error' }, e.message || 'Ошибка'));
+    }
+  }
+
+  async function decide(p, decision, notes = null) {
+    try {
+      await api.decideAiProposal(p.id, decision, notes);
+      toast('Решение записано', 'success');
+      await reload();
+    } catch (e) { toast(e.message, 'error'); }
+  }
+
+  function renderList(rows) {
+    clear(tableArea);
+    if (!rows.length) {
+      tableArea.append(emptyState({
+        icon: '🤖',
+        title: state.status === 'pending' ? 'Нет предложений ждущих решения' : 'Ничего не найдено в этом фильтре',
+        description: 'AI присылает сюда задачи которые требуют вашего одобрения — например, фичи с риском или неоднозначные правки.',
+      }));
+      return;
+    }
+    for (const p of rows) {
+      const card = el('div', {
+        class: 'card',
+        style: { marginBottom: '12px', borderLeft: `4px solid ${p.risk === 'high' ? '#ef4444' : p.risk === 'low' ? '#22c55e' : '#f59e0b'}` },
+      });
+      let changes = p.proposed_changes;
+      if (typeof changes === 'string') {
+        try { changes = JSON.parse(changes); } catch { changes = null; }
+      }
+      card.append(
+        el('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '12px', flexWrap: 'wrap' } },
+          el('div', { style: { flex: 1, minWidth: '200px' } },
+            el('div', { style: { fontSize: '12px', color: 'var(--text-muted)', marginBottom: '4px' } },
+              `#${p.id} · ${p.category || '—'}${p.source ? ' · ' + p.source : ''} · ${fmtDateTime(p.created_at)}`),
+            el('div', { style: { fontSize: '17px', fontWeight: 600 } }, p.title),
+          ),
+          el('div', { style: { display: 'flex', gap: '6px', flexWrap: 'wrap' } },
+            statusBadge(p.status),
+            riskBadge(p.risk),
+          ),
+        ),
+        p.feedback_id ? el('div', { style: { marginTop: '8px', fontSize: '13px' } },
+          el('span', { class: 'muted' }, 'Связано с обращением: '),
+          el('a', { href: '#/feedback' }, `#${p.feedback_id} — ${p.feedback_subject || ''}`),
+          p.feedback_author_name ? el('span', { class: 'muted' }, ` · автор: ${p.feedback_author_name}`) : null,
+        ) : null,
+        el('div', { style: { marginTop: '10px', fontSize: '14px', whiteSpace: 'pre-wrap' } }, p.summary),
+        Array.isArray(changes) && changes.length ? el('div', { style: { marginTop: '10px' } },
+          el('div', { style: { fontSize: '13px', fontWeight: 600, marginBottom: '4px' } }, 'Предполагаемые правки:'),
+          el('ul', { style: { margin: 0, paddingLeft: '20px', fontSize: '13px' } },
+            ...changes.map((c) => el('li', {},
+              c.file ? el('code', { style: { fontSize: '12px', background: '#f3f4f6', padding: '1px 4px', borderRadius: '3px' } }, c.file) : null,
+              c.action ? ` — ${c.action}` : '',
+              c.reason ? el('span', { style: { color: 'var(--text-muted)' } }, ` (${c.reason})`) : null,
+            )),
+          ),
+        ) : null,
+        p.admin_notes ? el('div', { style: { marginTop: '10px', padding: '8px 10px', background: '#f9fafb', borderRadius: '6px', fontSize: '13px' } },
+          el('b', {}, 'Заметка админа: '),
+          p.admin_notes,
+          p.admin_decision_by_name ? el('span', { class: 'muted' }, ` — ${p.admin_decision_by_name}, ${fmtDateTime(p.admin_decision_at)}`) : null,
+        ) : null,
+        ['pending', 'revision'].includes(p.status)
+          ? el('div', { style: { marginTop: '12px', display: 'flex', gap: '8px', flexWrap: 'wrap' } },
+              el('button', {
+                class: 'btn btn-primary',
+                onClick: async () => {
+                  if (!(await confirm('Принять? AI выполнит это на следующем обходе.'))) return;
+                  await decide(p, 'approved');
+                },
+              }, '✅ Принять'),
+              el('button', {
+                class: 'btn',
+                onClick: async () => {
+                  const notes = prompt('Что AI должен исправить / уточнить?');
+                  if (!notes || !notes.trim()) return;
+                  await decide(p, 'revision', notes.trim());
+                },
+              }, '↩️ На доработку'),
+              el('button', {
+                class: 'btn btn-danger',
+                onClick: async () => {
+                  const reason = prompt('Причина отказа (опционально):') || null;
+                  if (!(await confirm('Отклонить предложение?'))) return;
+                  await decide(p, 'rejected', reason);
+                },
+              }, '❌ Отклонить'),
+            )
+          : p.status === 'approved'
+            ? el('div', { style: { marginTop: '10px', fontSize: '13px', color: 'var(--text-muted)' } },
+                'Ожидает выполнения AI. После выполнения статус сменится на «🎯 Выполнено».')
+            : null,
+      );
+      tableArea.append(card);
+    }
+  }
+
+  const filterSel = el('select', {},
+    el('option', { value: 'pending', selected: state.status === 'pending' }, 'Ждут решения'),
+    el('option', { value: 'approved', selected: state.status === 'approved' }, 'Принятые'),
+    el('option', { value: 'revision', selected: state.status === 'revision' }, 'На доработке'),
+    el('option', { value: 'rejected', selected: state.status === 'rejected' }, 'Отклонённые'),
+    el('option', { value: 'done', selected: state.status === 'done' }, 'Выполненные'),
+    el('option', { value: '', selected: !state.status }, 'Все'),
+  );
+  filterSel.addEventListener('change', () => { state.status = filterSel.value; reload(); });
+
+  main.innerHTML = '';
+  main.append(
+    el('h1', { class: 'page-title' }, '🤖 AI-предложения'),
+    el('div', { class: 'page-subtitle' },
+      'Inbox от AI-ассистента. Каждое утро (по расписанию) AI обходит обращения пользователей: что-то делает сам, а спорное и потенциально опасное присылает сюда на ваше решение.'),
+    el('div', { class: 'filter-bar', style: { marginBottom: '12px' } },
+      el('label', {}, 'Фильтр: ', filterSel),
+    ),
+    tableArea,
+  );
+  await reload();
+}

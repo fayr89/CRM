@@ -453,7 +453,7 @@ export const db = {
 // БАМПАЙ ПРИ КАЖДОМ ДОБАВЛЕНИИ МИГРАЦИИ. Текущие миграции прогоняются
 // только если запись в app_settings.schema_version отличается. Это экономит
 // ~500-2000мс на каждом холодном старте serverless-лямбды.
-const SCHEMA_VERSION = 13;
+const SCHEMA_VERSION = 14;
 
 export async function ensureInitialized() {
   if (globalThis.__crmInitialized) return;
@@ -669,6 +669,31 @@ export async function ensureInitialized() {
         // eslint-disable-next-line no-console
         console.warn('[db-init] pg_trgm unavailable (search будет в обычном ILIKE):', e.message);
       }
+      // AI-предложения: inbox для админа от AI-ассистента. Каждое предложение
+      // привязано к feedback (опционально), описывает что AI хочет сделать.
+      // Админ через UI выбирает: принять / на доработку (с заметкой) / отклонить.
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS ai_proposals (
+          id BIGSERIAL PRIMARY KEY,
+          feedback_id INTEGER REFERENCES feedback(id) ON DELETE SET NULL,
+          title TEXT NOT NULL,
+          summary TEXT NOT NULL,
+          category TEXT,
+          risk TEXT CHECK (risk IN ('low','medium','high')) DEFAULT 'medium',
+          source TEXT,
+          proposed_changes JSONB,
+          status TEXT NOT NULL DEFAULT 'pending'
+            CHECK (status IN ('pending','approved','rejected','revision','done')),
+          admin_decision_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+          admin_decision_at TIMESTAMPTZ,
+          admin_notes TEXT,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+      `);
+      await pool.query('CREATE INDEX IF NOT EXISTS idx_ai_proposals_status ON ai_proposals(status)');
+      await pool.query('CREATE INDEX IF NOT EXISTS idx_ai_proposals_feedback ON ai_proposals(feedback_id) WHERE feedback_id IS NOT NULL');
+      await pool.query('CREATE INDEX IF NOT EXISTS idx_ai_proposals_created ON ai_proposals(created_at DESC)');
       await pool.query('CREATE INDEX IF NOT EXISTS idx_users_max_chat ON users(max_chat_id) WHERE max_chat_id IS NOT NULL');
       await pool.query('CREATE INDEX IF NOT EXISTS idx_users_max_code ON users(max_bind_code) WHERE max_bind_code IS NOT NULL');
       // Прайс с привязкой к складу: товар × канал × склад. Старое UNIQUE(product,market) снимаем.
