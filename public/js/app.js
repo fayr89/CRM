@@ -387,6 +387,11 @@ function renderShell() {
   // Клик по пункту навигации закрывает меню (на мобильном).
   sidebar.querySelectorAll('.sidebar-nav a').forEach((a) => a.addEventListener('click', closeMenu));
 
+  // Полоска уведомлений сверху (баннеры от админа). Закрытые сохраняются в localStorage по id.
+  const noticeBar = el('div', { class: 'notice-bar' });
+  root.append(noticeBar);
+  loadNoticeBanners(noticeBar);
+
   root.append(el('div', { class: 'shell' }, sidebar, overlay, main), menuBtn);
 
   // При имперсонации — плавающая кнопка возврата вверху (всегда доступна, не зависит от scroll меню).
@@ -407,6 +412,40 @@ function renderShell() {
     startAiInboxPolling(aiInboxCounter);
   }
   return main;
+}
+
+function getDismissedBanners() {
+  try { return new Set(JSON.parse(localStorage.getItem('crm_dismissed_banners') || '[]')); }
+  catch { return new Set(); }
+}
+function setDismissedBanners(set) {
+  localStorage.setItem('crm_dismissed_banners', JSON.stringify([...set]));
+}
+async function loadNoticeBanners(container) {
+  try {
+    const r = await api.activeBanners();
+    const banners = r.data || [];
+    const dismissed = getDismissedBanners();
+    container.innerHTML = '';
+    for (const b of banners) {
+      if (b.dismissible && dismissed.has(b.id)) continue;
+      const cls = `notice-banner notice-${b.kind || 'info'}`;
+      const node = el('div', { class: cls },
+        el('span', { class: 'notice-text' }, b.text),
+        b.dismissible ? el('button', {
+          class: 'notice-close',
+          title: 'Скрыть до следующего входа',
+          onClick: () => {
+            const d = getDismissedBanners();
+            d.add(b.id);
+            setDismissedBanners(d);
+            node.remove();
+          },
+        }, '×') : null,
+      );
+      container.append(node);
+    }
+  } catch { /* нет банеров — ничего страшного */ }
 }
 
 let aiInboxTimer = null;
