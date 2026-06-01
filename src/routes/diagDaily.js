@@ -21,14 +21,14 @@ router.get('/', async (req, res) => {
   try {
     const { action, status } = req.query;
     if (action === 'proposals') {
-      const where = status ? 'WHERE status = $1' : '';
+      const where = status ? 'WHERE p.status = $1' : '';
       const params = status ? [status] : [];
       const rows = await db.all(
         `SELECT p.*, f.subject AS feedback_subject, f.user_id AS feedback_user_id
          FROM ai_proposals p
          LEFT JOIN feedback f ON f.id = p.feedback_id
          ${where}
-         ORDER BY created_at DESC`,
+         ORDER BY p.created_at DESC`,
         ...params,
       );
       return res.json({ data: rows });
