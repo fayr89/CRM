@@ -897,7 +897,7 @@ function itemsEditor(initialItems = [], { getMarketplace, getWarehouse, onChange
       const wh = (getWarehouse?.() || '').trim();
       return wh ? `⚠️ нет на складе «${wh}»` : '⚠️ нет в наличии на складах';
     }
-    return '📦 ' + sv.visible.map((s) => `${s.store}: ${s.stock}`).join(', ');
+    return '📦 ' + sv.visible.map((s) => `${s.store}: ${Math.max(0, s.stock - s.reserve)}`).join(', ');
   }
   // Обновляет подсказку наличия с учётом заказанного количества (предупреждение, если больше остатка).
   function updateStoresHint(row) {
@@ -905,7 +905,8 @@ function itemsEditor(initialItems = [], { getMarketplace, getWarehouse, onChange
     const i = row._inputs;
     if (!i.storesHint) return;
     const hasStores = Array.isArray(meta.stock_by_store) && meta.stock_by_store.length;
-    const total = hasStores ? filteredStoreView(meta.stock_by_store).totalStock : null;
+    const sv = hasStores ? filteredStoreView(meta.stock_by_store) : null;
+    const total = sv ? Math.max(0, sv.totalStock - sv.totalReserve) : null;
     const qty = Number(i.quantity.value) || 0;
     let text = storesText(meta.stock_by_store);
     if (total != null && qty > total) {
@@ -1095,7 +1096,7 @@ function itemsEditor(initialItems = [], { getMarketplace, getWarehouse, onChange
     // Проверка наличия: если выбран склад — смотрим только по нему, иначе по всем видимым.
     const sv = filteredStoreView(product.stock_by_store);
     const hasStores = Array.isArray(product.stock_by_store) && product.stock_by_store.length;
-    const available = hasStores ? sv.totalStock : product.stock;
+    const available = hasStores ? Math.max(0, sv.totalStock - sv.totalReserve) : product.stock;
     if (available != null && available <= 0) {
       const ok = await confirm(`«${product.name}» нет в наличии (остаток ${available}). Всё равно добавить в заказ?`);
       if (!ok) return;
@@ -2431,6 +2432,129 @@ async function reserveOrderWithStockCheck(orderId) {
   }
 }
 
+async function openOrderImportModal(onDone) {
+  const fileInput = el('input', { type: 'file', accept: '.csv,.txt', style: { marginBottom: '12px' } });
+  const previewArea = el('div');
+  const statusEl = el('div', { class: 'import-status' });
+  let parsedPreview = null;
+
+  const downloadBtn = el(
+    'button',
+    {
+      type: 'button',
+      class: 'btn btn-sm',
+      onClick: async () => {
+        try {
+          const resp = await fetch('/api/orders/import-template.csv', {
+            headers: { Authorization: `Bearer ${localStorage.getItem('crm_token')}` },
+          });
+          const blob = await resp.blob();
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = 'orders-import-template.csv';
+          a.click();
+          URL.revokeObjectURL(url);
+        } catch (e) {
+          toast(e.message, 'error');
+        }
+      },
+    },
+    '⬇ Скачать шаблон CSV',
+  );
+
+  async function parseFile(file) {
+    clear(previewArea);
+    parsedPreview = null;
+    statusEl.textContent = '⏳ Разбираю файл…';
+    try {
+      const text = await file.text();
+      const result = await api.post('orders/import', { csv: text, dry_run: true });
+      parsedPreview = result;
+      statusEl.textContent = '';
+      if (!result.orders_to_create) {
+        previewArea.append(el('div', { class: 'empty' }, 'Нет строк для импорта. Проверьте формат файла.'));
+        return;
+      }
+      const rows = result.preview || [];
+      const errEl = result.errors?.length
+        ? el('div', { class: 'hint', style: { color: 'var(--danger)' } },
+            `⚠️ Пропущено строк: ${result.errors.length}. `,
+            ...result.errors.slice(0, 3).map((e) => el('div', {}, `Стр. ${e.row}: ${e.message}`)))
+        : null;
+      const tableRows = rows.map((g) =>
+        el(
+          'tr',
+          {},
+          el('td', {}, g.track || '—'),
+          el('td', {}, g.items.length),
+          el('td', {}, g.items.map((i) => i.sku).filter(Boolean).join(', ') || '—'),
+          el('td', {}, fmtMoney(g.total, 'RUB')),
+          el('td', {}, g.delivery || '—'),
+        ),
+      );
+      previewArea.append(
+        errEl,
+        el('div', { class: 'hint' }, `Будет создано заказов: ${result.orders_to_create}`),
+        el(
+          'div',
+          { class: 'table-wrap', style: { maxHeight: '300px', overflowY: 'auto' } },
+          el(
+            'table',
+            { class: 'data' },
+            el('thead', {},
+              el('tr', {},
+                el('th', {}, 'Трек'), el('th', {}, 'Позиций'),
+                el('th', {}, 'Артикулы'), el('th', {}, 'Сумма'), el('th', {}, 'Доставка'),
+              ),
+            ),
+            el('tbody', {}, ...tableRows),
+          ),
+        ),
+      );
+    } catch (e) {
+      statusEl.textContent = '';
+      previewArea.append(el('div', { class: 'empty' }, `Ошибка: ${e.message}`));
+    }
+  }
+
+  fileInput.addEventListener('change', () => {
+    if (fileInput.files[0]) parseFile(fileInput.files[0]);
+  });
+
+  const body = el(
+    'div',
+    {},
+    el('p', {}, 'Загрузите CSV-файл для создания заказов. Строки с одним трек-номером объединяются в один заказ.'),
+    downloadBtn,
+    el('div', { style: { margin: '12px 0' } }, fileInput),
+    statusEl,
+    previewArea,
+  );
+
+  await openModal('Импорт заказов из CSV', body, {
+    primaryLabel: 'Создать заказы',
+    size: 'lg',
+    onSubmit: async () => {
+      if (!parsedPreview?.orders_to_create) {
+        toast('Сначала загрузите файл', 'error');
+        return false;
+      }
+      const file = fileInput.files[0];
+      if (!file) { toast('Файл не выбран', 'error'); return false; }
+      try {
+        const text = await file.text();
+        const result = await api.post('orders/import', { csv: text, dry_run: false });
+        toast(`Создано заказов: ${result.created}`, 'success');
+        onDone?.();
+      } catch (e) {
+        toast(e.message, 'error');
+        return false;
+      }
+    },
+  });
+}
+
 export async function renderOrders(main, opts = {}) {
   await loadLookups();
   const me = JSON.parse(localStorage.getItem('crm_user') || '{}');
@@ -2703,14 +2827,16 @@ export async function renderOrders(main, opts = {}) {
       'tr',
       {},
       el('th', {}, '№'),
-      el('th', {}, 'Площадка'),
-      el('th', {}, 'Номер отправления'),
-      el('th', {}, 'Клиент'),
+      el('th', {}, 'Дата'),
+      el('th', {}, 'Артикул'),
+      el('th', {}, 'Наименование'),
+      el('th', {}, 'Кол-во'),
+      el('th', {}, 'Цена/шт'),
       el('th', {}, 'Сумма'),
-      el('th', {}, 'Поз.'),
+      el('th', {}, 'Служба доставки'),
+      el('th', {}, 'Трек №'),
       el('th', {}, 'Статус'),
       el('th', {}, 'Менеджер'),
-      el('th', {}, 'Создан'),
       el('th', { style: { textAlign: 'right' } }, 'Действия'),
     );
     const body = rows.map((r) => {
@@ -2806,14 +2932,16 @@ export async function renderOrders(main, opts = {}) {
           },
         },
         el('td', {}, `#${r.id}`),
-        el('td', {}, r.marketplace || '—'),
-        el('td', {}, r.shipment_qr || '—'),
-        el('td', {}, r.client_name || '—'),
+        el('td', {}, fmtDate(r.created_at)),
+        el('td', { style: { fontFamily: 'monospace', fontSize: '12px' } }, r.first_item_sku || '—'),
+        el('td', {}, r.first_item_name || (r.items_preview || '—')),
+        el('td', {}, r.first_item_qty != null ? r.first_item_qty + (r.items_count > 1 ? ` (+${r.items_count - 1})` : '') : '—'),
+        el('td', {}, r.first_item_price != null ? fmtMoney(r.first_item_price, r.currency) : '—'),
         el('td', {}, fmtMoney(r.total_amount, r.currency)),
-        el('td', {}, r.items_count),
+        el('td', {}, r.delivery_method || r.marketplace || '—'),
+        el('td', {}, r.shipment_qr || '—'),
         el('td', {}, badge(r.status, 'order_status')),
         el('td', {}, r.manager_name || '—'),
-        el('td', {}, fmtDateTime(r.created_at)),
         el(
           'td',
           { style: { textAlign: 'right' }, onClick: (e) => e.stopPropagation() },
@@ -2960,6 +3088,17 @@ export async function renderOrders(main, opts = {}) {
       },
       '📋 Лист сборки',
     ),
+    canCreate
+      ? el(
+          'button',
+          {
+            class: 'btn',
+            title: 'Загрузить заказы из CSV-файла',
+            onClick: () => openOrderImportModal(reload),
+          },
+          '⬆ Импорт',
+        )
+      : null,
     canCreate
       ? (() => {
           // Кнопка с состоянием загрузки — форма открывается через ~1с (3 API-запроса
@@ -6236,6 +6375,8 @@ export async function renderProducts(main) {
 }
 
 async function openProductForm(product, onSaved) {
+  const me = JSON.parse(localStorage.getItem('crm_user') || '{}');
+  const isAdmin = me.role === 'admin';
   const isEdit = !!product;
   const cur = product || {};
   if (isEdit && !cur.prices) {
@@ -6454,7 +6595,24 @@ async function openProductForm(product, onSaved) {
           'div',
           { class: 'form-row', style: { marginTop: '20px' } },
           el('label', {}, 'Прайсы по площадкам'),
-          pricesArea,
+          isAdmin
+            ? pricesArea
+            : (() => {
+                const prices = cur.prices || [];
+                if (!prices.length) return el('div', { class: 'hint' }, 'Прайсы не установлены');
+                return el(
+                  'div',
+                  { class: 'prices-list' },
+                  ...prices.map((pp) =>
+                    el(
+                      'div',
+                      { class: 'price-row' },
+                      el('span', { class: 'price-marketplace' }, pp.marketplace + (pp.warehouse ? ` · ${pp.warehouse}` : '')),
+                      el('span', { class: 'price-value' }, `${pp.price.toLocaleString('ru-RU')} ₽`),
+                    ),
+                  ),
+                );
+              })(),
         )
       : el(
           'div',
@@ -6463,7 +6621,7 @@ async function openProductForm(product, onSaved) {
         ),
   );
 
-  if (isEdit) renderPricesEditor();
+  if (isEdit && isAdmin) renderPricesEditor();
 
   await openModal(isEdit ? `Товар: ${cur.name}` : 'Новый товар', body, {
     primaryLabel: isEdit ? 'Сохранить' : 'Создать',
