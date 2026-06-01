@@ -453,7 +453,7 @@ export const db = {
 // БАМПАЙ ПРИ КАЖДОМ ДОБАВЛЕНИИ МИГРАЦИИ. Текущие миграции прогоняются
 // только если запись в app_settings.schema_version отличается. Это экономит
 // ~500-2000мс на каждом холодном старте serverless-лямбды.
-const SCHEMA_VERSION = 15;
+const SCHEMA_VERSION = 16;
 
 export async function ensureInitialized() {
   if (globalThis.__crmInitialized) return;
@@ -741,6 +741,8 @@ export async function ensureInitialized() {
         EXCEPTION WHEN duplicate_object THEN NULL;
         END $$;
       `);
+      // Вложения в тредах обращений: позволяет прикреплять файлы к ответам в переписке.
+      await pool.query('ALTER TABLE feedback_messages ADD COLUMN IF NOT EXISTS attachments JSONB');
       // Маркер успешно прогнанных миграций — следующие холодные старты пропустят DDL.
       await pool.query(
         `INSERT INTO app_settings (key, value, updated_at)

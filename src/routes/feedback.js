@@ -301,6 +301,7 @@ router.get(
 
 const messageSchema = z.object({
   text: z.string().min(1, 'Введите текст').max(5000),
+  attachments: z.array(attachmentSchema).max(MAX_ATTACHMENTS).optional().nullable(),
 });
 router.post(
   '/:id/messages',
@@ -308,16 +309,18 @@ router.post(
     const fb = await db.get('SELECT id, user_id, subject FROM feedback WHERE id = ?', req.params.id);
     if (!fb) throw NotFound('Обращение не найдено');
     if (!(await canSeeThread(req, fb))) throw Forbidden();
-    const { text } = messageSchema.parse(req.body || {});
+    const { text, attachments } = messageSchema.parse(req.body || {});
     const role = req.user.role === 'admin' ? 'admin' : 'author';
+    const attachmentsJson = attachments && attachments.length ? JSON.stringify(attachments) : null;
     const r = await db.run(
-      `INSERT INTO feedback_messages (feedback_id, user_id, user_name, role, text)
-       VALUES (?, ?, ?, ?, ?) RETURNING id`,
+      `INSERT INTO feedback_messages (feedback_id, user_id, user_name, role, text, attachments)
+       VALUES (?, ?, ?, ?, ?, ?::jsonb) RETURNING id`,
       fb.id,
       req.user.id,
       req.user.name || null,
       role,
       text,
+      attachmentsJson,
     );
     // Уведомления: админ задал вопрос → автору; автор ответил → админам.
     try {
@@ -342,7 +345,7 @@ router.post(
       console.error('[feedback msg] notify:', e.message);
     }
     const created = await db.get(
-      `SELECT id, user_id, user_name, role, text, created_at
+      `SELECT id, user_id, user_name, role, text, attachments, created_at
        FROM feedback_messages WHERE id = ?`,
       r.lastInsertRowid,
     );

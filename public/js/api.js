@@ -153,7 +153,7 @@ export const api = {
   approveFeedback: (id) => request('POST', `/api/feedback/${id}/approve`),
   rejectFeedback: (id, reason) => request('POST', `/api/feedback/${id}/reject`, { body: { reason } }),
   feedbackMessages: (id) => request('GET', `/api/feedback/${id}/messages`),
-  postFeedbackMessage: (id, text) => request('POST', `/api/feedback/${id}/messages`, { body: { text } }),
+  postFeedbackMessage: (id, text, attachments) => request('POST', `/api/feedback/${id}/messages`, { body: { text, attachments: attachments?.length ? attachments : undefined } }),
   // МойСклад: интеграция списания/прихода
   msStatus: () => request('GET', '/api/admin/ms/status'),
   msInit: (body) => request('POST', '/api/admin/ms/init', { body }),
@@ -271,6 +271,30 @@ export const api = {
     const cd = res.headers.get('content-disposition') || '';
     const m = /filename="?([^"]+)"?/.exec(cd);
     const filename = m ? m[1] : `orders-${new Date().toISOString().slice(0, 10)}.csv`;
+    const downloadUrl = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = downloadUrl;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(downloadUrl);
+  },
+
+  downloadAssemblyList: async (params = {}) => {
+    const token = getToken();
+    const qs = new URLSearchParams(
+      Object.entries(params).filter(([, v]) => v !== undefined && v !== null && v !== ''),
+    ).toString();
+    const url = `/api/orders/assembly-list.csv${qs ? '?' + qs : ''}`;
+    const res = await fetch(url, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const blob = await res.blob();
+    const cd = res.headers.get('content-disposition') || '';
+    const m = /filename="?([^"]+)"?/.exec(cd);
+    const filename = m ? m[1] : `assembly-${new Date().toISOString().slice(0, 10)}.csv`;
     const downloadUrl = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = downloadUrl;

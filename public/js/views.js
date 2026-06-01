@@ -880,11 +880,23 @@ export async function loadDeliveryMethods() {
 }
 
 function itemsEditor(initialItems = [], { getMarketplace, getWarehouse, onChange, hiddenSet = new Set() } = {}) {
-  // Показывает наличие товара по видимым складам под названием позиции.
+  // Фильтрует stock_by_store по выбранному складу (если задан) и скрытым складам.
+  function filteredStoreView(stockByStore) {
+    const wh = (getWarehouse?.() || '').trim();
+    let filtered = stockByStore;
+    if (wh && Array.isArray(stockByStore)) {
+      filtered = stockByStore.filter((s) => s.store === wh);
+    }
+    return computeStoreView(filtered, hiddenSet);
+  }
+  // Показывает наличие товара по выбранному складу под названием позиции.
   function storesText(stockByStore) {
     if (!Array.isArray(stockByStore) || !stockByStore.length) return ''; // склады не загружены
-    const sv = computeStoreView(stockByStore, hiddenSet);
-    if (!sv.visible.length) return '⚠️ нет в наличии на складах';
+    const sv = filteredStoreView(stockByStore);
+    if (!sv.visible.length) {
+      const wh = (getWarehouse?.() || '').trim();
+      return wh ? `⚠️ нет на складе «${wh}»` : '⚠️ нет в наличии на складах';
+    }
     return '📦 ' + sv.visible.map((s) => `${s.store}: ${s.stock}`).join(', ');
   }
   // Обновляет подсказку наличия с учётом заказанного количества (предупреждение, если больше остатка).
@@ -893,7 +905,7 @@ function itemsEditor(initialItems = [], { getMarketplace, getWarehouse, onChange
     const i = row._inputs;
     if (!i.storesHint) return;
     const hasStores = Array.isArray(meta.stock_by_store) && meta.stock_by_store.length;
-    const total = hasStores ? computeStoreView(meta.stock_by_store, hiddenSet).totalStock : null;
+    const total = hasStores ? filteredStoreView(meta.stock_by_store).totalStock : null;
     const qty = Number(i.quantity.value) || 0;
     let text = storesText(meta.stock_by_store);
     if (total != null && qty > total) {
@@ -1080,8 +1092,8 @@ function itemsEditor(initialItems = [], { getMarketplace, getWarehouse, onChange
   // --- Блок быстрого добавления: поиск с подсказками + полоса популярных ---
 
   async function addProductRow(product) {
-    // Проверка наличия: наличие = сумма по видимым складам (если есть), иначе общий остаток.
-    const sv = computeStoreView(product.stock_by_store, hiddenSet);
+    // Проверка наличия: если выбран склад — смотрим только по нему, иначе по всем видимым.
+    const sv = filteredStoreView(product.stock_by_store);
     const hasStores = Array.isArray(product.stock_by_store) && product.stock_by_store.length;
     const available = hasStores ? sv.totalStock : product.stock;
     if (available != null && available <= 0) {
@@ -2267,22 +2279,52 @@ async function reserveOrderWithStockCheck(orderId) {
       toast(msg || 'Ошибка резерва', 'error');
       return false;
     }
+    // Вспомогательная функция: кнопка «Перевести в Ожидает товара» в теле диалога.
+    let waitingDone = false;
+    function makeWaitingBtn() {
+      const btn = el('button', {
+        class: 'btn',
+        type: 'button',
+        style: { marginTop: '10px', width: '100%' },
+      }, '⏳ Перевести в Ожидает товара');
+      btn.addEventListener('click', async () => {
+        if (btn.disabled) return;
+        btn.disabled = true;
+        btn.textContent = '⏳ Переводим…';
+        try {
+          await api.markOrderWaiting(orderId);
+          toast('Заказ переведён в «Ожидает товара»', 'success');
+          waitingDone = true;
+          // Закрываем диалог через Escape
+          document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+        } catch (e2) {
+          toast(e2.message || 'Ошибка', 'error');
+          btn.disabled = false;
+          btn.textContent = '⏳ Перевести в Ожидает товара';
+        }
+      });
+      return btn;
+    }
+
     if (!canForce) {
-      // Менеджер просто видит проблему — кнопки force нет.
+      // Менеджер видит проблему и может перевести заказ в «Ожидает товара».
       const body = el('div', {},
         el('div', { style: { whiteSpace: 'pre-wrap', fontSize: '13px' } }, msg),
+        makeWaitingBtn(),
       );
-      await openModal('❌ Недостаточно товара', body, { primaryLabel: 'Понятно', onSubmit: () => true });
-      return false;
+      await openModal('❌ Недостаточно товара', body, { primaryLabel: 'Закрыть', onSubmit: () => true });
+      return waitingDone;
     }
-    // admin/warehouse — даём override.
+    // admin/warehouse — даём override + кнопку «Ожидает товара».
     const body = el('div', {},
       el('div', { style: { whiteSpace: 'pre-wrap', fontSize: '13px', background: '#fef2f2', border: '1px solid #fecaca', borderRadius: '6px', padding: '10px', color: '#7f1d1d' } }, msg),
+      makeWaitingBtn(),
     );
     const confirmed = await openModal('⚠️ Резерв при нехватке остатка', body, {
       primaryLabel: '⚠️ Зарезервировать всё равно',
       onSubmit: () => true,
     });
+    if (waitingDone) return true;
     if (!confirmed) return false;
     try {
       await api.reserveOrder(orderId, { force: true });
@@ -2804,6 +2846,25 @@ export async function renderOrders(main, opts = {}) {
         },
       },
       '⬇ Excel',
+    ),
+    el(
+      'button',
+      {
+        class: 'btn',
+        title: 'Лист сборки — CSV по позициям (одна строка = один товар)',
+        onClick: async () => {
+          try {
+            await api.downloadAssemblyList({
+              status: state.status || 'reserved',
+              marketplace: state.marketplace,
+            });
+            toast('Лист сборки сохранён', 'success');
+          } catch (e) {
+            toast(e.message, 'error');
+          }
+        },
+      },
+      '📋 Лист сборки',
     ),
     canCreate
       ? (() => {
@@ -7835,8 +7896,50 @@ function renderFeedbackThread(feedbackId, currentUserRole) {
   const sendBtn = el('button', { class: 'btn btn-primary btn-sm' }, 'Отправить');
   const refreshBtn = el('button', { class: 'btn btn-sm', title: 'Обновить' }, '🔄');
 
+  // Вложения к ответу в треде.
+  let pendingAttachments = [];
+  const attachPreview = el('div', { style: { display: 'flex', flexWrap: 'wrap', gap: '6px', marginTop: '4px' } });
+  const fileInput = el('input', { type: 'file', accept: 'image/*,.pdf,.doc,.docx,.xls,.xlsx,.txt', multiple: true, style: { display: 'none' } });
+  const attachBtn = el('button', { class: 'btn btn-sm', type: 'button', title: 'Прикрепить файл (макс. 2МБ, до 5 файлов)' }, '📎');
+
+  function updateAttachPreview() {
+    clear(attachPreview);
+    pendingAttachments.forEach((att, idx) => {
+      const tag = el('span', {
+        style: { background: '#e0e7ff', borderRadius: '4px', padding: '2px 6px', fontSize: '12px', display: 'flex', alignItems: 'center', gap: '4px' },
+      },
+        att.filename,
+        el('button', {
+          type: 'button', style: { background: 'none', border: 'none', cursor: 'pointer', padding: '0', lineHeight: '1', color: '#374151' },
+          onClick: () => { pendingAttachments.splice(idx, 1); updateAttachPreview(); },
+        }, '×'),
+      );
+      attachPreview.append(tag);
+    });
+  }
+
+  fileInput.addEventListener('change', async () => {
+    const files = [...fileInput.files];
+    fileInput.value = '';
+    for (const file of files) {
+      if (pendingAttachments.length >= 5) { toast('Максимум 5 вложений', 'error'); break; }
+      if (file.size > 2 * 1024 * 1024) { toast(`${file.name}: файл больше 2 МБ`, 'error'); continue; }
+      const content = await new Promise((res, rej) => {
+        const r = new FileReader();
+        r.onload = () => res(r.result);
+        r.onerror = rej;
+        r.readAsDataURL(file);
+      });
+      pendingAttachments.push({ filename: file.name, type: file.type, size: file.size, content });
+    }
+    updateAttachPreview();
+  });
+
+  attachBtn.addEventListener('click', () => fileInput.click());
+
   function renderRow(m) {
     const isAdmin = m.role === 'admin';
+    const atts = renderFeedbackAttachments(m.attachments);
     return el('div', {
       style: {
         display: 'flex',
@@ -7859,6 +7962,7 @@ function renderFeedbackThread(feedbackId, currentUserRole) {
           wordBreak: 'break-word',
         },
       }, m.text),
+      ...(atts ? [atts] : []),
     );
   }
 
@@ -7887,8 +7991,10 @@ function renderFeedbackThread(feedbackId, currentUserRole) {
     if (!text) { toast('Введите текст', 'error'); return; }
     sendBtn.disabled = true;
     try {
-      await api.postFeedbackMessage(feedbackId, text);
+      await api.postFeedbackMessage(feedbackId, text, pendingAttachments.length ? pendingAttachments : null);
       input.value = '';
+      pendingAttachments = [];
+      updateAttachPreview();
       await reload();
     } catch (e) {
       toast(e.message, 'error');
@@ -7913,8 +8019,13 @@ function renderFeedbackThread(feedbackId, currentUserRole) {
     list,
     el('div', { style: { marginTop: '8px', display: 'flex', gap: '8px', alignItems: 'flex-end' } },
       input,
-      sendBtn,
+      el('div', { style: { display: 'flex', flexDirection: 'column', gap: '4px' } },
+        attachBtn,
+        sendBtn,
+      ),
     ),
+    fileInput,
+    attachPreview,
     el('div', { class: 'hint', style: { fontSize: '11px' } },
       currentUserRole === 'admin'
         ? 'Задайте уточняющий вопрос — автор получит уведомление и ответит здесь.'

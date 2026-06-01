@@ -40,6 +40,7 @@ const NAV_GROUPS = [
     items: [
       { hash: '#/pipeline', label: 'Воронка', roles: SALES_ROLES, block: 'sales' },
       { hash: '#/deals', label: 'Сделки', roles: SALES_ROLES, block: 'sales' },
+      { hash: '#/direct-orders', label: 'Прямые заказы', roles: SALES_ROLES, block: 'direct' },
       { hash: '#/leads', label: 'Лиды', roles: SALES_ROLES, block: 'sales' },
       { hash: '#/contacts', label: 'Контакты', roles: SALES_ROLES, block: 'sales' },
       { hash: '#/companies', label: 'Компании', roles: SALES_ROLES, block: 'sales' },
@@ -50,7 +51,6 @@ const NAV_GROUPS = [
     title: 'Продажи с площадок',
     items: [
       { hash: '#/orders', label: 'Продажи с площадок', roles: SALES_ROLES, block: 'direct' },
-      { hash: '#/direct-orders', label: 'Продажи (прямые)', roles: SALES_ROLES, block: 'direct' },
       { hash: '#/cashbox', label: 'Касса', roles: [...SALES_ROLES, 'finance'], block: 'direct' },
     ],
   },
