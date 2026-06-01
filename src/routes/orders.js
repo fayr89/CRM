@@ -214,7 +214,7 @@ router.get(
     if (rows.length) {
       const orderIds = rows.map((r) => r.id);
       const itemsRows = await db.all(
-        `SELECT order_id, name, image_url,
+        `SELECT order_id, name, sku, quantity, unit_price, image_url,
                 ROW_NUMBER() OVER (PARTITION BY order_id ORDER BY id) AS rn,
                 COUNT(*) OVER (PARTITION BY order_id)::int AS total_count
          FROM order_items
@@ -226,17 +226,38 @@ router.get(
       for (const it of itemsRows) {
         let agg = byOrder.get(it.order_id);
         if (!agg) {
-          agg = { items_count: it.total_count, preview_image: null, items_preview: [] };
+          agg = {
+            items_count: it.total_count,
+            preview_image: null,
+            items_preview: [],
+            first_item_sku: null,
+            first_item_name: null,
+            first_item_qty: null,
+            first_item_price: null,
+          };
           byOrder.set(it.order_id, agg);
         }
         if (!agg.preview_image && it.image_url) agg.preview_image = it.image_url;
         if (it.rn <= 5) agg.items_preview.push(it.name);
+        if (it.rn === 1) {
+          agg.first_item_sku = it.sku;
+          agg.first_item_name = it.name;
+          agg.first_item_qty = it.quantity;
+          agg.first_item_price = it.unit_price;
+        }
       }
       for (const r of rows) {
-        const agg = byOrder.get(r.id) || { items_count: 0, preview_image: null, items_preview: [] };
+        const agg = byOrder.get(r.id) || {
+          items_count: 0, preview_image: null, items_preview: [],
+          first_item_sku: null, first_item_name: null, first_item_qty: null, first_item_price: null,
+        };
         r.items_count = agg.items_count;
         r.preview_image = agg.preview_image;
         r.items_preview = agg.items_preview.join(', ');
+        r.first_item_sku = agg.first_item_sku;
+        r.first_item_name = agg.first_item_name;
+        r.first_item_qty = agg.first_item_qty;
+        r.first_item_price = agg.first_item_price;
       }
     }
     const { total } = await db.get(
@@ -1561,6 +1582,166 @@ router.delete(
     if (result.changes === 0) throw NotFound('Заказ не найден');
     await logAction(req, { action: 'order.deleted', entity_type: 'order', entity_id: Number(req.params.id) });
     res.status(204).send();
+  }),
+);
+
+// --- Импорт заказов из CSV ---
+
+function parseCsvRow(line, sep) {
+  const cols = [];
+  let cur = '';
+  let inq = false;
+  for (let i = 0; i < line.length; i++) {
+    const c = line[i];
+    if (inq) {
+      if (c === '"' && line[i + 1] === '"') { cur += '"'; i++; }
+      else if (c === '"') inq = false;
+      else cur += c;
+    } else if (c === '"') {
+      inq = true;
+    } else if (c === sep) {
+      cols.push(cur.trim());
+      cur = '';
+    } else {
+      cur += c;
+    }
+  }
+  cols.push(cur.trim());
+  return cols;
+}
+
+function detectSep(header) {
+  return (header.match(/;/g) || []).length >= (header.match(/,/g) || []).length ? ';' : ',';
+}
+
+// GET /api/orders/import-template.csv — шаблон для импорта
+router.get(
+  '/import-template.csv',
+  asyncHandler(async (_req, res) => {
+    const bom = '﻿';
+    const header = 'Артикул;Наименование;Кол-во;Цена за штуку;Сумма;Способ доставки;Трек-номер;Способ оплаты';
+    const example = '12345678;Товар пример;1;999;999;Авито Доставка;60912345678;Авито Доставка';
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', 'attachment; filename="orders-import-template.csv"');
+    res.send(bom + header + '\r\n' + example + '\r\n');
+  }),
+);
+
+const importBodySchema = z.object({
+  csv: z.string().min(1),
+  dry_run: z.boolean().optional().default(true),
+  warehouse: z.string().optional().nullable(),
+});
+
+// POST /api/orders/import — разбор CSV и создание заказов
+router.post(
+  '/import',
+  requireRole('admin', 'manager', 'sales'),
+  asyncHandler(async (req, res) => {
+    const { csv, dry_run, warehouse } = importBodySchema.parse(req.body || {});
+    const lines = csv.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+    if (!lines.length) throw BadRequest('Файл пуст');
+
+    const sep = detectSep(lines[0]);
+    const headerRaw = parseCsvRow(lines[0], sep).map((h) => h.toLowerCase().replace(/ё/g, 'е'));
+    const colIdx = (names) => {
+      for (const n of names) {
+        const i = headerRaw.findIndex((h) => h.includes(n));
+        if (i !== -1) return i;
+      }
+      return -1;
+    };
+    const iSku = colIdx(['артикул', 'sku', 'artic']);
+    const iName = colIdx(['наименование', 'название', 'name', 'товар']);
+    const iQty = colIdx(['кол-во', 'количество', 'qty', 'кол']);
+    const iPrice = colIdx(['цена за', 'цена/шт', 'цена', 'price', 'unit']);
+    const iDelivery = colIdx(['способ доставки', 'доставка', 'delivery', 'служба']);
+    const iTrack = colIdx(['трек', 'track', 'отправление', 'shipment']);
+    const iPayment = colIdx(['оплата', 'payment', 'pay']);
+
+    if (iSku === -1 || iName === -1 || iQty === -1 || iPrice === -1) {
+      throw BadRequest('Не найдены обязательные колонки: Артикул, Наименование, Кол-во, Цена за штуку. Скачайте шаблон.');
+    }
+
+    const groups = new Map(); // track → [{sku,name,qty,price,delivery,payment}]
+    const errors = [];
+
+    for (let li = 1; li < lines.length; li++) {
+      const cols = parseCsvRow(lines[li], sep);
+      const sku = (iSku !== -1 ? cols[iSku] : '').replace(/^=?"?|"?$/g, '').trim();
+      const name = (iName !== -1 ? cols[iName] : '').trim();
+      const qty = parseInt((iQty !== -1 ? cols[iQty] : '0').replace(/[^0-9]/g, '')) || 0;
+      const price = parseFloat((iPrice !== -1 ? cols[iPrice] : '0').replace(',', '.').replace(/[^0-9.]/g, '')) || 0;
+      const delivery = (iDelivery !== -1 ? cols[iDelivery] : '').trim() || null;
+      const track = (iTrack !== -1 ? cols[iTrack] : '').replace(/^=?"?|"?$/g, '').trim() || null;
+      const payment = (iPayment !== -1 ? cols[iPayment] : '').trim() || 'avito_delivery';
+
+      if (!sku && !name) continue; // пустая строка
+      if (!sku) { errors.push({ row: li + 1, message: `Нет артикула — строка пропущена` }); continue; }
+      if (!name) { errors.push({ row: li + 1, message: `Нет наименования — строка пропущена` }); continue; }
+      if (qty <= 0) { errors.push({ row: li + 1, message: `Артикул ${sku}: некорректное количество` }); continue; }
+
+      const key = track || `__notrack_${li}__`;
+      if (!groups.has(key)) groups.set(key, { track, delivery, payment, items: [] });
+      groups.get(key).items.push({ sku, name, qty, price });
+    }
+
+    const preview = [];
+    for (const [, g] of groups) {
+      preview.push({
+        track: g.track,
+        delivery: g.delivery,
+        payment: g.payment,
+        items: g.items,
+        total: g.items.reduce((s, i) => s + i.qty * i.price, 0),
+      });
+    }
+
+    if (dry_run) {
+      return res.json({ dry_run: true, orders_to_create: preview.length, errors, preview });
+    }
+
+    // Создаём заказы
+    let created = 0;
+    for (const g of preview) {
+      const items = g.items.map((i) => ({
+        sku: i.sku,
+        name: i.name,
+        quantity: i.qty,
+        unit_price: i.price,
+      }));
+      const total = items.reduce((s, i) => s + i.quantity * i.unit_price, 0);
+      const r = await db.run(
+        `INSERT INTO orders (manager_id, marketplace, client_name, total_amount, currency,
+          payment_method, delivery_method, shipment_qr, warehouse, status, notes)
+         VALUES (?, ?, ?, ?, 'RUB', ?, ?, ?, ?, 'new', ?) RETURNING id`,
+        req.user.id,
+        null,
+        null,
+        total,
+        null,
+        g.delivery,
+        g.track,
+        warehouse || null,
+        null,
+      );
+      const orderId = r.lastInsertRowid;
+      for (const it of items) {
+        await db.run(
+          `INSERT INTO order_items (order_id, sku, name, quantity, unit_price, line_total)
+           VALUES (?, ?, ?, ?, ?, ?)`,
+          orderId, it.sku, it.name, it.quantity, it.unit_price, it.quantity * it.unit_price,
+        );
+      }
+      created++;
+    }
+    await logAction(req, {
+      action: 'orders.imported',
+      entity_type: 'order',
+      entity_id: null,
+      details: { created, errors: errors.length },
+    });
+    res.json({ dry_run: false, created, errors });
   }),
 );
 
