@@ -317,6 +317,13 @@ export async function msFindCounterpartyByName(token, name) {
   return rows.map((c) => ({ id: c.id, name: c.name }));
 }
 
+// Поиск проекта по имени (точный матч).
+export async function msFindProjectByName(token, name) {
+  const enc = encodeURIComponent(name);
+  const rows = await fetchAll(`/entity/project?filter=name=${enc}`, token);
+  return rows.map((p) => ({ id: p.id, name: p.name }));
+}
+
 // Хелпер: ссылка на сущность МС по UUID для использования в meta-полях документов.
 export function msHref(entity, id) {
   return {

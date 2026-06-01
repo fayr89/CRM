@@ -3,9 +3,22 @@
 // делает upsert: POST если нет ms_customer_order_id, PUT если есть.
 import { db } from '../db.js';
 import {
-  msCreate, msUpdate, msDelete, msHref, msFindCounterpartyByName, msUploadProductImage, msAttachFile,
+  msCreate, msUpdate, msDelete, msHref, msFindCounterpartyByName, msFindProjectByName,
+  msUploadProductImage, msAttachFile,
 } from './moysklad.js';
 import { getMoyskladToken, getMsConfig, setMsSetting } from './ms-jobs.js';
+
+// --- Project resolver: ищет Проект «CRM35» в МС один раз, кэширует UUID ---
+const MS_PROJECT_NAME = 'CRM35';
+
+async function resolveMsProject(token) {
+  const row = await db.get(`SELECT value FROM app_settings WHERE key = 'moysklad.project_crm35_id'`).catch(() => null);
+  if (row?.value) return String(row.value);
+  const found = await msFindProjectByName(token, MS_PROJECT_NAME);
+  if (!found.length) return null;
+  await setMsSetting('moysklad.project_crm35_id', found[0].id);
+  return found[0].id;
+}
 
 // --- Counterparty resolver: менеджер CRM → контрагент МС, с кэшем в app_settings ---
 async function getManagerMap() {
@@ -148,6 +161,8 @@ async function buildCustomerOrderBody(token, order, { reserveMode = 'full' } = {
     positions,
   };
   if (storeId) body.store = msHref('store', storeId);
+  const projectId = await resolveMsProject(token).catch(() => null);
+  if (projectId) body.project = msHref('project', projectId);
 
   return { body, skipped };
 }
@@ -224,6 +239,8 @@ async function buildDemandBody(token, order) {
     positions,
   };
   if (storeId) body.store = msHref('store', storeId);
+  const projectId = await resolveMsProject(token).catch(() => null);
+  if (projectId) body.project = msHref('project', projectId);
   return body;
 }
 
@@ -293,6 +310,8 @@ async function buildCustomerReturnBody(token, order) {
   if (storeId) body.store = msHref('store', storeId);
   // МС привязывает возврат к отгрузке, если есть — корректнее учёт.
   if (order.ms_demand_id) body.demand = msHref('demand', order.ms_demand_id);
+  const projectId = await resolveMsProject(token).catch(() => null);
+  if (projectId) body.project = msHref('project', projectId);
   return body;
 }
 
@@ -349,6 +368,8 @@ async function buildLossBody(token, order) {
     positions,
   };
   if (storeId) body.store = msHref('store', storeId);
+  const projectId = await resolveMsProject(token).catch(() => null);
+  if (projectId) body.project = msHref('project', projectId);
   return body;
 }
 
@@ -452,6 +473,8 @@ export async function markdownCreateHandler(job) {
   };
   // ВАЖНО: НЕ привязываем к demand — позиции новые (markdown-копии), которых
   // не было в исходной отгрузке. МС иначе валит 412 «позиция не соответствует».
+  const projectId = await resolveMsProject(token).catch(() => null);
+  if (projectId) body.project = msHref('project', projectId);
 
   const result = await msCreate(token, 'salesreturn', body);
   await db.run('UPDATE orders SET ms_return_id = ? WHERE id = ?', result.id, order.id);
