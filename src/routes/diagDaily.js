@@ -16,6 +16,10 @@ function checkSecret(req, res) {
 
 // GET /api/diag/daily?secret=...&action=proposals&status=approved
 // GET /api/diag/daily?secret=...&action=feedback-full
+// GET /api/diag/daily?secret=...&action=close-feedback&id=25&note=тест
+// GET /api/diag/daily?secret=...&action=post-message&fid=25&text=...
+// GET /api/diag/daily?secret=...&action=create-proposal&...
+// GET /api/diag/daily?secret=...&action=patch-feedback&id=...&status=...
 router.get('/', async (req, res) => {
   if (!checkSecret(req, res)) return;
   try {
@@ -52,6 +56,72 @@ router.get('/', async (req, res) => {
       }
       return res.json({ data: result });
     }
+    if (action === 'close-feedback') {
+      const { id, note } = req.query;
+      await db.run(
+        `UPDATE feedback SET status = 'closed', updated_at = NOW() WHERE id = $1`,
+        id,
+      );
+      await db.run(
+        `INSERT INTO feedback_messages (feedback_id, user_id, user_name, role, text)
+         VALUES ($1, NULL, 'AI ассистент', 'admin', $2)`,
+        id,
+        note || 'Закрыто автоматически.',
+      );
+      return res.json({ ok: true });
+    }
+
+    if (action === 'post-msg') {
+      const { fid, text } = req.query;
+      const r = await db.run(
+        `INSERT INTO feedback_messages (feedback_id, user_id, user_name, role, text)
+         VALUES ($1, NULL, 'AI ассистент', 'admin', $2) RETURNING id`,
+        fid,
+        decodeURIComponent(text),
+      );
+      return res.json({ ok: true, id: r.lastInsertRowid });
+    }
+
+    if (action === 'patch-feedback') {
+      const { id, st, reply } = req.query;
+      await db.run(
+        `UPDATE feedback SET
+           status = COALESCE($1, status),
+           admin_reply = COALESCE($2, admin_reply),
+           updated_at = NOW()
+         WHERE id = $3`,
+        st ?? null,
+        reply ? decodeURIComponent(reply) : null,
+        id,
+      );
+      return res.json({ ok: true });
+    }
+
+    if (action === 'patch-proposal') {
+      const { id, decision } = req.query;
+      await db.run(
+        `UPDATE ai_proposals SET status = $1, updated_at = NOW() WHERE id = $2`,
+        decision,
+        id,
+      );
+      return res.json({ ok: true });
+    }
+
+    if (action === 'create-proposal') {
+      const { fid, title, summary, cat, risk, src } = req.query;
+      const r = await db.run(
+        `INSERT INTO ai_proposals (feedback_id, title, summary, category, risk, source)
+         VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
+        fid ? Number(fid) : null,
+        decodeURIComponent(title),
+        decodeURIComponent(summary),
+        cat || 'feature',
+        risk || 'medium',
+        src || 'daily-run-2026-06-01',
+      );
+      return res.json({ ok: true, id: r.lastInsertRowid });
+    }
+
     return res.status(400).json({ error: 'unknown action' });
   } catch (e) {
     return res.status(500).json({ error: e.message });
