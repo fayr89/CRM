@@ -40,12 +40,21 @@ export async function setMaxToken(plainToken) {
   await setSetting('max.bot_token', encryptSecret(plainToken));
 }
 
+// MAX API: токен передаётся в Authorization header (Bearer <token>),
+// query-параметр access_token у них deprecated и возвращает 401.
+function maxAuthHeaders(token) {
+  return { 'authorization': `Bearer ${token}` };
+}
+
 export async function getMaxBotInfo() {
   const token = await getMaxToken();
   if (!token) return null;
   let r;
   try {
-    r = await fetch(`${MAX_API_BASE}/me?access_token=${encodeURIComponent(token)}`, { method: 'GET' });
+    r = await fetch(`${MAX_API_BASE}/me`, {
+      method: 'GET',
+      headers: maxAuthHeaders(token),
+    });
   } catch (e) {
     throw new Error(`МАХ API недоступен (${MAX_API_BASE}): ${e.message}`);
   }
@@ -64,10 +73,10 @@ export async function sendMaxMessage(chatId, text, link) {
   if (!token) return { skipped: true, reason: 'no token' };
   const fullText = link ? `${text}\n\n🔗 ${link}` : text;
   const r = await fetch(
-    `${MAX_API_BASE}/messages?user_id=${encodeURIComponent(chatId)}&access_token=${encodeURIComponent(token)}`,
+    `${MAX_API_BASE}/messages?user_id=${encodeURIComponent(chatId)}`,
     {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', ...maxAuthHeaders(token) },
       body: JSON.stringify({ text: fullText }),
     },
   );
@@ -86,9 +95,9 @@ export async function setMaxWebhook(webhookUrl) {
   if (!token) throw new Error('Токен МАХ не настроен');
   let r;
   try {
-    r = await fetch(`${MAX_API_BASE}/subscriptions?access_token=${encodeURIComponent(token)}`, {
+    r = await fetch(`${MAX_API_BASE}/subscriptions`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', ...maxAuthHeaders(token) },
       body: JSON.stringify({ url: webhookUrl, update_types: ['message_created'] }),
     });
   } catch (e) {
