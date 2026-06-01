@@ -145,13 +145,19 @@ router.get(
     }
     const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
 
+    // По умолчанию (без явного ?sort=…) сортируем «сначала с прайсом, затем по имени» —
+    // в каталоге так удобнее искать рабочие товары, а уценённые/без цены уходят вниз.
+    const explicitSort = !!req.query.sort;
+    const orderBySql = explicitSort
+      ? `ORDER BY p.${sort.column} ${sort.dir}`
+      : `ORDER BY (EXISTS (SELECT 1 FROM product_prices pp WHERE pp.product_id = p.id)) DESC, p.name ASC`;
     const rows = await db.all(
       `SELECT p.*,
               (SELECT COUNT(*)::int FROM product_prices pp WHERE pp.product_id = p.id) AS price_count,
               (SELECT json_agg(json_build_object('marketplace', pp.marketplace, 'warehouse', pp.warehouse, 'price', pp.price) ORDER BY pp.marketplace, pp.warehouse)
                FROM product_prices pp WHERE pp.product_id = p.id) AS prices
        FROM products p
-       ${whereSql} ORDER BY p.${sort.column} ${sort.dir} LIMIT ? OFFSET ?`,
+       ${whereSql} ${orderBySql} LIMIT ? OFFSET ?`,
       ...params,
       limit,
       offset,

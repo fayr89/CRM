@@ -618,6 +618,63 @@ router.get(
   }),
 );
 
+// Последние товары, которые этот клиент уже заказывал. Для формы создания
+// заказа: после выбора клиента из истории показываем плитки с его прошлыми
+// позициями (можно ткнуть и сразу добавить). Сопоставление — по точному имени
+// + телефону (то, что есть в orders). Только не-отменённые заказы.
+router.get(
+  '/clients/recent-items',
+  asyncHandler(async (req, res) => {
+    const name = String(req.query.name || '').trim();
+    const phone = String(req.query.phone || '').trim();
+    if (!name && !phone) return res.json({ data: [] });
+    const ids = await getAccessibleUserIds(req.user);
+    const scopeSql = ids === null ? '' : 'AND o.manager_id = ANY(?)';
+    const scopeParams = ids === null ? [] : [ids];
+    const marketplace = String(req.query.marketplace || '').trim();
+    const warehouse = String(req.query.warehouse || '').trim();
+    const rows = await db.all(
+      `WITH client_items AS (
+         SELECT oi.product_id, MAX(o.created_at) AS last_ordered_at, SUM(oi.quantity)::int AS total_qty
+         FROM order_items oi
+         JOIN orders o ON o.id = oi.order_id
+         WHERE oi.product_id IS NOT NULL
+           AND o.status != 'cancelled'
+           AND (
+             (? <> '' AND LOWER(o.client_name) = LOWER(?))
+             OR (? <> '' AND o.client_phone = ?)
+           )
+           ${scopeSql}
+         GROUP BY oi.product_id
+         ORDER BY MAX(o.created_at) DESC
+         LIMIT 12
+       )
+       SELECT ci.product_id,
+              COALESCE(p.name, oi_last.name) AS name,
+              COALESCE(p.sku, oi_last.sku) AS sku,
+              p.image_url, p.stock_by_store, p.stock, p.cost_price,
+              pp.price AS marketplace_price,
+              ci.last_ordered_at, ci.total_qty
+       FROM client_items ci
+       LEFT JOIN products p ON p.id = ci.product_id
+       LEFT JOIN product_prices pp ON pp.product_id = ci.product_id
+              AND pp.marketplace = ? AND pp.warehouse = ?
+       LEFT JOIN LATERAL (
+         SELECT oi2.name, oi2.sku FROM order_items oi2
+         JOIN orders o2 ON o2.id = oi2.order_id
+         WHERE oi2.product_id = ci.product_id
+         ORDER BY o2.created_at DESC LIMIT 1
+       ) oi_last ON TRUE
+       ORDER BY ci.last_ordered_at DESC`,
+      name, name,
+      phone, phone,
+      ...scopeParams,
+      marketplace, warehouse,
+    );
+    res.json({ data: rows });
+  }),
+);
+
 // Возвраты: отменённые заказы, по которым товар был зарезервирован/отгружен.
 // Видят склад и админ. status=pending — ждут обработки, else — все возвраты.
 router.get(

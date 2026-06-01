@@ -1394,7 +1394,7 @@ function itemsEditor(initialItems = [], { getMarketplace, getWarehouse, onChange
     await Promise.all([refreshCatalogPrices(), refreshPopular()]);
   }
 
-  return { node: wrap, getItems, refreshCatalogPrices: refreshAll, refreshStocks, applyPriceFactor };
+  return { node: wrap, getItems, refreshCatalogPrices: refreshAll, refreshStocks, applyPriceFactor, addProductRow };
 }
 
 // Пикер товара: открывает модалку со списком, фильтрация по поиску.
@@ -1707,6 +1707,8 @@ async function openOrderForm(order, onSaved) {
             if (c.client_phone) clientPhoneI.value = c.client_phone;
             if (c.client_classification) classI.value = c.client_classification;
             hideClientSuggestions();
+            // После выбора клиента из истории — мгновенно подтянуть его последние товары.
+            if (typeof refreshRecentClientItems === 'function') refreshRecentClientItems();
           },
         },
           el('div', {},
@@ -1942,6 +1944,97 @@ async function openOrderForm(order, onSaved) {
     onChange: renderPricingPanel,
     hiddenSet,
   });
+
+  // Панель «Последние товары клиента». Показывается, когда у заказа есть клиент
+  // (имя/телефон): подтягиваем 12 последних позиций именно ЭТОГО клиента — клик
+  // по плитке добавляет товар в заказ с актуальной ценой по площадке+складу.
+  const recentItemsPanel = el('div', { class: 'client-recent-panel', style: { display: 'none', marginBottom: '12px' } });
+  let recentItemsKey = '';
+  async function refreshRecentClientItems() {
+    const name = clientI.value.trim();
+    const phone = clientPhoneI.value.trim();
+    if (!name && !phone) {
+      recentItemsPanel.style.display = 'none';
+      recentItemsKey = '';
+      return;
+    }
+    const key = `${name.toLowerCase()}|${phone}|${marketI.value}|${warehouseI.value}`;
+    if (key === recentItemsKey) return;
+    recentItemsKey = key;
+    try {
+      const r = await api.clientRecentItems({
+        name, phone,
+        marketplace: marketI.value || '',
+        warehouse: warehouseI.value || '',
+      });
+      const list = r.data || [];
+      clear(recentItemsPanel);
+      if (!list.length) {
+        recentItemsPanel.style.display = 'none';
+        return;
+      }
+      recentItemsPanel.append(
+        el('div', { class: 'popular-header' },
+          el('span', {}, `🧾 Последние товары клиента (${list.length})`),
+          el('span', { class: 'popular-hint' }, 'клик — добавить'),
+        ),
+      );
+      const strip = el('div', { class: 'popular-strip' });
+      for (const p of list) {
+        strip.append(
+          el('button', {
+            type: 'button',
+            class: 'popular-card',
+            title: p.name + (p.sku ? ` (${p.sku})` : ''),
+            onClick: () => {
+              if (!p.product_id) {
+                toast(`«${p.name}» больше нет в каталоге — добавьте вручную`, '');
+                return;
+              }
+              items.addProductRow({
+                id: p.product_id,
+                sku: p.sku,
+                name: p.name,
+                image_url: p.image_url,
+                stock: p.stock,
+                stock_by_store: p.stock_by_store,
+                marketplace_price: p.marketplace_price,
+                cost_price: p.cost_price,
+              });
+            },
+          },
+            p.image_url
+              ? el('img', { src: p.image_url, class: 'popular-card-img', alt: '' })
+              : el('div', { class: 'popular-card-img empty' }, '📦'),
+            el('div', { class: 'popular-card-name' }, p.name),
+            el('div', { class: 'popular-card-price' },
+              p.marketplace_price != null
+                ? `${Number(p.marketplace_price).toLocaleString('ru-RU')} ₽`
+                : el('span', { class: 'popular-no-price' }, 'нет в прайсе'),
+            ),
+          ),
+        );
+      }
+      recentItemsPanel.append(strip);
+      recentItemsPanel.style.display = 'block';
+    } catch {
+      recentItemsPanel.style.display = 'none';
+    }
+  }
+  // Перерисовываем после: ввода имени (debounce), смены телефона, площадки или склада.
+  let recentDebounce = null;
+  const scheduleRecent = () => {
+    clearTimeout(recentDebounce);
+    recentDebounce = setTimeout(refreshRecentClientItems, 350);
+  };
+  clientI.addEventListener('input', scheduleRecent);
+  clientPhoneI.addEventListener('input', scheduleRecent);
+  marketI.addEventListener('change', scheduleRecent);
+  warehouseI.addEventListener('change', scheduleRecent);
+  // Сразу подтянем для существующего/повторяемого заказа.
+  if (cur.client_name || cur.client_phone) {
+    refreshRecentClientItems();
+  }
   // При открытии формы существующего заказа — сразу подтягиваем свежие остатки
   // из МС для позиций, чтобы менеджер видел актуальную картину, не ждал
   // 15-минутный cron.
@@ -1988,6 +2081,7 @@ async function openOrderForm(order, onSaved) {
       managerNoteI ? el('div', { class: 'form-row', style: { gridColumn: '1 / -1' } },
         el('label', {}, '🔒 Заметка для менеджеров'), managerNoteI) : null,
     ),
+    recentItemsPanel,
     el('div', { class: 'form-row' },
       el('label', {},
         'Позиции заказа *',
@@ -9384,6 +9478,48 @@ export async function renderMyProfile(main) {
     ),
   );
   main.append(meBlock);
+
+  // Смена пароля. Валидация на бэке: текущий должен совпадать, новый ≥6 символов и
+  // отличаться от старого. После успеха поля очищаются.
+  const pwCurrent = el('input', { type: 'password', autocomplete: 'current-password', placeholder: 'Текущий пароль' });
+  const pwNext = el('input', { type: 'password', autocomplete: 'new-password', placeholder: 'Новый пароль (≥6 символов)' });
+  const pwConfirm = el('input', { type: 'password', autocomplete: 'new-password', placeholder: 'Повторите новый пароль' });
+  const pwStatus = el('div', { style: { marginTop: '8px', fontSize: '13px' } });
+  const pwBtn = el('button', { class: 'btn btn-primary' }, '🔐 Сменить пароль');
+  pwBtn.addEventListener('click', async () => {
+    pwStatus.textContent = '';
+    pwStatus.style.color = '';
+    const cur = pwCurrent.value;
+    const nxt = pwNext.value;
+    const cnf = pwConfirm.value;
+    if (!cur || !nxt) { pwStatus.style.color = '#b91c1c'; pwStatus.textContent = 'Заполните оба поля'; return; }
+    if (nxt.length < 6) { pwStatus.style.color = '#b91c1c'; pwStatus.textContent = 'Новый пароль слишком короткий (нужно ≥6 символов)'; return; }
+    if (nxt !== cnf) { pwStatus.style.color = '#b91c1c'; pwStatus.textContent = 'Подтверждение не совпадает с новым паролем'; return; }
+    pwBtn.disabled = true;
+    const orig = pwBtn.textContent;
+    pwBtn.textContent = '⏳ Сохраняю…';
+    try {
+      await api.changePassword(cur, nxt);
+      pwCurrent.value = ''; pwNext.value = ''; pwConfirm.value = '';
+      pwStatus.style.color = '#15803d';
+      pwStatus.textContent = '✅ Пароль изменён';
+      toast('Пароль изменён', 'success');
+    } catch (e) {
+      pwStatus.style.color = '#b91c1c';
+      pwStatus.textContent = '❌ ' + (e.message || 'Ошибка');
+    } finally {
+      pwBtn.disabled = false;
+      pwBtn.textContent = orig;
+    }
+  });
+  main.append(el('div', { class: 'card', style: { marginBottom: '12px' } },
+    el('h3', { style: { marginTop: 0 } }, '🔐 Смена пароля'),
+    el('div', { style: { display: 'grid', gap: '8px', maxWidth: '380px' } },
+      pwCurrent, pwNext, pwConfirm,
+    ),
+    el('div', { style: { marginTop: '12px' } }, pwBtn),
+    pwStatus,
+  ));
 
   const maxStatus = el('div', { class: 'card', style: { marginBottom: '12px' } },
     el('h3', { style: { marginTop: 0 } }, '🔔 МАХ-уведомления'),
