@@ -146,4 +146,74 @@ router.patch('/feedback/:id/status', async (req, res) => {
   }
 });
 
+// GET /api/diag/daily/act/proposal-done/:id?secret=... — пометить proposal как done
+router.get('/act/proposal-done/:id', async (req, res) => {
+  try {
+    await db.run(
+      `UPDATE ai_proposals SET status = 'done', updated_at = NOW() WHERE id = ?`,
+      req.params.id,
+    );
+    res.json({ ok: true, id: req.params.id });
+  } catch (e) {
+    res.status(500).json({ error: String(e) });
+  }
+});
+
+// GET /api/diag/daily/act/feedback-done/:id?secret=...&text=URL-encoded message
+// Переводит feedback в awaiting_approval + постит сообщение от AI ассистент
+router.get('/act/feedback-done/:id', async (req, res) => {
+  try {
+    const text = req.query.text ? decodeURIComponent(req.query.text) : 'Сделано, проверьте пожалуйста. Нажмите ✅ Принимаю когда проверите. Ctrl+F5 для сброса кеша.';
+    await db.run(
+      `UPDATE feedback SET status = 'awaiting_approval', updated_at = NOW() WHERE id = ?`,
+      req.params.id,
+    );
+    await db.run(
+      `INSERT INTO feedback_messages (feedback_id, user_name, role, text)
+       VALUES (?, 'AI ассистент', 'admin', ?)`,
+      req.params.id, text,
+    );
+    res.json({ ok: true, id: req.params.id });
+  } catch (e) {
+    res.status(500).json({ error: String(e) });
+  }
+});
+
+// GET /api/diag/daily/act/feedback-msg/:id?secret=...&text=URL-encoded message
+// Постит сообщение в тред без смены статуса
+router.get('/act/feedback-msg/:id', async (req, res) => {
+  try {
+    const text = req.query.text ? decodeURIComponent(req.query.text) : '';
+    if (!text) return res.status(400).json({ error: 'text required' });
+    await db.run(
+      `INSERT INTO feedback_messages (feedback_id, user_name, role, text)
+       VALUES (?, 'AI ассистент', 'admin', ?)`,
+      req.params.id, text,
+    );
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: String(e) });
+  }
+});
+
+// GET /api/diag/daily/act/feedback-close/:id?secret=...&text=URL-encoded reason
+// Закрывает feedback со статусом closed + постит пояснение
+router.get('/act/feedback-close/:id', async (req, res) => {
+  try {
+    const text = req.query.text ? decodeURIComponent(req.query.text) : 'Обращение закрыто.';
+    await db.run(
+      `UPDATE feedback SET status = 'closed', updated_at = NOW() WHERE id = ?`,
+      req.params.id,
+    );
+    await db.run(
+      `INSERT INTO feedback_messages (feedback_id, user_name, role, text)
+       VALUES (?, 'AI ассистент', 'admin', ?)`,
+      req.params.id, text,
+    );
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: String(e) });
+  }
+});
+
 export default router;
