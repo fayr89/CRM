@@ -783,8 +783,46 @@ router.patch(
     const order = await db.get('SELECT * FROM orders WHERE id = ?', req.params.id);
     if (!order) throw NotFound('Заказ не найден');
     if (!(await canAccessOrder(req.user, order))) throw Forbidden();
-    if (req.user.role !== 'admin' && order.status !== 'new') {
-      throw BadRequest('Менять заказ можно только пока он в статусе «новый»');
+    if (order.status !== 'new') {
+      if (req.user.role !== 'admin') {
+        throw BadRequest('Менять заказ можно только пока он в статусе «новый»');
+      }
+      // Админ может править «безопасные» поля (notes, manager_note, client_name,
+      // delivery_method и т.п.) даже когда заказ зарезервирован/отгружен.
+      // Запрещаем менять то, что повлияет на резервы в МС, кассу и склад:
+      //   items, warehouse, payment_method.
+      // Если действительно нужно поменять — сначала «↩️ Снять резерв».
+      if (data.items) {
+        const existing = await db.all(
+          `SELECT sku, name, quantity, unit_price, product_id
+           FROM order_items WHERE order_id = ? ORDER BY id`,
+          order.id,
+        );
+        const norm = (it) =>
+          `${(it.sku || '').trim()}|${it.name}|${Number(it.quantity)}|${Number(it.unit_price)}|${it.product_id || ''}`;
+        const same = existing.length === data.items.length
+          && existing.map(norm).join('\n') === data.items.map(norm).join('\n');
+        if (!same) {
+          throw BadRequest(
+            `Состав заказа нельзя менять в статусе «${order.status}» — иначе резервы в МойСклад разъедутся. ` +
+            'Сначала «↩️ Снять резерв», потом редактируйте позиции.',
+          );
+        }
+        // Состав не изменился — позиции не перезаписываем (экономим запросы и
+        // не дёргаем zero-diff DELETE+INSERT).
+        delete data.items;
+      }
+      if (data.warehouse !== undefined && (data.warehouse || '') !== (order.warehouse || '')) {
+        throw BadRequest(
+          `Склад списания нельзя менять в статусе «${order.status}» — сначала «↩️ Снять резерв».`,
+        );
+      }
+      if (data.payment_method !== undefined && (data.payment_method || '') !== (order.payment_method || '')) {
+        throw BadRequest(
+          `Способ оплаты нельзя менять в статусе «${order.status}» — сначала «↩️ Снять резерв» ` +
+          '(это поле влияет на pending-транзакцию в кассе).',
+        );
+      }
     }
     // Реестр треков: тот же qr на другом активном заказе — запрещаем.
     if (data.shipment_qr) {
