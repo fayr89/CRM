@@ -6300,10 +6300,10 @@ export async function renderProducts(main) {
           '⬇ Импорт из МойСклад',
         )
       : null,
-    canEdit
+    isAdmin
       ? el('button', { class: 'btn', onClick: () => openPriceTemplate() }, '📥 Шаблон прайса')
       : null,
-    canEdit
+    isAdmin
       ? el(
           'button',
           {

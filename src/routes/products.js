@@ -721,7 +721,7 @@ const priceRowSchema = z.object({
 
 router.post(
   '/import/prices',
-  requireRole('admin', 'manager'),
+  requireRole('admin'),
   asyncHandler(async (req, res) => {
     const parsed = z.array(priceRowSchema).max(50000).parse(req.body?.rows || []);
     // Строгая модель: цена без склада недопустима — отбрасываем такие строки.
