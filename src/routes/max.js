@@ -143,8 +143,14 @@ router.post(
   asyncHandler(async (req, res) => {
     const { url } = webhookSchema.parse(req.body || {});
     if (!(await getMaxToken())) throw BadRequest('Сначала задайте токен бота');
-    const result = await setMaxWebhook(url);
-    res.json({ ok: true, result });
+    try {
+      const result = await setMaxWebhook(url);
+      res.json({ ok: true, result });
+    } catch (e) {
+      // Превращаем сетевые/API-ошибки в BadRequest с читаемым текстом —
+      // иначе errorHandler отдаёт generic 500 «Internal server error».
+      throw BadRequest(e.message);
+    }
   }),
 );
 
@@ -156,8 +162,12 @@ router.post(
     const u = await db.get(`SELECT max_chat_id FROM users WHERE id = ?`, req.user.id);
     if (!u?.max_chat_id) throw BadRequest('Сначала привяжите свой МАХ-аккаунт через «Профиль»');
     const { sendMaxMessage } = await import('../services/max-bot.js');
-    await sendMaxMessage(u.max_chat_id, '✅ Тестовое сообщение от CRM. Бот работает.');
-    res.json({ ok: true });
+    try {
+      await sendMaxMessage(u.max_chat_id, '✅ Тестовое сообщение от CRM. Бот работает.');
+      res.json({ ok: true });
+    } catch (e) {
+      throw BadRequest(e.message);
+    }
   }),
 );
 
