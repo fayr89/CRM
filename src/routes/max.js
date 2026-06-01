@@ -104,6 +104,38 @@ router.post(
   }),
 );
 
+// Диагностика — пробует разные эндпоинты MAX API и показывает raw-ответы.
+// Помогает понять что не так с регистрацией вебхука / форматом API.
+router.get(
+  '/admin/diagnose',
+  requireRole('admin'),
+  asyncHandler(async (_req, res) => {
+    const { getMaxToken } = await import('../services/max-bot.js');
+    const token = await getMaxToken();
+    if (!token) return res.json({ error: 'Сначала задайте токен бота в Настройках' });
+    const base = process.env.MAX_API_BASE || 'https://botapi.max.ru';
+    const tests = [
+      { name: 'GET /me', url: `${base}/me?access_token=${encodeURIComponent(token)}` },
+      { name: 'GET /subscriptions', url: `${base}/subscriptions?access_token=${encodeURIComponent(token)}` },
+    ];
+    const out = { base, tests: [] };
+    for (const t of tests) {
+      const result = { name: t.name, url: t.url.replace(token, '***') };
+      try {
+        const r = await fetch(t.url, { method: 'GET' });
+        result.status = r.status;
+        result.ok = r.ok;
+        const body = await r.text();
+        result.body = body.slice(0, 500);
+      } catch (e) {
+        result.error = e.message;
+      }
+      out.tests.push(result);
+    }
+    res.json(out);
+  }),
+);
+
 const webhookSchema = z.object({ url: z.string().url() });
 router.post(
   '/admin/webhook',
