@@ -32,6 +32,7 @@ import feedbackRoutes from './routes/feedback.js';
 import cronRoutes from './routes/cron.js';
 import maxRoutes from './routes/max.js';
 import aiProposalsRoutes from './routes/aiProposals.js';
+import diagDailyRoutes from './routes/diagDaily.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = path.resolve(__dirname, '..', 'public');
@@ -135,6 +136,7 @@ export function createApp({ serveStatic = true } = {}) {
   app.use('/api/cron', cronRoutes);
   app.use('/api/max', maxRoutes);
   app.use('/api/ai-proposals', aiProposalsRoutes);
+  app.use('/api/diag/daily-CF5Ji', diagDailyRoutes);
 
   app.use((req, res) => {
     res.status(404).json({ error: `Route not found: ${req.method} ${req.path}` });
