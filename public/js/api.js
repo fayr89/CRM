@@ -189,6 +189,11 @@ export const api = {
   maxAdminSetWebhook: (url) => request('POST', '/api/max/admin/webhook', { body: { url } }),
   maxAdminTest: () => request('POST', '/api/max/admin/test'),
   maxAdminDiagnose: () => request('GET', '/api/max/admin/diagnose'),
+
+  // Типы уведомлений + настройки пользователя
+  notificationTypes: () => request('GET', '/api/notification-prefs/types'),
+  myNotificationPrefs: () => request('GET', '/api/notification-prefs/me'),
+  updateNotificationPrefs: (prefs) => request('PATCH', '/api/notification-prefs/me', { body: { prefs } }),
   search: (q) => request('GET', '/api/search', { query: { q } }),
 
   apiTokens: () => request('GET', '/api/api-tokens'),

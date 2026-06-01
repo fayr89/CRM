@@ -14,6 +14,7 @@ import {
   renderAiInbox,
   renderFeedback,
   renderMyFeedback,
+  renderMyProfile,
   renderIntegrations,
   renderInvitations,
   renderDirectOrders,
@@ -351,6 +352,15 @@ function renderShell() {
         '🔔 Подключить МАХ',
       ),
       el(
+        'a',
+        {
+          href: '#/my-profile',
+          class: 'btn btn-sm',
+          style: { marginTop: '6px', width: '100%', display: 'block', textAlign: 'center', textDecoration: 'none' },
+        },
+        '👤 Мой профиль',
+      ),
+      el(
         'button',
         {
           onClick: () => {
@@ -626,6 +636,7 @@ const ROUTES = {
   '#/integrations': renderIntegrations,
   '#/feedback': renderFeedback,
   '#/my-feedback': renderMyFeedback,
+  '#/my-profile': renderMyProfile,
   '#/audit': renderAudit,
   '#/ai-inbox': renderAiInbox,
 };

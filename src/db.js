@@ -453,7 +453,7 @@ export const db = {
 // БАМПАЙ ПРИ КАЖДОМ ДОБАВЛЕНИИ МИГРАЦИИ. Текущие миграции прогоняются
 // только если запись в app_settings.schema_version отличается. Это экономит
 // ~500-2000мс на каждом холодном старте serverless-лямбды.
-const SCHEMA_VERSION = 16;
+const SCHEMA_VERSION = 17;
 
 export async function ensureInitialized() {
   if (globalThis.__crmInitialized) return;
@@ -709,6 +709,17 @@ export async function ensureInitialized() {
         )
       `);
       await pool.query('CREATE INDEX IF NOT EXISTS idx_notice_banners_window ON notice_banners(starts_at, ends_at)');
+      // Пользовательские настройки уведомлений: для каких типов слать пуш в МАХ.
+      // Отсутствие строки = включено по умолчанию (default-on). enabled=FALSE = выключено.
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS user_notification_prefs (
+          user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          notification_type TEXT NOT NULL,
+          enabled BOOLEAN NOT NULL DEFAULT TRUE,
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          PRIMARY KEY (user_id, notification_type)
+        )
+      `);
       await pool.query('CREATE INDEX IF NOT EXISTS idx_users_max_chat ON users(max_chat_id) WHERE max_chat_id IS NOT NULL');
       await pool.query('CREATE INDEX IF NOT EXISTS idx_users_max_code ON users(max_bind_code) WHERE max_bind_code IS NOT NULL');
       // Прайс с привязкой к складу: товар × канал × склад. Старое UNIQUE(product,market) снимаем.

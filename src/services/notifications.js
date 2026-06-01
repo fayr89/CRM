@@ -17,10 +17,20 @@ export async function notify(userId, type, title, body, link) {
   try {
     const u = await db.get(`SELECT max_chat_id FROM users WHERE id = ?`, userId);
     if (u?.max_chat_id) {
-      const fullLink = link && link.startsWith('#') && process.env.PUBLIC_URL
-        ? `${process.env.PUBLIC_URL}/${link}`
-        : link;
-      await sendMaxMessage(u.max_chat_id, `${title}${body ? '\n\n' + body : ''}`, fullLink);
+      // Проверяем настройку пользователя: хочет ли он получать этот тип уведомлений в МАХ.
+      // Отсутствие записи в user_notification_prefs = включено (default-on).
+      const pref = await db.get(
+        `SELECT enabled FROM user_notification_prefs
+         WHERE user_id = ? AND notification_type = ?`,
+        userId, type,
+      ).catch(() => null);
+      const wantsMaxPush = pref ? pref.enabled : true;
+      if (wantsMaxPush) {
+        const fullLink = link && link.startsWith('#') && process.env.PUBLIC_URL
+          ? `${process.env.PUBLIC_URL}/${link}`
+          : link;
+        await sendMaxMessage(u.max_chat_id, `${title}${body ? '\n\n' + body : ''}`, fullLink);
+      }
     }
   } catch (e) {
     // eslint-disable-next-line no-console
