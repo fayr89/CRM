@@ -8850,7 +8850,39 @@ export async function renderMaxBotSection(area) {
     catch (e) { toast(e.message, 'error'); }
   });
 
-  area.append(tokenRow, webhookRow, statusBlock, el('div', { style: { marginTop: '8px' } }, testBtn));
+  // Кнопка диагностики — пробует /me и /subscriptions у МАХ, показывает raw-ответы.
+  const diagBtn = el('button', { class: 'btn btn-sm' }, '🔬 Диагностика API');
+  diagBtn.addEventListener('click', async () => {
+    diagBtn.disabled = true;
+    diagBtn.textContent = '⏳ Проверяю…';
+    try {
+      const r = await api.maxAdminDiagnose();
+      const body = el('div', {},
+        el('div', { style: { marginBottom: '8px' } }, el('b', {}, 'Base URL: '), r.base || '—'),
+        ...((r.tests || []).map((t) => el('div', {
+          style: { marginBottom: '8px', padding: '8px', background: '#f9fafb', borderRadius: '6px' },
+        },
+          el('div', { style: { fontWeight: 600, marginBottom: '4px' } }, t.name),
+          el('div', { class: 'muted', style: { fontSize: '12px', wordBreak: 'break-all' } }, t.url),
+          t.error
+            ? el('div', { style: { color: '#991b1b', marginTop: '4px' } }, '❌ ' + t.error)
+            : el('div', { style: { marginTop: '4px' } },
+                el('b', {}, `${t.status} ${t.ok ? '✅' : '❌'}`),
+                el('pre', { style: { whiteSpace: 'pre-wrap', fontSize: '11px', margin: '4px 0 0', maxHeight: '200px', overflowY: 'auto' } }, t.body || '(пусто)'),
+              ),
+        ))),
+      );
+      await openModal('🔬 Диагностика MAX API', body, { primaryLabel: 'Закрыть', onSubmit: () => true });
+    } catch (e) {
+      toast(e.message, 'error');
+    } finally {
+      diagBtn.disabled = false;
+      diagBtn.textContent = '🔬 Диагностика API';
+    }
+  });
+
+  area.append(tokenRow, webhookRow, statusBlock,
+    el('div', { style: { marginTop: '8px', display: 'flex', gap: '8px', flexWrap: 'wrap' } }, testBtn, diagBtn));
 }
 
 

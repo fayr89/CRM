@@ -188,6 +188,7 @@ export const api = {
   maxAdminSetToken: (token) => request('POST', '/api/max/admin/token', { body: { token } }),
   maxAdminSetWebhook: (url) => request('POST', '/api/max/admin/webhook', { body: { url } }),
   maxAdminTest: () => request('POST', '/api/max/admin/test'),
+  maxAdminDiagnose: () => request('GET', '/api/max/admin/diagnose'),
   search: (q) => request('GET', '/api/search', { query: { q } }),
 
   apiTokens: () => request('GET', '/api/api-tokens'),
