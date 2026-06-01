@@ -1975,7 +1975,44 @@ async function openOrderForm(order, onSaved) {
       managerNoteI ? el('div', { class: 'form-row', style: { gridColumn: '1 / -1' } },
         el('label', {}, '🔒 Заметка для менеджеров'), managerNoteI) : null,
     ),
-    el('div', { class: 'form-row' }, el('label', {}, 'Позиции заказа *'), items.node),
+    el('div', { class: 'form-row' },
+      el('label', {},
+        'Позиции заказа *',
+        // Кнопка ручного освежения остатков из МС для позиций уже добавленных в заказ.
+        // Полезно если форма открыта давно и менеджер хочет увидеть актуальные значения
+        // до резерва. Не рендерим при создании пустого заказа — позиций ещё нет.
+        (() => {
+          const refreshBtn = el('button', {
+            type: 'button',
+            class: 'btn btn-xs',
+            style: { marginLeft: '8px', verticalAlign: 'middle' },
+            title: 'Запросить актуальные остатки из МойСклад для позиций в заказе',
+          }, '🔄 Обновить остатки');
+          refreshBtn.addEventListener('click', async () => {
+            const current = items.getItems().filter((it) => it.product_id).map((it) => it.product_id);
+            if (!current.length) { toast('Нет позиций с привязкой к каталогу', ''); return; }
+            const orig = refreshBtn.textContent;
+            refreshBtn.disabled = true;
+            refreshBtn.textContent = '⏳ Обновляю…';
+            try {
+              await api.refreshProductStocks(current);
+              if (items.refreshCatalogPrices) {
+                await items.refreshCatalogPrices();
+                renderPricingPanel();
+              }
+              toast('Остатки обновлены', 'success');
+            } catch (e) {
+              toast(e.message || 'Не удалось обновить', 'error');
+            } finally {
+              refreshBtn.disabled = false;
+              refreshBtn.textContent = orig;
+            }
+          });
+          return refreshBtn;
+        })(),
+      ),
+      items.node,
+    ),
     pricingPanel,
   );
 
@@ -2205,6 +2242,21 @@ async function openSplitDialog(order, onDone) {
 async function reserveOrderWithStockCheck(orderId) {
   const me = JSON.parse(localStorage.getItem('crm_user') || '{}');
   const canForce = ['admin', 'warehouse'].includes(me.role);
+  // Перед резервом — освежаем остатки по позициям заказа из МойСклад напрямую,
+  // чтобы избежать кейса «между cron-15-мин и нажатием Reserve товар продали».
+  // Если МС недоступен или таймаут — продолжаем (бэкенд всё равно проверит по БД).
+  try {
+    const full = await api.get('orders', orderId);
+    const productIds = (full.items || [])
+      .filter((it) => it.product_id)
+      .map((it) => it.product_id);
+    if (productIds.length) {
+      await api.refreshProductStocks(productIds);
+    }
+  } catch (e) {
+    // eslint-disable-next-line no-console
+    console.warn('[reserve] stock refresh failed:', e?.message);
+  }
   try {
     await api.reserveOrder(orderId);
     return true;
