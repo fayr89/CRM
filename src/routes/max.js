@@ -114,22 +114,23 @@ router.get(
     const token = await getMaxToken();
     if (!token) return res.json({ error: 'Сначала задайте токен бота в Настройках' });
     const base = process.env.MAX_API_BASE || 'https://botapi.max.ru';
-    const tests = [
-      { name: 'GET /me', url: `${base}/me` },
-      { name: 'GET /subscriptions', url: `${base}/subscriptions` },
+    // Пробуем разные варианты передачи токена — MAX отвергает Bearer; смотрим что зайдёт.
+    const variants = [
+      { name: 'Authorization: Bearer <token>',  headers: { authorization: `Bearer ${token}` } },
+      { name: 'Authorization: <token>',         headers: { authorization: token } },
+      { name: 'X-Access-Token: <token>',        headers: { 'x-access-token': token } },
+      { name: 'X-Auth-Token: <token>',          headers: { 'x-auth-token': token } },
+      { name: 'Authorization: Bot <token>',     headers: { authorization: `Bot ${token}` } },
     ];
     const out = { base, tests: [] };
-    for (const t of tests) {
-      const result = { name: t.name, url: t.url };
+    for (const v of variants) {
+      const result = { name: `GET /me with ${v.name}`, url: `${base}/me` };
       try {
-        const r = await fetch(t.url, {
-          method: 'GET',
-          headers: { 'authorization': `Bearer ${token}` },
-        });
+        const r = await fetch(`${base}/me`, { method: 'GET', headers: v.headers });
         result.status = r.status;
         result.ok = r.ok;
         const body = await r.text();
-        result.body = body.slice(0, 500);
+        result.body = body.slice(0, 300);
       } catch (e) {
         result.error = e.message;
       }
