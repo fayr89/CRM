@@ -2295,12 +2295,16 @@ async function reserveOrderWithStockCheck(orderId) {
   }
 }
 
-export async function renderOrders(main) {
+export async function renderOrders(main, opts = {}) {
   await loadLookups();
   const me = JSON.parse(localStorage.getItem('crm_user') || '{}');
   const isWarehouse = me.role === 'warehouse';
   const isAdmin = me.role === 'admin';
   const canCreate = ['admin', 'manager', 'sales'].includes(me.role);
+  const directMode = opts.directMode || false;
+  const pageTitle = directMode ? 'Продажи (прямые)' : 'Продажи с площадок (Avito)';
+  const pageSubtitle = directMode ? 'Заказы без привязки к маркетплейсу' : 'Заказы из маркетплейсов и с собственных сайтов';
+  const viewStorageKey = directMode ? 'direct_orders_view' : 'orders_view';
 
   // Прогрев кеша формы заказа: пока пользователь смотрит на список, в фоне
   // загружаем pricing/warehouses/schedule. Когда нажмёт «Новый заказ» — будет мгновенно.
@@ -2308,18 +2312,19 @@ export async function renderOrders(main) {
     refreshOrderFormCache();
   }
 
-  let state = { page: 1, status: '', marketplace: '', search: '', view: localStorage.getItem('orders_view') || 'table' };
+  let state = { page: 1, status: '', marketplace: '', search: '', view: localStorage.getItem(viewStorageKey) || 'table' };
   const tableArea = el('div');
 
   async function reload() {
     clear(tableArea);
     tableArea.append(el('div', { class: 'loading' }, 'Загрузка…'));
     try {
+      const baseParams = directMode ? { ...state, direct: '1' } : state;
       if (state.view === 'kanban') {
-        const result = await api.list('orders', { ...state, status: '', limit: 200 });
+        const result = await api.list('orders', { ...baseParams, status: '', limit: 200 });
         renderOrdersKanban(result);
       } else {
-        const result = await api.list('orders', { ...state, limit: 25 });
+        const result = await api.list('orders', { ...baseParams, limit: 25 });
         renderTable(result);
       }
     } catch (e) {
@@ -2745,7 +2750,7 @@ export async function renderOrders(main) {
         class: 'btn btn-sm' + (state.view === 'table' ? ' active' : ''),
         onClick: () => {
           state.view = 'table';
-          localStorage.setItem('orders_view', 'table');
+          localStorage.setItem(viewStorageKey, 'table');
           reload();
           updateToggle();
         },
@@ -2758,7 +2763,7 @@ export async function renderOrders(main) {
         class: 'btn btn-sm' + (state.view === 'kanban' ? ' active' : ''),
         onClick: () => {
           state.view = 'kanban';
-          localStorage.setItem('orders_view', 'kanban');
+          localStorage.setItem(viewStorageKey, 'kanban');
           reload();
           updateToggle();
         },
@@ -2827,8 +2832,8 @@ export async function renderOrders(main) {
       'div',
       { class: 'page-header' },
       el('div', {},
-        el('h1', { class: 'page-title' }, 'Продажи с площадок (Avito)'),
-        el('div', { class: 'page-subtitle' }, 'Заказы из маркетплейсов и с собственных сайтов'),
+        el('h1', { class: 'page-title' }, pageTitle),
+        el('div', { class: 'page-subtitle' }, pageSubtitle),
       ),
     ),
     el('div', { class: 'help-row' }, helpButton('orders')),
@@ -2836,6 +2841,10 @@ export async function renderOrders(main) {
     tableArea,
   );
   reload();
+}
+
+export function renderDirectOrders(main) {
+  return renderOrders(main, { directMode: true });
 }
 
 async function showOrderDetails(order, reload) {

@@ -165,6 +165,9 @@ router.get(
       where.push('o.marketplace = ?');
       params.push(req.query.marketplace);
     }
+    if (req.query.direct === '1') {
+      where.push('o.marketplace IS NULL');
+    }
     if (req.query.manager_id) {
       where.push('o.manager_id = ?');
       params.push(Number(req.query.manager_id));
