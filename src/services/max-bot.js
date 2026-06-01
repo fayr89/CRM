@@ -43,12 +43,15 @@ export async function setMaxToken(plainToken) {
 export async function getMaxBotInfo() {
   const token = await getMaxToken();
   if (!token) return null;
-  const r = await fetch(`${MAX_API_BASE}/me?access_token=${encodeURIComponent(token)}`, {
-    method: 'GET',
-  });
+  let r;
+  try {
+    r = await fetch(`${MAX_API_BASE}/me?access_token=${encodeURIComponent(token)}`, { method: 'GET' });
+  } catch (e) {
+    throw new Error(`МАХ API недоступен (${MAX_API_BASE}): ${e.message}`);
+  }
   if (!r.ok) {
     const text = await r.text().catch(() => '');
-    throw new Error(`MAX getMe: ${r.status} ${text.slice(0, 200)}`);
+    throw new Error(`MAX getMe ответил ${r.status}: ${text.slice(0, 200) || '(пусто)'}`);
   }
   return await r.json();
 }
@@ -77,17 +80,23 @@ export async function sendMaxMessage(chatId, text, link) {
 
 // Зарегистрировать webhook у бота. URL должен быть HTTPS-доступным извне.
 // МАХ присылает обновления типа "message_created" — нам этого хватает для /start.
+// Все ошибки оборачиваем в читаемые: показываем что упало (сеть / 4xx / 5xx).
 export async function setMaxWebhook(webhookUrl) {
   const token = await getMaxToken();
   if (!token) throw new Error('Токен МАХ не настроен');
-  const r = await fetch(`${MAX_API_BASE}/subscriptions?access_token=${encodeURIComponent(token)}`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ url: webhookUrl, update_types: ['message_created'] }),
-  });
+  let r;
+  try {
+    r = await fetch(`${MAX_API_BASE}/subscriptions?access_token=${encodeURIComponent(token)}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ url: webhookUrl, update_types: ['message_created'] }),
+    });
+  } catch (e) {
+    throw new Error(`Не удалось связаться с МАХ API (${MAX_API_BASE}): ${e.message}. Проверьте что URL базы доступен и токен бота корректен.`);
+  }
   if (!r.ok) {
     const body = await r.text().catch(() => '');
-    throw new Error(`MAX setWebhook: ${r.status} ${body.slice(0, 200)}`);
+    throw new Error(`МАХ API ответил ${r.status}: ${body.slice(0, 300) || '(пустое тело)'}. Проверьте: 1) токен бота, 2) формат URL вебхука (должен быть HTTPS), 3) актуальный путь регистрации в документации dev.max.ru.`);
   }
   await setSetting('max.webhook_url', webhookUrl);
   return await r.json().catch(() => ({ ok: true }));
