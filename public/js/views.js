@@ -8901,6 +8901,35 @@ export async function renderMaxBotSection(area) {
 
   area.append(tokenRow, webhookRow, statusBlock,
     el('div', { style: { marginTop: '8px', display: 'flex', gap: '8px', flexWrap: 'wrap' } }, testBtn, diagBtn));
+
+  // Справочник всех типов уведомлений с шаблонами — что вообще можно слать в МАХ.
+  // Юзеры сами выбирают что получать в «👤 Мой профиль» → «Что получать в МАХ».
+  try {
+    const tr = await api.notificationTypes();
+    const types = tr.data || [];
+    if (types.length) {
+      area.append(
+        el('h3', { style: { marginTop: '20px', fontSize: '15px' } }, '📋 Доступные типы уведомлений (справочник)'),
+        el('p', { class: 'page-subtitle' },
+          'Эти уведомления отправляются автоматически при событиях в системе. ',
+          'Каждый юзер выбирает в своём профиле, какие из них он хочет получать в МАХ (по умолчанию все).'),
+      );
+      const tableRows = types.map((t) => el('tr', {},
+        el('td', { style: { fontFamily: 'monospace', fontSize: '11px' } }, t.key),
+        el('td', {}, el('b', {}, t.label), el('div', { style: { fontSize: '12px', color: 'var(--text-muted)' } }, t.description)),
+        el('td', { style: { fontFamily: 'monospace', fontSize: '11px' } }, t.template),
+        el('td', { style: { fontSize: '11px' } }, t.roles.join(', ')),
+      ));
+      area.append(el('div', { class: 'table-wrap', style: { marginTop: '8px' } },
+        el('table', { class: 'data' },
+          el('thead', {}, el('tr', {},
+            el('th', {}, 'Ключ'), el('th', {}, 'Название / описание'),
+            el('th', {}, 'Шаблон'), el('th', {}, 'Роли'))),
+          el('tbody', {}, ...tableRows),
+        ),
+      ));
+    }
+  } catch { /* справочник недоступен — не критично */ }
 }
 
 
@@ -9176,4 +9205,102 @@ async function renderNoticeBannersSection(area) {
   );
 
   reload();
+}
+
+// Мой профиль: настройки уведомлений в МАХ. По умолчанию все галочки включены —
+// при сохранении только изменённые от дефолта пишутся в user_notification_prefs.
+export async function renderMyProfile(main) {
+  const me = JSON.parse(localStorage.getItem('crm_user') || '{}');
+  main.innerHTML = '';
+  main.append(
+    el('h1', { class: 'page-title' }, '👤 Мой профиль'),
+    el('div', { class: 'page-subtitle' },
+      'Какие уведомления вы хотите получать в МАХ. По умолчанию — все. Снимите галочку чтобы перестать получать тип уведомления (в колокольчике всё равно появится).'),
+  );
+
+  const meBlock = el('div', { class: 'card', style: { marginBottom: '12px' } },
+    el('div', { class: 'detail-grid' },
+      el('div', { class: 'k' }, 'Имя'), el('div', {}, me.name || '—'),
+      el('div', { class: 'k' }, 'Email'), el('div', {}, me.email || '—'),
+      el('div', { class: 'k' }, 'Роль'), el('div', {}, tr('role', me.role) || me.role),
+    ),
+  );
+  main.append(meBlock);
+
+  const maxStatus = el('div', { class: 'card', style: { marginBottom: '12px' } },
+    el('h3', { style: { marginTop: 0 } }, '🔔 МАХ-уведомления'),
+    el('div', { class: 'loading' }, 'Проверяю статус…'),
+  );
+  main.append(maxStatus);
+
+  const prefsArea = el('div', { class: 'card' },
+    el('h3', { style: { marginTop: 0 } }, '⚙️ Что получать в МАХ'),
+    el('div', { class: 'loading' }, 'Загрузка…'),
+  );
+  main.append(prefsArea);
+
+  // Статус МАХ-привязки.
+  try {
+    const me2 = await api.maxMe();
+    clear(maxStatus);
+    maxStatus.append(
+      el('h3', { style: { marginTop: 0 } }, '🔔 МАХ-уведомления'),
+      me2.bound
+        ? el('div', { style: { display: 'flex', gap: '12px', alignItems: 'center', flexWrap: 'wrap' } },
+            el('span', { style: { color: 'green', fontWeight: 600 } }, '✅ МАХ подключён'),
+            el('button', { class: 'btn btn-sm', onClick: () => openMaxBindDialog() }, '⚙️ Настроить / отвязать'),
+          )
+        : el('div', { style: { display: 'flex', gap: '12px', alignItems: 'center', flexWrap: 'wrap' } },
+            el('span', { style: { color: 'var(--text-muted)' } }, '⚪ МАХ не подключён — уведомления приходят только в колокольчик'),
+            el('button', { class: 'btn btn-primary btn-sm', onClick: () => openMaxBindDialog() }, '🔗 Подключить МАХ'),
+          ),
+    );
+  } catch (e) {
+    clear(maxStatus);
+    maxStatus.append(el('div', { class: 'error' }, e.message || 'Ошибка'));
+  }
+
+  // Настройки prefs.
+  try {
+    const r = await api.myNotificationPrefs();
+    clear(prefsArea);
+    prefsArea.append(el('h3', { style: { marginTop: 0 } }, '⚙️ Что получать в МАХ'));
+    if (!r.data?.length) {
+      prefsArea.append(el('p', { class: 'muted' }, 'Для вашей роли нет настраиваемых уведомлений.'));
+      return;
+    }
+    const checkboxes = [];
+    for (const t of r.data) {
+      const cb = el('input', { type: 'checkbox', checked: t.enabled !== false });
+      checkboxes.push({ key: t.key, input: cb });
+      prefsArea.append(el('label', {
+        style: { display: 'flex', gap: '12px', padding: '10px 0', borderBottom: '1px solid var(--border)', cursor: 'pointer', alignItems: 'flex-start' },
+      },
+        cb,
+        el('div', {},
+          el('div', { style: { fontWeight: 600 } }, t.label),
+          el('div', { style: { fontSize: '12px', color: 'var(--text-muted)', marginTop: '2px' } }, t.description),
+          el('div', { style: { fontSize: '11px', color: '#0369a1', marginTop: '4px', fontFamily: 'monospace' } }, 'Шаблон: ' + t.template),
+        ),
+      ));
+    }
+    const saveStatus = el('span', { class: 'save-status', style: { marginLeft: '12px' } });
+    prefsArea.append(el('div', { style: { marginTop: '12px' } },
+      el('button', {
+        class: 'btn btn-primary',
+        onClick: async () => {
+          saveStatus.textContent = 'Сохраняю…';
+          try {
+            await api.updateNotificationPrefs(checkboxes.map((c) => ({ key: c.key, enabled: c.input.checked })));
+            saveStatus.textContent = '✅ Сохранено';
+            toast('Настройки уведомлений сохранены', 'success');
+          } catch (e) { saveStatus.textContent = '❌ ' + e.message; toast(e.message, 'error'); }
+        },
+      }, '💾 Сохранить'),
+      saveStatus,
+    ));
+  } catch (e) {
+    clear(prefsArea);
+    prefsArea.append(el('div', { class: 'error' }, e.message || 'Ошибка'));
+  }
 }
