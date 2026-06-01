@@ -38,9 +38,17 @@ router.post(
   asyncHandler(async (req, res) => {
     const code = await generateMaxBindCode(req.user.id);
     const bot = await getMaxBotInfo().catch(() => null);
+    const username = bot?.username || bot?.name || null;
+    // Deep-link для МАХ: открывает чат с ботом и (если МАХ поддерживает start-param)
+    // подставляет команду /start <код> в поле ввода. Если не поддерживает —
+    // пользователь увидит чат, скопирует код и вставит вручную.
+    const deepLink = username
+      ? `https://max.ru/${encodeURIComponent(username)}?start=${encodeURIComponent(code)}`
+      : null;
     res.json({
       code,
-      bot_username: bot?.username || bot?.name || null,
+      bot_username: username,
+      deep_link: deepLink,
       expires_in_minutes: 30,
     });
   }),

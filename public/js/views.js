@@ -8734,22 +8734,40 @@ export async function openMaxBindDialog() {
             try {
               const r = await api.maxBindCode();
               clear(codeBlock);
+              // Большая основная кнопка-ссылка на бота с подставленным /start <код>.
+              // Если МАХ deep-link поддерживает start-param — команда подставится
+              // автоматически. Если нет — пользователь скопирует код из карточки.
+              const openBotBtn = r.deep_link ? el('a', {
+                href: r.deep_link, target: '_blank', rel: 'noopener',
+                class: 'btn btn-primary',
+                style: { display: 'block', textAlign: 'center', padding: '12px', fontSize: '16px', marginBottom: '12px' },
+              }, `💬 Открыть бота${r.bot_username ? ' @' + r.bot_username : ''} в МАХ`) : null;
+
+              // Кнопка копирования всей команды /start <код>.
+              const copyCmdBtn = el('button', {
+                class: 'btn btn-sm',
+                style: { width: '100%', marginTop: '8px' },
+                onClick: async () => {
+                  try {
+                    await navigator.clipboard.writeText(`/start ${r.code}`);
+                    toast('Команда скопирована', 'success');
+                  } catch { toast('Не удалось скопировать', 'error'); }
+                },
+              }, `📋 Скопировать «/start ${r.code}»`);
+
               codeBlock.append(
-                el('div', { class: 'card', style: { padding: '16px', textAlign: 'center', marginTop: '12px' } },
-                  el('div', { style: { fontSize: '13px', color: 'var(--text-muted)' } }, 'Ваш код привязки:'),
-                  el('div', { style: { fontSize: '36px', fontWeight: 700, letterSpacing: '4px', margin: '8px 0', fontFamily: 'monospace' } }, r.code),
-                  el('div', { style: { fontSize: '12px', color: 'var(--text-muted)' } }, `Действует ${r.expires_in_minutes || 30} минут`),
+                openBotBtn,
+                el('div', { class: 'card', style: { padding: '14px', textAlign: 'center', marginBottom: '8px', background: '#f9fafb' } },
+                  el('div', { style: { fontSize: '12px', color: 'var(--text-muted)' } }, 'Если автоматически не вставилось, ваш код:'),
+                  el('div', { style: { fontSize: '32px', fontWeight: 700, letterSpacing: '4px', margin: '6px 0', fontFamily: 'monospace' } }, r.code),
+                  copyCmdBtn,
+                  el('div', { style: { fontSize: '11px', color: 'var(--text-muted)', marginTop: '6px' } }, `Действует ${r.expires_in_minutes || 30} минут`),
                 ),
-                el('ol', { style: { paddingLeft: '20px', lineHeight: '1.6' } },
-                  el('li', {},
-                    'Откройте МАХ',
-                    r.bot_username
-                      ? ` и найдите бота @${r.bot_username}`
-                      : ' и найдите нашего бота (имя бота уточните у админа)',
-                  ),
-                  el('li', {}, 'Отправьте боту: ', el('code', { style: { background: '#f3f4f6', padding: '2px 6px', borderRadius: '3px' } }, `/start ${r.code}`)),
-                  el('li', {}, 'Нажмите ниже «🔄 Проверить статус»'),
-                ),
+                el('div', { class: 'hint', style: { marginBottom: '8px' } },
+                  '1) Нажмите большую кнопку выше — откроется чат с ботом в МАХ. ' +
+                  '2) Если команда подставилась — просто отправьте её. ' +
+                  '3) Если нет — отправьте боту скопированную команду. ' +
+                  '4) Вернитесь и нажмите «🔄 Проверить статус».'),
                 checkBtn,
               );
             } catch (e) { toast(e.message, 'error'); }
