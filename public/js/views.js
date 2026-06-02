@@ -2635,16 +2635,9 @@ export async function renderOrders(main, opts = {}) {
   const isAdmin = me.role === 'admin';
   const canCreate = ['admin', 'manager', 'sales'].includes(me.role);
   const directMode = opts.directMode || false;
-  const allMode = opts.allMode || false;
-  const pageTitle = allMode ? '📋 Все заказы'
-    : directMode ? 'Продажи (прямые)'
-    : 'Продажи с площадок (Avito)';
-  const pageSubtitle = allMode ? 'Заказы из всех каналов: и маркетплейсы, и прямые продажи'
-    : directMode ? 'Заказы без привязки к маркетплейсу'
-    : 'Заказы из маркетплейсов и с собственных сайтов';
-  const viewStorageKey = allMode ? 'all_orders_view'
-    : directMode ? 'direct_orders_view'
-    : 'orders_view';
+  const pageTitle = directMode ? 'Продажи (прямые)' : 'Продажи с площадок (Avito)';
+  const pageSubtitle = directMode ? 'Заказы без привязки к маркетплейсу' : 'Заказы из маркетплейсов и с собственных сайтов';
+  const viewStorageKey = directMode ? 'direct_orders_view' : 'orders_view';
 
   // Прогрев кеша формы заказа: пока пользователь смотрит на список, в фоне
   // загружаем pricing/warehouses/schedule. Когда нажмёт «Новый заказ» — будет мгновенно.
@@ -2659,10 +2652,7 @@ export async function renderOrders(main, opts = {}) {
     clear(tableArea);
     tableArea.append(el('div', { class: 'loading' }, 'Загрузка…'));
     try {
-      // allMode → нет фильтра по каналу (видим всё). directMode → только прямые.
-      // Дефолт (#/orders) → исторически тоже без фильтра, но называется «с площадок».
       const baseParams = directMode ? { ...state, direct: '1' } : state;
-      // (allMode не добавляет direct=1; равноценно дефолту, но название и сторадж свои.)
       if (state.view === 'kanban') {
         const result = await api.list('orders', { ...baseParams, status: '', limit: 200 });
         renderOrdersKanban(result);
@@ -3250,13 +3240,6 @@ export async function renderOrders(main, opts = {}) {
 
 export function renderDirectOrders(main, opts = {}) {
   return renderOrders(main, { ...opts, directMode: true });
-}
-
-// «Все заказы» — единая страница для админа: показывает ВСЕ заказы независимо
-// от канала (и маркетплейс, и прямые). Раньше админу приходилось переключаться
-// между двумя страницами, чтобы увидеть полную картину по менеджерам.
-export function renderAllOrders(main, opts = {}) {
-  return renderOrders(main, { ...opts, allMode: true });
 }
 
 async function showOrderDetails(order, reload) {

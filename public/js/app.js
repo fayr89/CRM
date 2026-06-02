@@ -17,7 +17,6 @@ import {
   renderMyProfile,
   renderIntegrations,
   renderInvitations,
-  renderAllOrders,
   renderDirectOrders,
   renderOrders,
   renderLostGoods,
@@ -40,7 +39,6 @@ const NAV_GROUPS = [
   {
     title: 'Продажи',
     items: [
-      { hash: '#/all-orders', label: '📋 Все заказы', roles: SALES_ROLES, block: 'direct' },
       { hash: '#/pipeline', label: 'Воронка', roles: SALES_ROLES, block: 'sales' },
       { hash: '#/deals', label: 'Сделки', roles: SALES_ROLES, block: 'sales' },
       { hash: '#/direct-orders', label: 'Прямые заказы', roles: SALES_ROLES, block: 'direct' },
@@ -709,7 +707,6 @@ const ROUTES = {
   '#/invitations': renderInvitations,
   '#/orders': renderOrders,
   '#/direct-orders': renderDirectOrders,
-  '#/all-orders': renderAllOrders,
   '#/shipping': renderShipping,
   '#/returns': renderReturns,
   '#/lost-goods': renderLostGoods,
