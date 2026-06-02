@@ -950,7 +950,7 @@ router.post(
       'order.created',
       'Новый заказ ожидает резерва',
       `${order.client_name || order.reference_number || '#' + newId} · ${(order.total_amount || 0).toLocaleString('ru-RU')} ₽`,
-      '#/orders',
+      `#/orders?id=${newId}`,
     );
     emitEvent('order.created', { ...order, items });
     await logAction(req, { action: 'order.created', entity_type: 'order', entity_id: newId, details: { marketplace: order.marketplace, status: order.status, total: order.total_amount } });
@@ -1162,7 +1162,7 @@ router.post(
       'order.reserved',
       'Заказ зарезервирован',
       `${order.client_name || order.reference_number || '#' + order.id} · склад готов отгружать`,
-      '#/orders',
+      `#/orders?id=${order.id}`,
     );
     emitEvent('order.reserved', updated);
     await logAction(req, { action: 'order.reserved', entity_type: 'order', entity_id: order.id });
@@ -1194,7 +1194,7 @@ router.post(
       'order.shipped',
       'Заказ отгружен',
       `${order.client_name || order.reference_number || '#' + order.id} · можно завершать`,
-      '#/orders',
+      `#/orders?id=${order.id}`,
     );
     emitEvent('order.shipped', updated);
     await logAction(req, { action: 'order.shipped', entity_type: 'order', entity_id: order.id });
@@ -1236,7 +1236,7 @@ router.post(
         'order.shipped',
         'Заказ отгружен',
         `${order.client_name || order.reference_number || '#' + order.id} · можно завершать`,
-        '#/orders',
+        `#/orders?id=${order.id}`,
       );
       emitEvent('order.shipped', { ...order, status: 'shipped' });
       await logAction(req, { action: 'order.shipped', entity_type: 'order', entity_id: order.id, details: { bulk: true } });

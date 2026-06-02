@@ -95,7 +95,7 @@ router.post(
       'lead.created',
       'Новый лид с внешнего источника',
       `${lead.first_name} ${lead.last_name || ''} · источник: ${data.source || 'другой'}`,
-      '#/leads',
+      `#/leads?id=${lead.id}`,
     );
     emitEvent('lead.created', lead);
     res.status(201).json({ id: lead.id, status: lead.status, lead });
@@ -233,13 +233,13 @@ router.post(
       'order.created',
       `Новый заказ (${titleSrc})`,
       `${data.client_name || 'Клиент'} · ${totalAmount.toLocaleString('ru-RU')} ₽`,
-      '#/orders',
+      `#/orders?id=${orderId}`,
     );
     await notifyWarehouse(
       'order.created',
       'Заказ ожидает резерва',
       `${data.client_name || data.reference_number || '#' + orderId} · ${totalAmount.toLocaleString('ru-RU')} ₽`,
-      '#/orders',
+      `#/orders?id=${orderId}`,
     );
     emitEvent('order.created', { ...order, items });
     res.status(201).json({ id: orderId, status: order.status, order: { ...order, items } });

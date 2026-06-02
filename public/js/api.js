@@ -149,6 +149,7 @@ export const api = {
   // Обратная связь
   submitFeedback: (body) => request('POST', '/api/feedback', { body }),
   listFeedback: (query) => request('GET', '/api/feedback', { query }),
+  getFeedback: (id) => request('GET', `/api/feedback/by-id/${id}`),
   feedbackOpenCount: () => request('GET', '/api/feedback/open-count'),
   updateFeedback: (id, body) => request('PATCH', `/api/feedback/${id}`, { body }),
   myFeedback: () => request('GET', '/api/feedback/my'),

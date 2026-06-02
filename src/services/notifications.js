@@ -26,9 +26,10 @@ export async function notify(userId, type, title, body, link) {
       ).catch(() => null);
       const wantsMaxPush = pref ? pref.enabled : true;
       if (wantsMaxPush) {
-        const fullLink = link && link.startsWith('#') && process.env.PUBLIC_URL
-          ? `${process.env.PUBLIC_URL}/${link}`
-          : link;
+        // Хеш-ссылку оборачиваем в полный URL — без этого МАХ не сделает её кликабельной.
+        // PUBLIC_URL (env) приоритетнее, иначе берём прод-домен по умолчанию.
+        const base = process.env.PUBLIC_URL || 'https://crm-orcin-six.vercel.app';
+        const fullLink = link && link.startsWith('#') ? `${base}/${link}` : link;
         await sendMaxMessage(u.max_chat_id, `${title}${body ? '\n\n' + body : ''}`, fullLink);
       }
     }

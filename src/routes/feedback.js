@@ -77,7 +77,7 @@ router.post(
         'feedback.new',
         `📮 ${catLabel}: ${data.subject}`,
         `${row.user_name || 'Пользователь'} (${row.user_role || '—'}): ${data.message.slice(0, 200)}`,
-        '#/feedback',
+        `#/feedback?id=${row.id}`,
       );
     } catch (e) {
       // eslint-disable-next-line no-console
@@ -122,6 +122,30 @@ router.get(
       `SELECT COUNT(*)::int AS open_count FROM feedback WHERE status = 'open'`,
     );
     res.json({ ...paginated(rows, total, page, limit), open_count });
+  }),
+);
+
+// Получить одно обращение по id — нужен для глубоких ссылок из уведомлений.
+// Доступно админу (любое) и автору (своё). Включает messages и attachments.
+router.get(
+  '/by-id/:id',
+  asyncHandler(async (req, res) => {
+    const id = Number(req.params.id);
+    if (!id) throw BadRequest('id required');
+    const row = await db.get(
+      `SELECT f.*, u.name AS user_name, u.email AS user_email, u.role AS user_role,
+              r.name AS resolved_by_name
+       FROM feedback f
+       LEFT JOIN users u ON u.id = f.user_id
+       LEFT JOIN users r ON r.id = f.resolved_by
+       WHERE f.id = ?`,
+      id,
+    );
+    if (!row) throw NotFound('Обращение не найдено');
+    if (req.user.role !== 'admin' && row.user_id !== req.user.id) {
+      throw Forbidden('Доступ только админу или автору обращения');
+    }
+    res.json(row);
   }),
 );
 
@@ -206,7 +230,7 @@ router.post(
         'feedback.rejected',
         `📮 Обращение #${cur.id} возвращено в работу`,
         `${req.user.name || 'Пользователь'}: ${reason.slice(0, 200)}`,
-        '#/feedback',
+        `#/feedback?id=${cur.id}`,
       );
     } catch (e) {
       // eslint-disable-next-line no-console
@@ -256,7 +280,7 @@ router.patch(
           'feedback.awaiting_approval',
           `📮 Подтвердите выполнение: ${cur.subject}`,
           (data.admin_reply || cur.admin_reply || 'Админ отметил задачу как выполненную. Проверьте и подтвердите.').slice(0, 300),
-          '#/my-feedback',
+          `#/my-feedback?id=${cur.id}`,
         );
       } catch (e) {
         // eslint-disable-next-line no-console
@@ -330,14 +354,14 @@ router.post(
           'feedback.message',
           `💬 Вопрос по обращению: ${fb.subject}`,
           text.slice(0, 300),
-          '#/my-feedback',
+          `#/my-feedback?id=${fb.id}`,
         );
       } else if (role === 'author') {
         await notifyAdmins(
           'feedback.message',
           `💬 Ответ по обращению #${fb.id}: ${fb.subject}`,
           `${req.user.name || 'Автор'}: ${text.slice(0, 200)}`,
-          '#/feedback',
+          `#/feedback?id=${fb.id}`,
         );
       }
     } catch (e) {

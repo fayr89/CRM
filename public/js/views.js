@@ -3208,10 +3208,18 @@ export async function renderOrders(main, opts = {}) {
     tableArea,
   );
   reload();
+
+  // Глубокая ссылка из уведомления: «#/orders?id=123» — открываем детали заказа.
+  const initialId = Number(opts.params?.get('id'));
+  if (initialId) {
+    api.get('orders', initialId).then((full) => {
+      showOrderDetails(full, reload);
+    }).catch(() => { /* нет такого заказа — ничего страшного, список уже рендерится */ });
+  }
 }
 
-export function renderDirectOrders(main) {
-  return renderOrders(main, { directMode: true });
+export function renderDirectOrders(main, opts = {}) {
+  return renderOrders(main, { ...opts, directMode: true });
 }
 
 async function showOrderDetails(order, reload) {
@@ -4014,7 +4022,7 @@ export async function renderAcceptInvite(root, token, onAccepted) {
 // Универсальный список ресурса
 // ============================================================
 
-export async function renderResource(main, key) {
+export async function renderResource(main, key, opts = {}) {
   await loadLookups();
   const cfg = RESOURCES[key];
   if (!cfg) return main.append(el('div', {}, 'Неизвестный раздел'));
@@ -4214,6 +4222,14 @@ export async function renderResource(main, key) {
   );
 
   fetchAndRender();
+
+  // Глубокая ссылка из уведомления: «#/leads?id=42» — открываем форму конкретной записи.
+  const initialId = Number(opts.params?.get('id'));
+  if (initialId) {
+    api.get(key, initialId).then((row) => {
+      if (row) openEdit(row);
+    }).catch(() => { /* нет такой записи — список уже отрендерился */ });
+  }
 }
 
 // ============================================================
@@ -8539,7 +8555,7 @@ export async function openFeedbackDialog() {
   });
 }
 
-export async function renderFeedback(main) {
+export async function renderFeedback(main, opts = {}) {
   const me = JSON.parse(localStorage.getItem('crm_user') || '{}');
   if (me.role !== 'admin') {
     main.innerHTML = '';
@@ -8680,11 +8696,19 @@ export async function renderFeedback(main) {
     tableArea,
   );
   await reload();
+
+  // Глубокая ссылка из уведомления: «#/feedback?id=42» — открываем тред.
+  const initialId = Number(opts.params?.get('id'));
+  if (initialId) {
+    api.getFeedback(initialId).then((item) => {
+      if (item) openItem(item);
+    }).catch(() => {});
+  }
 }
 
 // Страница «Мои обращения» — для всех ролей. Показывает свои обращения и для
 // каждой записи в статусе «awaiting_approval» — карточку с «Принимаю / Не принимаю».
-export async function renderMyFeedback(main) {
+export async function renderMyFeedback(main, opts = {}) {
   const tableArea = el('div');
 
   function statusBadge(s) {
@@ -8855,6 +8879,14 @@ export async function renderMyFeedback(main) {
     tableArea,
   );
   await reload();
+
+  // Глубокая ссылка из уведомления: «#/my-feedback?id=42» — открываем тред.
+  const initialId = Number(opts.params?.get('id'));
+  if (initialId) {
+    api.getFeedback(initialId).then((item) => {
+      if (item) openDetail(item);
+    }).catch(() => {});
+  }
 }
 
 // Аудит-лог: кто и что делал. Только админ. Фильтры по типу сущности / префиксу действия

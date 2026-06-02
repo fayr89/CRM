@@ -677,15 +677,17 @@ window.addEventListener('keydown', (e) => {
   }
 });
 
+// Все route-handlers принимают (main, opts) — opts содержит { params: URLSearchParams }
+// для глубоких ссылок (например, #/orders?id=123 откроет конкретный заказ).
 const ROUTES = {
   '#/dashboard': renderDashboard,
   '#/pipeline': renderPipeline,
-  '#/companies': (m) => renderResource(m, 'companies'),
-  '#/contacts': (m) => renderResource(m, 'contacts'),
-  '#/leads': (m) => renderResource(m, 'leads'),
-  '#/deals': (m) => renderResource(m, 'deals'),
-  '#/activities': (m) => renderResource(m, 'activities'),
-  '#/users': (m) => renderResource(m, 'users'),
+  '#/companies': (m, opts) => renderResource(m, 'companies', opts),
+  '#/contacts': (m, opts) => renderResource(m, 'contacts', opts),
+  '#/leads': (m, opts) => renderResource(m, 'leads', opts),
+  '#/deals': (m, opts) => renderResource(m, 'deals', opts),
+  '#/activities': (m, opts) => renderResource(m, 'activities', opts),
+  '#/users': (m, opts) => renderResource(m, 'users', opts),
   '#/invitations': renderInvitations,
   '#/orders': renderOrders,
   '#/direct-orders': renderDirectOrders,
@@ -732,7 +734,9 @@ function renderApp() {
   }
   const main = renderShell();
   const handler = ROUTES[path] || ROUTES['#/dashboard'];
-  handler(main);
+  // Передаём query-параметры из hash в роут-handler — нужно, чтобы из уведомления
+  // («#/orders?id=123») сразу открылся detail-диалог сущности.
+  handler(main, { params });
 }
 
 window.addEventListener('hashchange', renderApp);
