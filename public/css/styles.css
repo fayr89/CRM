@@ -33,12 +33,14 @@ a:hover { text-decoration: underline; }
 }
 
 /* ----- Layout ----- */
-.shell { display: flex; height: 100vh; }
+/* 100dvh (dynamic viewport height) — на iOS Safari учитывает скрывающийся URL-бар,
+   100vh — фолбэк для старых браузеров. */
+.shell { display: flex; height: 100vh; height: 100dvh; }
 .sidebar {
   width: 220px; background: #111827; color: #d1d5db;
   display: flex; flex-direction: column;
   padding: 16px 0;
-  height: 100vh;
+  height: 100vh; height: 100dvh;
 }
 /* Скроллится ТОЛЬКО nav, user-блок прибит к низу. */
 .sidebar-brand, .sidebar-search, .sidebar-bell { flex-shrink: 0; }
@@ -296,7 +298,9 @@ table.data tbody tr:last-child td { border-bottom: none; }
 /* ----- Login ----- */
 .login-page {
   display: flex; align-items: center; justify-content: center;
-  min-height: 100vh; padding: 20px;
+  min-height: 100vh; min-height: 100dvh;
+  padding: max(20px, env(safe-area-inset-top)) max(20px, env(safe-area-inset-right))
+          max(20px, env(safe-area-inset-bottom)) max(20px, env(safe-area-inset-left));
 }
 .login-box {
   background: var(--surface); padding: 32px;
@@ -952,10 +956,10 @@ table.data tbody tr:last-child td { border-bottom: none; }
 /* ===== МОБИЛЬНЫЙ АДАПТИВНЫЙ ДИЗАЙН ===== */
 @media (max-width: 768px) {
   /* Бургер-меню: sidebar выезжает слева, по умолчанию скрыт */
-  .shell { flex-direction: row; height: 100vh; }
+  .shell { flex-direction: row; height: 100vh; height: 100dvh; }
   .sidebar {
     position: fixed; top: 0; left: 0; bottom: 0; z-index: 200;
-    width: 260px; max-width: 80vw; height: 100vh;
+    width: 260px; max-width: 80vw; height: 100vh; height: 100dvh;
     transform: translateX(-100%); transition: transform 0.25s ease;
     overflow-y: auto;
   }
@@ -976,7 +980,7 @@ table.data tbody tr:last-child td { border-bottom: none; }
   }
 
   /* Main content */
-  .main { width: 100%; height: 100vh; overflow-y: auto; flex: 1; padding: 16px 12px 12px; }
+  .main { width: 100%; height: 100vh; height: 100dvh; overflow-y: auto; flex: 1; padding: 16px 12px 12px; }
   .page-header { gap: 8px; margin-bottom: 12px; padding-left: 52px; min-height: 44px; }
   .page-title { font-size: 18px; margin-bottom: 4px; }
 
@@ -1184,4 +1188,74 @@ table.data tbody tr:last-child td { border-bottom: none; }
 .notice-error   { background: #fee2e2; color: #991b1b; }
 @media (max-width: 768px) {
   .notice-banner { padding: 8px 10px; font-size: 13px; }
+}
+
+/* ===== PWA / iOS standalone (добавлен на iPhone home screen) ===== */
+
+/* Корневой контейнер шкуры обязательно растягиваем — в PWA на iOS высота
+   100vh без safe-area отрезает контент под home-индикатором. */
+html { height: -webkit-fill-available; }
+body { min-height: 100vh; min-height: -webkit-fill-available; }
+
+/* Запретить горизонтальный качок страницы (rubber-band) — в standalone
+   режиме это выглядит как баг. Контент сам управляет скроллом. */
+html, body { overscroll-behavior-x: none; }
+
+/* iOS standalone: ставится телом класс через JS, под него подстраиваем верх/низ. */
+@supports (padding: env(safe-area-inset-top)) {
+  /* Sidebar (бургер) на мобиле уже fixed — поднимаем над home-индикатором. */
+  .sidebar {
+    padding-top: max(16px, env(safe-area-inset-top));
+    padding-bottom: max(0px, env(safe-area-inset-bottom));
+  }
+
+  /* Кнопка-бургер не должна попадать под Dynamic Island/нотч. */
+  .mobile-menu-btn {
+    top: max(10px, env(safe-area-inset-top));
+    left: max(10px, env(safe-area-inset-left));
+  }
+
+  /* Главный контейнер на мобиле получает безопасный отступ сверху/снизу. */
+  @media (max-width: 768px) {
+    .main {
+      padding-top: max(16px, calc(env(safe-area-inset-top) + 8px));
+      padding-bottom: max(12px, calc(env(safe-area-inset-bottom) + 12px));
+      padding-left: max(12px, env(safe-area-inset-left));
+      padding-right: max(12px, env(safe-area-inset-right));
+    }
+    /* Заголовок страницы выезжал под нотч — поднимаем. */
+    .page-header { padding-top: env(safe-area-inset-top); }
+
+    /* Sticky-шапка/футер модалки — учитываем safe-area, чтобы текст
+       не уходил под нотч, а submit-кнопка — под home-индикатор. */
+    .modal-header { padding-top: max(12px, env(safe-area-inset-top)); }
+    .modal-footer { padding-bottom: max(10px, env(safe-area-inset-bottom)); }
+  }
+}
+
+/* Лучше тач-feedback: убираем синюю «вспышку» на тапе и серый highlight. */
+* { -webkit-tap-highlight-color: transparent; }
+button, .btn, a { touch-action: manipulation; }
+
+/* Инпуты: 16px шрифт = iOS не зумит при фокусе. Уже стоит в @media,
+   но дублируем глобально, чтобы и десктопные формы на мобиле не дёргались. */
+@media (max-width: 768px) {
+  input[type="text"], input[type="email"], input[type="tel"],
+  input[type="number"], input[type="password"], input[type="search"],
+  input[type="url"], select, textarea { font-size: 16px; }
+}
+
+/* Standalone-режим (открыто с домашнего экрана): нативный фидбэк на тапы. */
+@media (display-mode: standalone) {
+  button:active, .btn:active, .popular-card:active, .product-card:active {
+    transform: scale(0.97);
+    transition: transform 0.05s ease;
+  }
+  /* Скрываем хинты типа «нажмите ⌘+K» — на мобиле клавиатуры нет. */
+  .desktop-hint { display: none; }
+}
+
+/* Скролл на iOS: momentum + скрытые «полосы». */
+.main, .modal-body, .table-wrap, .popular-strip, .sidebar-nav {
+  -webkit-overflow-scrolling: touch;
 }
