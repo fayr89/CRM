@@ -381,6 +381,19 @@ function renderShell() {
     sidebar.classList.remove('open');
     overlay.classList.remove('open');
   };
+  // Кнопка-бургер + рядом маленький индикатор «кто залогинен» — чтобы на мобиле
+  // (особенно в PWA, у которого свой изолированный localStorage от Safari) сразу
+  // было видно, под какой ролью открыто приложение. Без этого админ мог не знать,
+  // что в PWA он на самом деле вошёл как менеджер из прошлой сессии.
+  const userBadge = el(
+    'div',
+    {
+      class: 'mobile-user-badge',
+      title: `${user.name} · ${user.email} · ${tr('role', user.role) || user.role}`,
+    },
+    el('span', { class: 'mobile-user-badge-name' }, user.name || '?'),
+    el('span', { class: 'mobile-user-badge-role' }, tr('role', user.role) || user.role),
+  );
   const menuBtn = el(
     'button',
     {
@@ -420,7 +433,7 @@ function renderShell() {
   // показываем, потом 3 дня молчим (или навсегда, если юзер ткнул «×»/установил).
   loadIosInstallBanner(noticeBar);
 
-  root.append(el('div', { class: 'shell' }, sidebar, overlay, main), menuBtn);
+  root.append(el('div', { class: 'shell' }, sidebar, overlay, main), menuBtn, userBadge);
 
   startNotificationsPolling(bellCounter);
   if (user.role === 'admin') {

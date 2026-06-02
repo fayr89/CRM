@@ -1309,3 +1309,29 @@ button, .btn, a { touch-action: manipulation; }
 @media (max-width: 480px) {
   .sw-update-banner { font-size: 13px; padding: 8px 12px; gap: 8px; }
 }
+
+/* === Мобильный значок «кто залогинен» — справа сверху, всегда видимый === */
+/* Чтобы в PWA админ сразу видел: «я как admin» или «я как manager X».
+   На десктопе скрыт (там сайдбар всегда виден). */
+.mobile-user-badge { display: none; }
+@media (max-width: 768px) {
+  .mobile-user-badge {
+    display: flex; flex-direction: column;
+    position: fixed;
+    top: max(10px, env(safe-area-inset-top));
+    right: max(10px, env(safe-area-inset-right));
+    z-index: 150;
+    background: rgba(17, 24, 39, 0.92); color: #fff;
+    padding: 6px 12px; border-radius: 8px;
+    font-size: 11px; line-height: 1.2;
+    max-width: 50vw; text-align: right;
+    box-shadow: var(--shadow);
+    pointer-events: none; /* не перехватывает клики */
+  }
+  .mobile-user-badge-name {
+    font-weight: 600; font-size: 12px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    max-width: 40vw;
+  }
+  .mobile-user-badge-role { color: #fbbf24; font-size: 10px; }
+}
