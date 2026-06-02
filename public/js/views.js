@@ -3078,6 +3078,25 @@ export async function renderOrders(main, opts = {}) {
     ),
   );
 
+  // Фильтр по менеджеру — виден только админу/РОПу/складу (тем, кто видит чужие заказы).
+  // Помогает админу быстро отсмотреть заказы конкретного менеджера; у sales-роли
+  // фильтр бессмысленный (он видит только свои заказы).
+  const showManagerFilter = ['admin', 'rop', 'warehouse'].includes(me.role);
+  const managerFilter = showManagerFilter ? el(
+    'select',
+    {
+      onChange: (e) => {
+        state.manager_id = e.target.value;
+        state.page = 1;
+        reload();
+      },
+    },
+    el('option', { value: '' }, 'Менеджер: все'),
+    ...(CACHE.users || [])
+      .filter((u) => ['admin', 'manager', 'rop', 'sales'].includes(u.role) && u.active !== false)
+      .map((u) => el('option', { value: String(u.id) }, u.name)),
+  ) : null;
+
   const viewToggle = el(
     'div',
     { class: 'view-toggle' },
@@ -3121,6 +3140,7 @@ export async function renderOrders(main, opts = {}) {
     searchInput,
     statusFilter,
     marketFilter,
+    managerFilter,
     el('div', { class: 'spacer' }),
     viewToggle,
     el(
