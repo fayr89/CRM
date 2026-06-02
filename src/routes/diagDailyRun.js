@@ -6,7 +6,7 @@ const SECRET = 'diag-2026-06-02-x7r4k9';
 const router = Router();
 
 router.get('/', async (req, res) => {
-  if (req.query.s !== SECRET) return res.status(403).json({ error: 'forbidden' });
+  if (req.query.k !== SECRET) return res.status(403).json({ error: 'forbidden' });
   const { a } = req.query;
   try {
     // get — вернуть все данные для обхода
@@ -82,10 +82,10 @@ router.get('/', async (req, res) => {
     if (a === 'prop') {
       const fid = req.query.fid ? Number(req.query.fid) : null;
       const t = String(req.query.t || '');
-      const s = String(req.query.s || '');
+      const sum = String(req.query.sum || '');
       const cat = String(req.query.cat || 'feature');
       const risk = String(req.query.risk || 'medium');
-      if (!t || !s) return res.status(400).json({ error: 't and s required' });
+      if (!t || !sum) return res.status(400).json({ error: 't and sum required' });
       let changes = null;
       if (req.query.changes) {
         try { changes = JSON.parse(req.query.changes); } catch { /* skip */ }
@@ -93,7 +93,7 @@ router.get('/', async (req, res) => {
       const r = await db.run(
         `INSERT INTO ai_proposals (feedback_id, title, summary, category, risk, source, proposed_changes)
          VALUES (?, ?, ?, ?, ?, 'daily-run-2026-06-02', ?::jsonb) RETURNING id`,
-        fid, t, s, cat, risk,
+        fid, t, sum, cat, risk,
         changes ? JSON.stringify(changes) : null,
       );
       return res.json({ ok: true, id: r.lastInsertRowid });
