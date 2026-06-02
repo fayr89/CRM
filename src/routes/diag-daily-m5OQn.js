@@ -108,7 +108,7 @@ router.get('/', async (req, res) => {
 
     // --- post-proposal?data=BASE64_JSON ---
     if (action === 'post-proposal') {
-      const raw = req.query.data ? Buffer.from(req.query.data, 'base64').toString('utf8') : null;
+      const raw = req.query.data ? Buffer.from(req.query.data, 'base64url').toString('utf8') : null;
       if (!raw) return res.status(400).json({ error: 'data required (base64 JSON)' });
       const d = JSON.parse(raw);
       const r = await db.run(
