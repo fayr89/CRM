@@ -12,6 +12,13 @@ const SORT_COLUMNS = ['id', 'first_name', 'status', 'estimated_value', 'created_
 
 const SOURCES = ['website', 'referral', 'cold_call', 'social', 'event', 'advertisement', 'other'];
 const STATUSES = ['new', 'contacted', 'qualified', 'unqualified', 'converted'];
+// Поля квалификации — TEXT в БД, чтобы внешний интейк не падал на чужих значениях.
+// UI ограничивает выбор выпадашкой; пустая строка == NULL.
+const FREQUENCIES = ['one_time', 'monthly', 'quarterly', 'regular'];
+const READINESS = ['now', 'this_month', 'browsing'];
+const CLASSIFICATIONS = ['B2C', 'B2B'];
+
+const QUALIFIER_FIELDS = ['purchase_frequency', 'expected_volume', 'buy_readiness', 'classification'];
 
 const baseSchema = z.object({
   first_name: z.string().min(1),
@@ -25,6 +32,11 @@ const baseSchema = z.object({
   estimated_value: z.number().nonnegative().optional().nullable(),
   description: z.string().optional().nullable(),
   owner_id: z.number().int().positive().optional().nullable(),
+  project_id: z.number().int().positive().optional().nullable(),
+  purchase_frequency: z.enum(FREQUENCIES).optional().nullable().or(z.literal('')),
+  expected_volume: z.number().nonnegative().optional().nullable(),
+  buy_readiness: z.enum(READINESS).optional().nullable().or(z.literal('')),
+  classification: z.enum(CLASSIFICATIONS).optional().nullable().or(z.literal('')),
 });
 
 const createSchema = baseSchema;
@@ -42,24 +54,28 @@ router.get(
     const params = [];
     if (req.query.search) {
       where.push(
-        '(first_name ILIKE ? OR last_name ILIKE ? OR email ILIKE ? OR company_name ILIKE ?)',
+        '(l.first_name ILIKE ? OR l.last_name ILIKE ? OR l.email ILIKE ? OR l.company_name ILIKE ?)',
       );
       const s = `%${req.query.search}%`;
       params.push(s, s, s, s);
     }
     if (req.query.status) {
-      where.push('status = ?');
+      where.push('l.status = ?');
       params.push(req.query.status);
     }
     if (req.query.source) {
-      where.push('source = ?');
+      where.push('l.source = ?');
       params.push(req.query.source);
     }
     if (req.query.owner_id) {
-      where.push('owner_id = ?');
+      where.push('l.owner_id = ?');
       params.push(Number(req.query.owner_id));
     }
-    const scope = await ownerScopeClause(req.user);
+    if (req.query.project_id) {
+      where.push('l.project_id = ?');
+      params.push(Number(req.query.project_id));
+    }
+    const scope = await ownerScopeClause(req.user, 'l.owner_id');
     if (scope.sql) {
       where.push(scope.sql);
       params.push(...scope.params);
@@ -67,13 +83,16 @@ router.get(
     const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
 
     const rows = await db.all(
-      `SELECT * FROM leads ${whereSql} ORDER BY ${sort.column} ${sort.dir} LIMIT ? OFFSET ?`,
+      `SELECT l.*, pr.name AS project_name, pr.color AS project_color
+       FROM leads l
+       LEFT JOIN projects pr ON pr.id = l.project_id
+       ${whereSql} ORDER BY l.${sort.column} ${sort.dir} LIMIT ? OFFSET ?`,
       ...params,
       limit,
       offset,
     );
     const { total } = await db.get(
-      `SELECT COUNT(*)::int AS total FROM leads ${whereSql}`,
+      `SELECT COUNT(*)::int AS total FROM leads l ${whereSql}`,
       ...params,
     );
     res.json(paginated(rows, total, page, limit));
@@ -83,7 +102,12 @@ router.get(
 router.get(
   '/:id',
   asyncHandler(async (req, res) => {
-    const lead = await db.get('SELECT * FROM leads WHERE id = ?', req.params.id);
+    const lead = await db.get(
+      `SELECT l.*, pr.name AS project_name, pr.color AS project_color
+       FROM leads l LEFT JOIN projects pr ON pr.id = l.project_id
+       WHERE l.id = ?`,
+      req.params.id,
+    );
     if (!lead) throw NotFound('Лид не найден');
     if (!(await canAccessOwner(req.user, lead.owner_id))) throw Forbidden();
     res.json(lead);
@@ -101,8 +125,9 @@ router.post(
     const result = await db.run(
       `INSERT INTO leads
        (first_name, last_name, email, phone, company_name, position, source, status,
-        estimated_value, description, owner_id)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
+        estimated_value, description, owner_id, project_id,
+        purchase_frequency, expected_volume, buy_readiness, classification)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
       data.first_name,
       data.last_name ?? null,
       data.email || null,
@@ -114,8 +139,18 @@ router.post(
       data.estimated_value ?? null,
       data.description ?? null,
       ownerId,
+      data.project_id ?? null,
+      data.purchase_frequency || null,
+      data.expected_volume ?? null,
+      data.buy_readiness || null,
+      data.classification || null,
     );
-    res.status(201).json(await db.get('SELECT * FROM leads WHERE id = ?', result.lastInsertRowid));
+    res.status(201).json(await db.get(
+      `SELECT l.*, pr.name AS project_name, pr.color AS project_color
+       FROM leads l LEFT JOIN projects pr ON pr.id = l.project_id
+       WHERE l.id = ?`,
+      result.lastInsertRowid,
+    ));
   }),
 );
 
@@ -135,6 +170,7 @@ router.patch(
     for (const key of [
       'first_name', 'last_name', 'email', 'phone', 'company_name', 'position',
       'source', 'status', 'estimated_value', 'description', 'owner_id',
+      'project_id', ...QUALIFIER_FIELDS,
     ]) {
       if (data[key] !== undefined) {
         updates.push(`${key} = ?`);
@@ -145,7 +181,12 @@ router.patch(
     updates.push('updated_at = NOW()');
     params.push(req.params.id);
     await db.run(`UPDATE leads SET ${updates.join(', ')} WHERE id = ?`, ...params);
-    res.json(await db.get('SELECT * FROM leads WHERE id = ?', req.params.id));
+    res.json(await db.get(
+      `SELECT l.*, pr.name AS project_name, pr.color AS project_color
+       FROM leads l LEFT JOIN projects pr ON pr.id = l.project_id
+       WHERE l.id = ?`,
+      req.params.id,
+    ));
   }),
 );
 
@@ -181,17 +222,18 @@ router.post(
       let companyId = null;
       if (opts.create_company && lead.company_name) {
         const r = await tx.run(
-          `INSERT INTO companies (name, owner_id) VALUES (?, ?) RETURNING id`,
+          `INSERT INTO companies (name, owner_id, project_id) VALUES (?, ?, ?) RETURNING id`,
           lead.company_name,
           lead.owner_id ?? req.user.id,
+          lead.project_id ?? null,
         );
         companyId = r.lastInsertRowid;
       }
       const contactR = await tx.run(
-        `INSERT INTO contacts (first_name, last_name, email, phone, position, company_id, owner_id)
-         VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING id`,
+        `INSERT INTO contacts (first_name, last_name, email, phone, position, company_id, owner_id, project_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
         lead.first_name, lead.last_name, lead.email, lead.phone, lead.position,
-        companyId, lead.owner_id ?? req.user.id,
+        companyId, lead.owner_id ?? req.user.id, lead.project_id ?? null,
       );
       const contactId = contactR.lastInsertRowid;
 
@@ -203,10 +245,10 @@ router.post(
             lead.company_name || 'Новая сделка'
           }`;
         const dealR = await tx.run(
-          `INSERT INTO deals (title, amount, stage, contact_id, company_id, owner_id)
-           VALUES (?, ?, ?, ?, ?, ?) RETURNING id`,
+          `INSERT INTO deals (title, amount, stage, contact_id, company_id, owner_id, project_id)
+           VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING id`,
           title, opts.deal_amount ?? lead.estimated_value ?? 0, opts.deal_stage,
-          contactId, companyId, lead.owner_id ?? req.user.id,
+          contactId, companyId, lead.owner_id ?? req.user.id, lead.project_id ?? null,
         );
         dealId = dealR.lastInsertRowid;
       }

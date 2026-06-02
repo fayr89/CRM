@@ -196,6 +196,12 @@ export const api = {
   notificationTypes: () => request('GET', '/api/notification-prefs/types'),
   myNotificationPrefs: () => request('GET', '/api/notification-prefs/me'),
   updateNotificationPrefs: (prefs) => request('PATCH', '/api/notification-prefs/me', { body: { prefs } }),
+
+  // Проекты (справочник для классификации лидов/сделок/контактов/компаний).
+  projectsList: (onlyActive = false) => request('GET', '/api/projects', { query: onlyActive ? { active: 'true' } : {} }),
+  projectCreate: (body) => request('POST', '/api/projects', { body }),
+  projectUpdate: (id, body) => request('PATCH', `/api/projects/${id}`, { body }),
+  projectDelete: (id) => request('DELETE', `/api/projects/${id}`),
   search: (q) => request('GET', '/api/search', { query: { q } }),
 
   apiTokens: () => request('GET', '/api/api-tokens'),

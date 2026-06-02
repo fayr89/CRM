@@ -23,6 +23,7 @@ const baseSchema = z.object({
   company_id: z.number().int().positive().optional().nullable(),
   owner_id: z.number().int().positive().optional().nullable(),
   description: z.string().optional().nullable(),
+  project_id: z.number().int().positive().optional().nullable(),
 });
 
 const createSchema = baseSchema;
@@ -66,6 +67,10 @@ router.get(
       where.push('d.contact_id = ?');
       params.push(Number(req.query.contact_id));
     }
+    if (req.query.project_id) {
+      where.push('d.project_id = ?');
+      params.push(Number(req.query.project_id));
+    }
     const scope = await ownerScopeClause(req.user, 'd.owner_id');
     if (scope.sql) {
       where.push(scope.sql);
@@ -75,10 +80,12 @@ router.get(
 
     const rows = await db.all(
       `SELECT d.*, comp.name AS company_name,
-              (c.first_name || COALESCE(' ' || c.last_name, '')) AS contact_name
+              (c.first_name || COALESCE(' ' || c.last_name, '')) AS contact_name,
+              pr.name AS project_name, pr.color AS project_color
        FROM deals d
        LEFT JOIN companies comp ON comp.id = d.company_id
        LEFT JOIN contacts c ON c.id = d.contact_id
+       LEFT JOIN projects pr ON pr.id = d.project_id
        ${whereSql} ORDER BY d.${sort.column} ${sort.dir} LIMIT ? OFFSET ?`,
       ...params, limit, offset,
     );
@@ -98,6 +105,10 @@ router.get(
     if (req.query.owner_id) {
       where.push('owner_id = ?');
       params.push(Number(req.query.owner_id));
+    }
+    if (req.query.project_id) {
+      where.push('project_id = ?');
+      params.push(Number(req.query.project_id));
     }
     const scope = await ownerScopeClause(req.user);
     if (scope.sql) {
@@ -134,10 +145,12 @@ router.get(
   asyncHandler(async (req, res) => {
     const deal = await db.get(
       `SELECT d.*, comp.name AS company_name,
-              (c.first_name || COALESCE(' ' || c.last_name, '')) AS contact_name
+              (c.first_name || COALESCE(' ' || c.last_name, '')) AS contact_name,
+              pr.name AS project_name, pr.color AS project_color
        FROM deals d
        LEFT JOIN companies comp ON comp.id = d.company_id
        LEFT JOIN contacts c ON c.id = d.contact_id
+       LEFT JOIN projects pr ON pr.id = d.project_id
        WHERE d.id = ?`,
       req.params.id,
     );
@@ -159,11 +172,11 @@ router.post(
     const result = await db.run(
       `INSERT INTO deals
        (title, amount, currency, stage, probability, expected_close_date,
-        contact_id, company_id, owner_id, description)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
+        contact_id, company_id, owner_id, description, project_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
       data.title, data.amount ?? 0, data.currency ?? 'RUB', data.stage, probability,
       data.expected_close_date ?? null, data.contact_id ?? null, data.company_id ?? null,
-      ownerId, data.description ?? null,
+      ownerId, data.description ?? null, data.project_id ?? null,
     );
     res.status(201).json(await db.get('SELECT * FROM deals WHERE id = ?', result.lastInsertRowid));
   }),
@@ -184,7 +197,7 @@ router.patch(
     const params = [];
     for (const key of [
       'title', 'amount', 'currency', 'stage', 'probability', 'expected_close_date',
-      'contact_id', 'company_id', 'owner_id', 'description',
+      'contact_id', 'company_id', 'owner_id', 'description', 'project_id',
     ]) {
       if (data[key] !== undefined) {
         updates.push(`${key} = ?`);

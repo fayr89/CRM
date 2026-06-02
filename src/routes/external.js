@@ -45,6 +45,13 @@ const leadSchema = z.object({
   source: z.string().optional().nullable(),
   description: z.string().optional().nullable(),
   estimated_value: z.number().nonnegative().optional().nullable(),
+  // Доп. поля: проект (по id или имени), квалификация — всё опционально.
+  project_id: z.number().int().positive().optional().nullable(),
+  project: z.string().optional().nullable(), // если задано — ищем по имени
+  purchase_frequency: z.string().optional().nullable(),
+  expected_volume: z.number().nonnegative().optional().nullable(),
+  buy_readiness: z.string().optional().nullable(),
+  classification: z.string().optional().nullable(),
 });
 
 router.post(
@@ -53,11 +60,21 @@ router.post(
   asyncHandler(async (req, res) => {
     const data = leadSchema.parse(req.body);
     const source = SOURCE_MAP[String(data.source || '').toLowerCase()] || 'other';
+    // Резолвинг проекта: предпочитаем явный project_id, иначе ищем по имени (case-insensitive).
+    let projectId = data.project_id ?? null;
+    if (!projectId && data.project) {
+      const p = await db.get(
+        'SELECT id FROM projects WHERE LOWER(name) = LOWER(?) AND active = TRUE',
+        data.project,
+      );
+      projectId = p?.id ?? null;
+    }
     const r = await db.run(
       `INSERT INTO leads
        (first_name, last_name, email, phone, company_name, position,
-        source, description, estimated_value, status)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'new') RETURNING id`,
+        source, description, estimated_value, status, project_id,
+        purchase_frequency, expected_volume, buy_readiness, classification)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'new', ?, ?, ?, ?, ?) RETURNING id`,
       data.first_name,
       data.last_name ?? null,
       data.email ?? null,
@@ -67,6 +84,11 @@ router.post(
       source,
       data.description ?? null,
       data.estimated_value ?? null,
+      projectId,
+      data.purchase_frequency ?? null,
+      data.expected_volume ?? null,
+      data.buy_readiness ?? null,
+      data.classification ?? null,
     );
     const lead = await db.get('SELECT * FROM leads WHERE id = ?', r.lastInsertRowid);
     await notifyAdminsAndManagers(

@@ -19,6 +19,7 @@ const baseSchema = z.object({
   company_id: z.number().int().positive().optional().nullable(),
   owner_id: z.number().int().positive().optional().nullable(),
   notes: z.string().optional().nullable(),
+  project_id: z.number().int().positive().optional().nullable(),
 });
 
 const createSchema = baseSchema;
@@ -49,6 +50,10 @@ router.get(
       where.push('c.owner_id = ?');
       params.push(Number(req.query.owner_id));
     }
+    if (req.query.project_id) {
+      where.push('c.project_id = ?');
+      params.push(Number(req.query.project_id));
+    }
     const scope = await ownerScopeClause(req.user, 'c.owner_id');
     if (scope.sql) {
       where.push(scope.sql);
@@ -57,9 +62,11 @@ router.get(
     const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
 
     const rows = await db.all(
-      `SELECT c.*, comp.name AS company_name
+      `SELECT c.*, comp.name AS company_name,
+              pr.name AS project_name, pr.color AS project_color
        FROM contacts c
        LEFT JOIN companies comp ON comp.id = c.company_id
+       LEFT JOIN projects pr ON pr.id = c.project_id
        ${whereSql} ORDER BY c.${sort.column} ${sort.dir} LIMIT ? OFFSET ?`,
       ...params,
       limit,
@@ -77,9 +84,11 @@ router.get(
   '/:id',
   asyncHandler(async (req, res) => {
     const contact = await db.get(
-      `SELECT c.*, comp.name AS company_name
+      `SELECT c.*, comp.name AS company_name,
+              pr.name AS project_name, pr.color AS project_color
        FROM contacts c
        LEFT JOIN companies comp ON comp.id = c.company_id
+       LEFT JOIN projects pr ON pr.id = c.project_id
        WHERE c.id = ?`,
       req.params.id,
     );
@@ -99,8 +108,8 @@ router.post(
     }
     const result = await db.run(
       `INSERT INTO contacts
-       (first_name, last_name, email, phone, position, company_id, owner_id, notes)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
+       (first_name, last_name, email, phone, position, company_id, owner_id, notes, project_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
       data.first_name,
       data.last_name ?? null,
       data.email || null,
@@ -109,6 +118,7 @@ router.post(
       data.company_id ?? null,
       ownerId,
       data.notes ?? null,
+      data.project_id ?? null,
     );
     const created = await db.get('SELECT * FROM contacts WHERE id = ?', result.lastInsertRowid);
     res.status(201).json(created);
@@ -130,7 +140,7 @@ router.patch(
     const params = [];
     for (const key of [
       'first_name', 'last_name', 'email', 'phone', 'position',
-      'company_id', 'owner_id', 'notes',
+      'company_id', 'owner_id', 'notes', 'project_id',
     ]) {
       if (data[key] !== undefined) {
         updates.push(`${key} = ?`);

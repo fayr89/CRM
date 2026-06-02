@@ -21,6 +21,7 @@ const baseSchema = z.object({
   annual_revenue: z.number().nonnegative().optional().nullable(),
   description: z.string().optional().nullable(),
   owner_id: z.number().int().positive().optional().nullable(),
+  project_id: z.number().int().positive().optional().nullable(),
 });
 
 const createSchema = baseSchema;
@@ -37,23 +38,27 @@ router.get(
     const where = [];
     const params = [];
     if (req.query.search) {
-      where.push('(name ILIKE ? OR email ILIKE ? OR website ILIKE ?)');
+      where.push('(comp.name ILIKE ? OR comp.email ILIKE ? OR comp.website ILIKE ?)');
       const s = `%${req.query.search}%`;
       params.push(s, s, s);
     }
     if (req.query.owner_id) {
-      where.push('owner_id = ?');
+      where.push('comp.owner_id = ?');
       params.push(Number(req.query.owner_id));
     }
     if (req.query.industry) {
-      where.push('industry = ?');
+      where.push('comp.industry = ?');
       params.push(req.query.industry);
     }
     if (req.query.size) {
-      where.push('size = ?');
+      where.push('comp.size = ?');
       params.push(req.query.size);
     }
-    const scope = await ownerScopeClause(req.user);
+    if (req.query.project_id) {
+      where.push('comp.project_id = ?');
+      params.push(Number(req.query.project_id));
+    }
+    const scope = await ownerScopeClause(req.user, 'comp.owner_id');
     if (scope.sql) {
       where.push(scope.sql);
       params.push(...scope.params);
@@ -61,13 +66,16 @@ router.get(
     const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
 
     const rows = await db.all(
-      `SELECT * FROM companies ${whereSql} ORDER BY ${sort.column} ${sort.dir} LIMIT ? OFFSET ?`,
+      `SELECT comp.*, pr.name AS project_name, pr.color AS project_color
+       FROM companies comp
+       LEFT JOIN projects pr ON pr.id = comp.project_id
+       ${whereSql} ORDER BY comp.${sort.column} ${sort.dir} LIMIT ? OFFSET ?`,
       ...params,
       limit,
       offset,
     );
     const { total } = await db.get(
-      `SELECT COUNT(*)::int AS total FROM companies ${whereSql}`,
+      `SELECT COUNT(*)::int AS total FROM companies comp ${whereSql}`,
       ...params,
     );
     res.json(paginated(rows, total, page, limit));
@@ -77,7 +85,12 @@ router.get(
 router.get(
   '/:id',
   asyncHandler(async (req, res) => {
-    const company = await db.get('SELECT * FROM companies WHERE id = ?', req.params.id);
+    const company = await db.get(
+      `SELECT comp.*, pr.name AS project_name, pr.color AS project_color
+       FROM companies comp LEFT JOIN projects pr ON pr.id = comp.project_id
+       WHERE comp.id = ?`,
+      req.params.id,
+    );
     if (!company) throw NotFound('Компания не найдена');
     if (!(await canAccessOwner(req.user, company.owner_id))) throw Forbidden();
     res.json(company);
@@ -122,8 +135,8 @@ router.post(
     }
     const result = await db.run(
       `INSERT INTO companies
-       (name, industry, website, phone, email, address, size, annual_revenue, description, owner_id)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
+       (name, industry, website, phone, email, address, size, annual_revenue, description, owner_id, project_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
       data.name,
       data.industry ?? null,
       data.website || null,
@@ -134,6 +147,7 @@ router.post(
       data.annual_revenue ?? null,
       data.description ?? null,
       ownerId,
+      data.project_id ?? null,
     );
     const created = await db.get('SELECT * FROM companies WHERE id = ?', result.lastInsertRowid);
     res.status(201).json(created);
@@ -155,7 +169,7 @@ router.patch(
     const params = [];
     for (const key of [
       'name', 'industry', 'website', 'phone', 'email', 'address',
-      'size', 'annual_revenue', 'description', 'owner_id',
+      'size', 'annual_revenue', 'description', 'owner_id', 'project_id',
     ]) {
       if (data[key] !== undefined) {
         updates.push(`${key} = ?`);

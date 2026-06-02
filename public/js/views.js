@@ -161,18 +161,20 @@ function helpButton(sectionKey) {
   );
 }
 
-let CACHE = { users: [], companies: [], contacts: [] };
+let CACHE = { users: [], companies: [], contacts: [], projects: [] };
 
 async function loadLookups() {
   try {
-    const [users, companies, contacts] = await Promise.all([
+    const [users, companies, contacts, projects] = await Promise.all([
       api.list('users', { limit: 200 }).catch(() => ({ data: [] })),
       api.list('companies', { limit: 200 }),
       api.list('contacts', { limit: 200 }),
+      api.projectsList(true).catch(() => ({ data: [] })),
     ]);
     CACHE.users = users.data || [];
     CACHE.companies = companies.data || [];
     CACHE.contacts = contacts.data || [];
+    CACHE.projects = projects.data || [];
   } catch (e) {
     console.warn('Не удалось загрузить справочники', e);
   }
@@ -189,6 +191,23 @@ function companyName(id) {
   return c ? c.name : `#${id}`;
 }
 
+function projectOptions() {
+  return [
+    { value: '', label: '— без проекта —' },
+    ...CACHE.projects.map((p) => ({ value: p.id, label: p.name })),
+  ];
+}
+
+// Рисует «стикер проекта» — цветной тег с именем. Если color/name нет — null.
+function projectSticker(row) {
+  if (!row.project_id || !row.project_name) return null;
+  return el('span', {
+    class: 'project-sticker',
+    style: { background: row.project_color || '#6366f1' },
+    title: 'Проект',
+  }, row.project_name);
+}
+
 // --- Опции для select из переводов ---
 const optsFromT = (category) => [
   { value: '', label: '—' },
@@ -203,7 +222,12 @@ const RESOURCES = {
     editLabel: 'Редактировать компанию',
     deleteLabel: 'Удалить компанию?',
     columns: [
-      { key: 'name', label: 'Название' },
+      { key: 'name', label: 'Название', render: (r) => {
+        const sticker = projectSticker(r);
+        return sticker
+          ? el('span', { style: { display: 'inline-flex', gap: '6px', alignItems: 'center' } }, r.name, sticker)
+          : r.name;
+      } },
       { key: 'industry', label: 'Отрасль' },
       { key: 'size', label: 'Размер', render: (r) => (r.size ? tr('size', r.size) : '—') },
       { key: 'annual_revenue', label: 'Выручка', render: (r) => fmtMoney(r.annual_revenue) },
@@ -213,9 +237,11 @@ const RESOURCES = {
     filters: [
       { key: 'size', type: 'select', options: optsFromT('size'), label: 'Размер' },
       { key: 'industry', type: 'text', label: 'Отрасль' },
+      { key: 'project_id', type: 'select', options: projectOptions, label: 'Проект', numeric: true },
     ],
     form: () => [
       { name: 'name', label: 'Название', required: true },
+      { name: 'project_id', label: 'Проект', type: 'select', numeric: true, options: projectOptions() },
       { name: 'industry', label: 'Отрасль' },
       { name: 'website', label: 'Сайт' },
       { name: 'email', label: 'Email' },
@@ -246,7 +272,13 @@ const RESOURCES = {
       {
         key: 'name',
         label: 'Имя',
-        render: (r) => `${r.first_name}${r.last_name ? ' ' + r.last_name : ''}`,
+        render: (r) => {
+          const name = `${r.first_name}${r.last_name ? ' ' + r.last_name : ''}`;
+          const sticker = projectSticker(r);
+          return sticker
+            ? el('span', { style: { display: 'inline-flex', gap: '6px', alignItems: 'center' } }, name, sticker)
+            : name;
+        },
       },
       { key: 'email', label: 'Email' },
       { key: 'phone', label: 'Телефон' },
@@ -254,9 +286,13 @@ const RESOURCES = {
       { key: 'company', label: 'Компания', render: (r) => r.company_name || companyName(r.company_id) },
       { key: 'owner', label: 'Ответственный', render: (r) => userName(r.owner_id) },
     ],
+    filters: [
+      { key: 'project_id', type: 'select', options: projectOptions, label: 'Проект', numeric: true },
+    ],
     form: () => [
       { name: 'first_name', label: 'Имя', required: true },
       { name: 'last_name', label: 'Фамилия' },
+      { name: 'project_id', label: 'Проект', type: 'select', numeric: true, options: projectOptions() },
       { name: 'email', label: 'Email', type: 'email' },
       { name: 'phone', label: 'Телефон' },
       { name: 'position', label: 'Должность' },
@@ -293,7 +329,13 @@ const RESOURCES = {
       {
         key: 'name',
         label: 'Имя',
-        render: (r) => `${r.first_name}${r.last_name ? ' ' + r.last_name : ''}`,
+        render: (r) => {
+          const name = `${r.first_name}${r.last_name ? ' ' + r.last_name : ''}`;
+          const sticker = projectSticker(r);
+          return sticker
+            ? el('span', { style: { display: 'inline-flex', gap: '6px', alignItems: 'center' } }, name, sticker)
+            : name;
+        },
       },
       { key: 'company_name', label: 'Компания' },
       { key: 'email', label: 'Email' },
@@ -305,10 +347,12 @@ const RESOURCES = {
     filters: [
       { key: 'status', type: 'select', options: optsFromT('status'), label: 'Статус' },
       { key: 'source', type: 'select', options: optsFromT('source'), label: 'Источник' },
+      { key: 'project_id', type: 'select', options: projectOptions, label: 'Проект', numeric: true },
     ],
     form: () => [
       { name: 'first_name', label: 'Имя', required: true },
       { name: 'last_name', label: 'Фамилия' },
+      { name: 'project_id', label: 'Проект', type: 'select', numeric: true, options: projectOptions() },
       { name: 'email', label: 'Email', type: 'email' },
       { name: 'phone', label: 'Телефон' },
       { name: 'company_name', label: 'Компания' },
@@ -321,6 +365,26 @@ const RESOURCES = {
         options: Object.entries(T.status).map(([v, l]) => ({ value: v, label: l })),
       },
       { name: 'estimated_value', label: 'Оценочная сумма', type: 'number' },
+      // --- Блок квалификации лида ---
+      { name: 'classification', label: 'B2B/B2C', type: 'select', options: [
+        { value: '', label: '— не указано —' },
+        { value: 'B2C', label: 'B2C (физлицо)' },
+        { value: 'B2B', label: 'B2B (компания)' },
+      ] },
+      { name: 'purchase_frequency', label: 'Частота закупок', type: 'select', options: [
+        { value: '', label: '— не указано —' },
+        { value: 'one_time', label: 'Разовый' },
+        { value: 'monthly', label: 'Раз в месяц' },
+        { value: 'quarterly', label: 'Раз в квартал' },
+        { value: 'regular', label: 'Регулярно' },
+      ] },
+      { name: 'expected_volume', label: 'Ожидаемый объём (₽/мес)', type: 'number' },
+      { name: 'buy_readiness', label: 'Готовность купить', type: 'select', options: [
+        { value: '', label: '— не указано —' },
+        { value: 'now', label: 'Прямо сейчас' },
+        { value: 'this_month', label: 'В течение месяца' },
+        { value: 'browsing', label: 'Присматривается' },
+      ] },
       {
         name: 'owner_id',
         label: 'Ответственный',
@@ -368,7 +432,12 @@ const RESOURCES = {
     editLabel: 'Редактировать сделку',
     deleteLabel: 'Удалить сделку?',
     columns: [
-      { key: 'title', label: 'Название' },
+      { key: 'title', label: 'Название', render: (r) => {
+        const sticker = projectSticker(r);
+        return sticker
+          ? el('span', { style: { display: 'inline-flex', gap: '6px', alignItems: 'center' } }, r.title, sticker)
+          : r.title;
+      } },
       { key: 'amount', label: 'Сумма', render: (r) => fmtMoney(r.amount, r.currency) },
       { key: 'stage', label: 'Стадия', render: (r) => badge(r.stage, 'stage') },
       { key: 'probability', label: 'Вер.', render: (r) => `${r.probability}%` },
@@ -380,9 +449,13 @@ const RESOURCES = {
       },
       { key: 'owner', label: 'Ответственный', render: (r) => userName(r.owner_id) },
     ],
-    filters: [{ key: 'stage', type: 'select', options: optsFromT('stage'), label: 'Стадия' }],
+    filters: [
+      { key: 'stage', type: 'select', options: optsFromT('stage'), label: 'Стадия' },
+      { key: 'project_id', type: 'select', options: projectOptions, label: 'Проект', numeric: true },
+    ],
     form: () => [
       { name: 'title', label: 'Название', required: true },
+      { name: 'project_id', label: 'Проект', type: 'select', numeric: true, options: projectOptions() },
       { name: 'amount', label: 'Сумма', type: 'number', default: 0 },
       { name: 'currency', label: 'Валюта', default: 'RUB' },
       {
@@ -4099,6 +4172,8 @@ export async function renderResource(main, key) {
   const toolbar = el('div', { class: 'toolbar' }, searchInput);
   for (const f of cfg.filters || []) {
     if (f.type === 'select') {
+      // options могут быть функцией (для динамических справочников типа проектов).
+      const opts = typeof f.options === 'function' ? f.options() : f.options;
       const sel = el(
         'select',
         {
@@ -4108,7 +4183,7 @@ export async function renderResource(main, key) {
             fetchAndRender();
           },
         },
-        ...f.options.map((o) => el('option', { value: o.value }, `${f.label}: ${o.label}`)),
+        ...opts.map((o) => el('option', { value: o.value }, `${f.label}: ${o.label}`)),
       );
       toolbar.append(sel);
     } else {
@@ -4498,46 +4573,57 @@ function renderBars(rows, labelKey, valueKey) {
 
 export async function renderPipeline(main) {
   await loadLookups();
+  // Состояние фильтров воронки — переживает перерисовку body.
+  const filters = { project_id: '' };
+  const projectFilter = el('select', {
+    onChange: (e) => { filters.project_id = e.target.value; renderPipelineBody(body, filters); },
+  },
+    ...projectOptions().map((o) => el('option', { value: o.value }, `Проект: ${o.label}`)),
+  );
   main.append(
     el(
       'div',
       { class: 'page-header' },
       el('h1', { class: 'page-title' }, 'Воронка продаж'),
-      el(
-        'button',
-        {
-          class: 'btn btn-primary',
-          onClick: async () => {
-            const cfg = RESOURCES.deals;
-            const { node, getValues } = buildForm(cfg.form(false), {});
-            await openModal('Новая сделка', node, {
-              primaryLabel: 'Создать',
-              size: 'lg',
-              onSubmit: async () => {
-                await api.create('deals', getValues());
-                toast('Создано', 'success');
-                renderPipelineBody(body);
-              },
-            });
+      el('div', { style: { display: 'flex', gap: '8px', alignItems: 'center' } },
+        projectFilter,
+        el(
+          'button',
+          {
+            class: 'btn btn-primary',
+            onClick: async () => {
+              const cfg = RESOURCES.deals;
+              const { node, getValues } = buildForm(cfg.form(false), {});
+              await openModal('Новая сделка', node, {
+                primaryLabel: 'Создать',
+                size: 'lg',
+                onSubmit: async () => {
+                  await api.create('deals', getValues());
+                  toast('Создано', 'success');
+                  renderPipelineBody(body, filters);
+                },
+              });
+            },
           },
-        },
-        'Новая сделка',
+          'Новая сделка',
+        ),
       ),
     ),
   );
   const body = el('div');
   main.append(body);
-  renderPipelineBody(body);
+  renderPipelineBody(body, filters);
 }
 
-async function renderPipelineBody(body) {
+async function renderPipelineBody(body, filters = {}) {
   clear(body);
   body.append(el('div', { class: 'loading' }, 'Загрузка…'));
 
   try {
+    const q = filters.project_id ? { project_id: filters.project_id } : {};
     const [pipeline, deals] = await Promise.all([
-      api.pipeline(),
-      api.list('deals', { limit: 200 }),
+      api.pipeline(q),
+      api.list('deals', { limit: 200, ...q }),
     ]);
     clear(body);
 
@@ -4550,7 +4636,7 @@ async function renderPipelineBody(body) {
     );
 
     const grid = el('div', { class: 'pipeline' });
-    const reload = () => renderPipelineBody(body);
+    const reload = () => renderPipelineBody(body, filters);
 
     for (const stage of pipeline.stages) {
       const stageDeals = (deals.data || []).filter((d) => d.stage === stage.stage);
@@ -4615,6 +4701,7 @@ async function renderPipelineBody(body) {
                 onClick: () => openDealEdit(d, reload),
               },
               el('div', { class: 'title' }, d.title),
+              projectSticker(d),
               el(
                 'div',
                 { class: 'meta' },
@@ -4686,6 +4773,7 @@ export async function renderIntegrations(main) {
   const msSyncArea = el('div', { class: 'integration-section' });
   const maxBotArea = el('div', { class: 'integration-section' });
   const bannersArea = el('div', { class: 'integration-section' });
+  const projectsArea = el('div', { class: 'integration-section' });
   const marketplacesArea = el('div', { class: 'integration-section' });
   const deliveryArea = el('div', { class: 'integration-section' });
   const cancelReasonsArea = el('div', { class: 'integration-section' });
@@ -4694,12 +4782,13 @@ export async function renderIntegrations(main) {
   const webhooksArea = el('div', { class: 'integration-section' });
   const docsArea = el('div', { class: 'integration-section' });
 
-  main.append(msTokenArea, msSyncArea, maxBotArea, bannersArea, marketplacesArea, deliveryArea, cancelReasonsArea, warehousesArea, tokensArea, webhooksArea, docsArea);
+  main.append(msTokenArea, msSyncArea, maxBotArea, bannersArea, projectsArea, marketplacesArea, deliveryArea, cancelReasonsArea, warehousesArea, tokensArea, webhooksArea, docsArea);
 
   await renderMoyskladTokenSection(msTokenArea);
   await renderMoyskladSyncSection(msSyncArea);
   await renderMaxBotSection(maxBotArea);
   await renderNoticeBannersSection(bannersArea);
+  await renderProjectsSection(projectsArea);
   await renderMarketplacesSection(marketplacesArea);
   await renderDeliveryMethodsSection(deliveryArea);
   await renderListSettingSection(cancelReasonsArea, {
@@ -9449,6 +9538,108 @@ async function renderNoticeBannersSection(area) {
             });
             toast('Баннер создан', 'success');
             textI.value = '';
+            reload();
+          } catch (e) { toast(e.message, 'error'); }
+        },
+      }, 'Создать'),
+    ),
+  );
+
+  reload();
+}
+
+// Проекты: справочник для группировки лидов/сделок/контактов/компаний.
+// Только админ видит этот блок. Список с цветными стикерами + форма ввода.
+async function renderProjectsSection(area) {
+  const me = JSON.parse(localStorage.getItem('crm_user') || '{}');
+  if (me.role !== 'admin') return;
+  area.append(
+    el('div', { class: 'section-header' }, el('h2', {}, '🏷️ Проекты')),
+    el('p', { class: 'help-banner' },
+      'Заведите проекты, по которым работаете (например: «Электростальский ассортимент», «B2B-канал», «Опт МСК»). ',
+      'На лиде/сделке/контакте/компании появится стикер, и в воронке можно будет фильтровать по проектам.',
+    ),
+  );
+
+  const listArea = el('div', { style: { marginTop: '10px' } });
+  area.append(listArea);
+
+  async function reload() {
+    clear(listArea);
+    listArea.append(el('div', { class: 'loading' }, 'Загрузка…'));
+    try {
+      const r = await api.projectsList(false);
+      // Обновляем глобальный кеш, чтобы стикеры/выпадашки сразу подхватили изменения.
+      CACHE.projects = (r.data || []).filter((p) => p.active);
+      renderList(r.data || []);
+    } catch (e) {
+      clear(listArea);
+      listArea.append(el('div', { class: 'error' }, e.message || 'Ошибка'));
+    }
+  }
+
+  function renderList(rows) {
+    clear(listArea);
+    if (!rows.length) {
+      listArea.append(el('p', { class: 'muted' }, 'Проектов пока нет. Создайте первый.'));
+      return;
+    }
+    for (const p of rows) {
+      const nameI = el('input', { type: 'text', value: p.name, style: { width: '220px' } });
+      const colorI = el('input', { type: 'color', value: p.color || '#6366f1', style: { width: '50px', padding: '0' } });
+      const activeI = el('input', { type: 'checkbox', checked: !!p.active });
+      const sticker = el('span', {
+        class: 'project-sticker',
+        style: { background: p.color || '#6366f1' },
+      }, p.name);
+      const card = el('div', { class: 'card', style: { marginBottom: '8px', display: 'flex', gap: '12px', alignItems: 'center', flexWrap: 'wrap' } },
+        sticker,
+        el('label', { style: { display: 'flex', gap: '6px', alignItems: 'center' } }, 'Имя:', nameI),
+        el('label', { style: { display: 'flex', gap: '6px', alignItems: 'center' } }, 'Цвет:', colorI),
+        el('label', { style: { display: 'flex', gap: '6px', alignItems: 'center' } }, activeI, 'Активен'),
+        el('button', {
+          class: 'btn btn-sm btn-primary',
+          onClick: async () => {
+            try {
+              await api.projectUpdate(p.id, {
+                name: nameI.value.trim(),
+                color: colorI.value,
+                active: activeI.checked,
+              });
+              toast('Сохранено', 'success');
+              reload();
+            } catch (e) { toast(e.message, 'error'); }
+          },
+        }, '💾 Сохранить'),
+        el('button', {
+          class: 'btn btn-sm btn-danger',
+          onClick: async () => {
+            if (!(await confirm(`Удалить проект «${p.name}»? Привязанные записи останутся без проекта.`))) return;
+            try { await api.projectDelete(p.id); toast('Удалён', 'success'); reload(); }
+            catch (e) { toast(e.message, 'error'); }
+          },
+        }, '🗑'),
+      );
+      listArea.append(card);
+    }
+  }
+
+  // Форма создания нового проекта.
+  const newNameI = el('input', { type: 'text', placeholder: 'Название проекта', style: { width: '220px' } });
+  const newColorI = el('input', { type: 'color', value: '#6366f1', style: { width: '50px', padding: '0' } });
+  area.append(
+    el('h3', { style: { marginTop: '16px', fontSize: '15px' } }, '➕ Новый проект'),
+    el('div', { style: { display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' } },
+      newNameI, newColorI,
+      el('button', {
+        class: 'btn btn-primary',
+        onClick: async () => {
+          const name = newNameI.value.trim();
+          if (!name) { toast('Введите имя проекта', 'error'); return; }
+          try {
+            await api.projectCreate({ name, color: newColorI.value });
+            toast('Проект создан', 'success');
+            newNameI.value = '';
             reload();
           } catch (e) { toast(e.message, 'error'); }
         },

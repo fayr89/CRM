@@ -453,7 +453,7 @@ export const db = {
 // БАМПАЙ ПРИ КАЖДОМ ДОБАВЛЕНИИ МИГРАЦИИ. Текущие миграции прогоняются
 // только если запись в app_settings.schema_version отличается. Это экономит
 // ~500-2000мс на каждом холодном старте serverless-лямбды.
-const SCHEMA_VERSION = 17;
+const SCHEMA_VERSION = 18;
 
 export async function ensureInitialized() {
   if (globalThis.__crmInitialized) return;
@@ -754,6 +754,38 @@ export async function ensureInitialized() {
       `);
       // Вложения в тредах обращений: позволяет прикреплять файлы к ответам в переписке.
       await pool.query('ALTER TABLE feedback_messages ADD COLUMN IF NOT EXISTS attachments JSONB');
+      // Проекты: справочник для классификации лидов/сделок/контактов/компаний.
+      // Админ управляет списком, у каждого есть имя+цвет (для стикера). active=false
+      // прячет из выпадашек при создании, но не удаляет с уже привязанных записей.
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS projects (
+          id SERIAL PRIMARY KEY,
+          name TEXT NOT NULL UNIQUE,
+          color TEXT NOT NULL DEFAULT '#6366f1',
+          description TEXT,
+          active BOOLEAN NOT NULL DEFAULT TRUE,
+          sort_order INTEGER NOT NULL DEFAULT 0,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+      `);
+      // Привязка проекта к лидам/сделкам/контактам/компаниям. SET NULL при удалении
+      // проекта, чтобы случайная очистка справочника не каскадно убивала записи.
+      await pool.query('ALTER TABLE leads ADD COLUMN IF NOT EXISTS project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL');
+      await pool.query('ALTER TABLE deals ADD COLUMN IF NOT EXISTS project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL');
+      await pool.query('ALTER TABLE contacts ADD COLUMN IF NOT EXISTS project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL');
+      await pool.query('ALTER TABLE companies ADD COLUMN IF NOT EXISTS project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL');
+      await pool.query('CREATE INDEX IF NOT EXISTS idx_leads_project ON leads(project_id) WHERE project_id IS NOT NULL');
+      await pool.query('CREATE INDEX IF NOT EXISTS idx_deals_project ON deals(project_id) WHERE project_id IS NOT NULL');
+      await pool.query('CREATE INDEX IF NOT EXISTS idx_contacts_project ON contacts(project_id) WHERE project_id IS NOT NULL');
+      await pool.query('CREATE INDEX IF NOT EXISTS idx_companies_project ON companies(project_id) WHERE project_id IS NOT NULL');
+      // Квалификация лида: 4 опциональных поля, заполняются при первом контакте.
+      // Хранятся как TEXT (свобода будущих значений) — UI ограничивает выпадашкой,
+      // но API не отвергает чужие значения, чтобы внешний интейк не падал.
+      await pool.query('ALTER TABLE leads ADD COLUMN IF NOT EXISTS purchase_frequency TEXT');
+      await pool.query('ALTER TABLE leads ADD COLUMN IF NOT EXISTS expected_volume REAL');
+      await pool.query('ALTER TABLE leads ADD COLUMN IF NOT EXISTS buy_readiness TEXT');
+      await pool.query('ALTER TABLE leads ADD COLUMN IF NOT EXISTS classification TEXT');
       // Маркер успешно прогнанных миграций — следующие холодные старты пропустят DDL.
       await pool.query(
         `INSERT INTO app_settings (key, value, updated_at)
