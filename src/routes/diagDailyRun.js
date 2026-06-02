@@ -27,6 +27,11 @@ router.get('/', async (req, res) => {
          WHERE p.status = 'rejected' AND p.updated_at > NOW() - INTERVAL '7 days'
          ORDER BY p.updated_at DESC`,
       );
+      const pending = await db.all(
+        `SELECT p.id, p.title, p.status, p.feedback_id, p.created_at, f.subject AS feedback_subject
+         FROM ai_proposals p LEFT JOIN feedback f ON f.id = p.feedback_id
+         WHERE p.status = 'pending' ORDER BY p.created_at DESC`,
+      );
       const feedbacks = await db.all(
         `SELECT f.*, u.name AS user_name, u.email AS user_email, u.role AS user_role
          FROM feedback f LEFT JOIN users u ON u.id = f.user_id
@@ -40,7 +45,7 @@ router.get('/', async (req, res) => {
           fb.id,
         );
       }
-      return res.json({ approved, revision, rejected, feedbacks });
+      return res.json({ approved, revision, rejected, pending, feedbacks });
     }
 
     // msg — добавить сообщение в тред обращения от AI ассистента
