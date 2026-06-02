@@ -750,3 +750,58 @@ if (getToken()) {
     if (['#/orders', '#/products'].includes(path)) renderApp();
   });
 }
+
+// === Service Worker: детект обновлений и баннер «Доступно обновление» ===
+// Без SW юзеры на iPhone-PWA сидели бы на старой версии пока сами не переустановят
+// приложение. SW проверяет sw.js на каждой навигации (updateViaCache: none),
+// и если контент изменился → ставит новую версию в waiting и шлёт 'updatefound'.
+// Юзер видит «🔄 Доступно обновление» — клик skipWaiting + reload.
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('/sw.js', { updateViaCache: 'none' })
+    .then((reg) => {
+      const handleUpdate = (worker) => {
+        if (!worker) return;
+        worker.addEventListener('statechange', () => {
+          // installed + есть controller = это НЕ первая установка, а обновление.
+          if (worker.state === 'installed' && navigator.serviceWorker.controller) {
+            showUpdateBanner(worker);
+          }
+        });
+      };
+      if (reg.waiting) showUpdateBanner(reg.waiting);
+      reg.addEventListener('updatefound', () => handleUpdate(reg.installing));
+
+      // Проверяем обновления при возврате во вкладку и каждые 10 мин.
+      const checkForUpdates = () => reg.update().catch(() => {});
+      document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible') checkForUpdates();
+      });
+      setInterval(checkForUpdates, 10 * 60 * 1000);
+    })
+    .catch((e) => { console.warn('[sw] не удалось зарегистрировать:', e.message); });
+
+  // После активации новой версии — перезагружаем страницу автоматически.
+  let reloadInFlight = false;
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (reloadInFlight) return;
+    reloadInFlight = true;
+    location.reload();
+  });
+}
+
+function showUpdateBanner(waitingWorker) {
+  if (document.querySelector('.sw-update-banner')) return;
+  const banner = document.createElement('div');
+  banner.className = 'sw-update-banner';
+  banner.innerHTML = `
+    <span>🔄 Доступна новая версия CRM</span>
+    <button class="sw-update-btn">Обновить</button>
+    <button class="sw-update-dismiss" title="Скрыть до следующей загрузки">×</button>
+  `;
+  banner.querySelector('.sw-update-btn').addEventListener('click', () => {
+    banner.remove();
+    waitingWorker.postMessage({ type: 'SKIP_WAITING' });
+  });
+  banner.querySelector('.sw-update-dismiss').addEventListener('click', () => banner.remove());
+  document.body.append(banner);
+}

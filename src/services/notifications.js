@@ -27,8 +27,10 @@ export async function notify(userId, type, title, body, link) {
       const wantsMaxPush = pref ? pref.enabled : true;
       if (wantsMaxPush) {
         // Хеш-ссылку оборачиваем в полный URL — без этого МАХ не сделает её кликабельной.
-        // PUBLIC_URL (env) приоритетнее, иначе берём прод-домен по умолчанию.
-        const base = process.env.PUBLIC_URL || 'https://crm-orcin-six.vercel.app';
+        // Используем crm.iitit.ru — это домен через VPS-прокси (доступен из РФ без VPN
+        // и совпадает с тем, откуда юзеры ставят PWA: тап на ссылку с MAX-сообщения
+        // должен открыть установленное приложение, а не Safari).
+        const base = process.env.PUBLIC_URL || 'https://crm.iitit.ru';
         const fullLink = link && link.startsWith('#') ? `${base}/${link}` : link;
         await sendMaxMessage(u.max_chat_id, `${title}${body ? '\n\n' + body : ''}`, fullLink);
       }
