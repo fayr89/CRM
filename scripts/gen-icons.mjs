@@ -102,15 +102,41 @@ function drawIcon(size, { maskable = false } = {}) {
 }
 
 const targets = [
+  { name: 'icon-32.png', size: 32 },
+  { name: 'icon-64.png', size: 64 },
   { name: 'icon-180.png', size: 180 },
   { name: 'icon-192.png', size: 192 },
   { name: 'icon-512.png', size: 512 },
   { name: 'icon-maskable-512.png', size: 512, maskable: true },
 ];
 
+const generated = new Map();
 for (const t of targets) {
   const buf = drawIcon(t.size, { maskable: t.maskable });
   const path = resolve(PUBLIC_DIR, t.name);
   writeFileSync(path, buf);
+  generated.set(t.size, buf);
   console.log(`written ${t.name} (${buf.length} bytes)`);
+}
+
+// favicon.ico — браузеры авто-запрашивают /favicon.ico (особенно при добавлении
+// в закладки). Внутри ICO лежит готовая 32×32 PNG (формат это поддерживает).
+{
+  const png32 = generated.get(32);
+  const header = Buffer.alloc(6);
+  header.writeUInt16LE(0, 0);     // reserved
+  header.writeUInt16LE(1, 2);     // type=1 (ICO)
+  header.writeUInt16LE(1, 4);     // count=1
+  const entry = Buffer.alloc(16);
+  entry[0] = 32;                  // width (0 means 256)
+  entry[1] = 32;                  // height
+  entry[2] = 0;                   // palette colors (0 for ≥8bpp)
+  entry[3] = 0;                   // reserved
+  entry.writeUInt16LE(1, 4);      // color planes
+  entry.writeUInt16LE(32, 6);     // bpp
+  entry.writeUInt32LE(png32.length, 8);  // image size
+  entry.writeUInt32LE(6 + 16, 12);       // offset to image data
+  const ico = Buffer.concat([header, entry, png32]);
+  writeFileSync(resolve(PUBLIC_DIR, 'favicon.ico'), ico);
+  console.log(`written favicon.ico (${ico.length} bytes)`);
 }
