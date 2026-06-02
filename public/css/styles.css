@@ -84,18 +84,26 @@ a:hover { text-decoration: underline; }
 }
 .role-impersonating { color: #fbbf24; font-weight: 600; margin-bottom: 4px; }
 .role-back-btn { width: 100%; }
-/* Плавающая панель имперсонации — всегда доступна вверху */
+/* Полоса имперсонации — full-width sticky сверху, чтобы её невозможно
+   было пропустить. Раньше была плавающая в углу и пряталась за нотч/
+   notice-bar на мобиле — админ думал, что видит «свои данные», а на
+   самом деле просматривал систему глазами менеджера. */
 .impersonation-bar {
-  position: fixed; top: 10px; right: 10px; z-index: 250;
-  display: flex; align-items: center; gap: 10px;
-  background: #d97706; color: #fff; padding: 6px 12px;
-  border-radius: 8px; font-size: 13px; font-weight: 600;
-  box-shadow: 0 2px 8px rgba(0,0,0,0.25); max-width: calc(100vw - 80px);
+  position: sticky; top: 0; z-index: 300;
+  display: flex; align-items: center; justify-content: center; gap: 12px;
+  background: #d97706; color: #fff; padding: 8px 16px;
+  font-size: 14px; font-weight: 600;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+  flex-wrap: wrap;
 }
 .impersonation-bar button {
   background: #fff; color: #d97706; border: none; min-height: 0;
-  padding: 4px 10px; border-radius: 6px; font-weight: 600;
-  cursor: pointer; font-size: 12px; white-space: nowrap;
+  padding: 6px 14px; border-radius: 6px; font-weight: 600;
+  cursor: pointer; font-size: 13px; white-space: nowrap;
+}
+@media (max-width: 768px) {
+  .impersonation-bar { font-size: 13px; padding: 8px 12px; gap: 8px;
+                       padding-top: max(8px, env(safe-area-inset-top)); }
 }
 
 .main {

@@ -397,17 +397,10 @@ function renderShell() {
   // Клик по пункту навигации закрывает меню (на мобильном).
   sidebar.querySelectorAll('.sidebar-nav a').forEach((a) => a.addEventListener('click', closeMenu));
 
-  // Полоска уведомлений сверху (баннеры от админа). Закрытые сохраняются в localStorage по id.
-  const noticeBar = el('div', { class: 'notice-bar' });
-  root.append(noticeBar);
-  loadNoticeBanners(noticeBar);
-  // Подсказка для пользователей iPhone-Safari: «добавьте на домой» — за 1 раз
-  // показываем, потом 3 дня молчим (или навсегда, если юзер ткнул «×»/установил).
-  loadIosInstallBanner(noticeBar);
-
-  root.append(el('div', { class: 'shell' }, sidebar, overlay, main), menuBtn);
-
-  // При имперсонации — плавающая кнопка возврата вверху (всегда доступна, не зависит от scroll меню).
+  // Если активна имперсонация — full-width оранжевая полоса САМОЙ ВЕРХНЕЙ строкой.
+  // Раньше была плавающей в углу и пряталась за нотч / другие баннеры → админ
+  // думал, что видит свои данные, а реально смотрел глазами менеджера и не понимал
+  // куда делись чужие заказы.
   if (user.impersonating) {
     root.append(
       el(
@@ -418,6 +411,16 @@ function renderShell() {
       ),
     );
   }
+
+  // Полоска уведомлений сверху (баннеры от админа). Закрытые сохраняются в localStorage по id.
+  const noticeBar = el('div', { class: 'notice-bar' });
+  root.append(noticeBar);
+  loadNoticeBanners(noticeBar);
+  // Подсказка для пользователей iPhone-Safari: «добавьте на домой» — за 1 раз
+  // показываем, потом 3 дня молчим (или навсегда, если юзер ткнул «×»/установил).
+  loadIosInstallBanner(noticeBar);
+
+  root.append(el('div', { class: 'shell' }, sidebar, overlay, main), menuBtn);
 
   startNotificationsPolling(bellCounter);
   if (user.role === 'admin') {
