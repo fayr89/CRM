@@ -12,7 +12,7 @@ function checkSecret(req, res, next) {
 
 router.use(checkSecret);
 
-// Все feedback open/awaiting_approval с threads
+// Все feedback open/awaiting_approval/in_progress с threads
 router.get('/feedback', async (_req, res) => {
   try {
     const rows = await db.all(
@@ -37,11 +37,11 @@ router.get('/feedback', async (_req, res) => {
 // ai_proposals по статусу
 router.get('/proposals', async (req, res) => {
   try {
-    const status = req.query.status;
+    const status = req.query.status ? String(req.query.status).replace(/[^a-z_]/g, '') : null;
     const rows = await db.all(
       `SELECT p.*, f.subject AS feedback_subject, f.user_id AS feedback_user_id
        FROM ai_proposals p LEFT JOIN feedback f ON f.id = p.feedback_id
-       ${status ? `WHERE p.status = '${status.replace(/'/g, '')}'` : ''}
+       ${status ? `WHERE p.status = '${status}'` : ''}
        ORDER BY p.created_at DESC LIMIT 100`,
     );
     res.json({ data: rows });
@@ -50,33 +50,18 @@ router.get('/proposals', async (req, res) => {
   }
 });
 
-// POST сообщение в thread feedback
-router.post('/feedback/:id/message', async (req, res) => {
-  try {
-    const { text } = req.body;
-    if (!text) return res.status(400).json({ error: 'text required' });
-    const r = await db.run(
-      `INSERT INTO feedback_messages (feedback_id, user_id, user_name, role, text)
-       VALUES (?, NULL, 'AI ассистент', 'admin', ?) RETURNING id`,
-      Number(req.params.id), text,
-    );
-    res.status(201).json({ id: r.lastInsertRowid });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
+// ---- WRITE OPERATIONS via GET (web_fetch_vercel_url поддерживает только GET) ----
 
-// PATCH статус feedback
-router.patch('/feedback/:id', async (req, res) => {
+// Поставить статус feedback: ?id=N&status=awaiting_approval&reply=text
+router.get('/do/feedback-status', async (req, res) => {
   try {
-    const { status, admin_reply } = req.body;
+    const id = Number(req.query.id);
+    const status = String(req.query.status || '').replace(/[^a-z_]/g, '');
+    const reply = req.query.reply ? String(req.query.reply) : null;
+    if (!id || !status) return res.status(400).json({ error: 'id and status required' });
     await db.run(
-      `UPDATE feedback SET
-         status = COALESCE(?, status),
-         admin_reply = COALESCE(?, admin_reply),
-         updated_at = NOW()
-       WHERE id = ?`,
-      status ?? null, admin_reply ?? null, Number(req.params.id),
+      `UPDATE feedback SET status = ?, admin_reply = COALESCE(?, admin_reply), updated_at = NOW() WHERE id = ?`,
+      status, reply, id,
     );
     res.json({ ok: true });
   } catch (e) {
@@ -84,17 +69,16 @@ router.patch('/feedback/:id', async (req, res) => {
   }
 });
 
-// POST создать ai_proposal
-router.post('/proposals', async (req, res) => {
+// Постить сообщение в thread: ?id=N&text=...
+router.get('/do/feedback-msg', async (req, res) => {
   try {
-    const { feedback_id, title, summary, category, risk, source, proposed_changes } = req.body;
+    const id = Number(req.query.id);
+    const text = req.query.text ? String(req.query.text) : null;
+    if (!id || !text) return res.status(400).json({ error: 'id and text required' });
     const r = await db.run(
-      `INSERT INTO ai_proposals (feedback_id, title, summary, category, risk, source, proposed_changes)
-       VALUES (?, ?, ?, ?, ?, ?, ?::jsonb) RETURNING id`,
-      feedback_id ?? null, title, summary,
-      category ?? null, risk ?? 'medium',
-      source ?? null,
-      proposed_changes ? JSON.stringify(proposed_changes) : null,
+      `INSERT INTO feedback_messages (feedback_id, user_id, user_name, role, text)
+       VALUES (?, NULL, 'AI ассистент', 'admin', ?) RETURNING id`,
+      id, text,
     );
     res.status(201).json({ id: r.lastInsertRowid });
   } catch (e) {
@@ -102,14 +86,35 @@ router.post('/proposals', async (req, res) => {
   }
 });
 
-// PATCH ai_proposal — статус done/pending и т.д.
-router.patch('/proposals/:id', async (req, res) => {
+// Создать ai_proposal (параметры в query — всё %-encoded): ?title=...&summary=...&category=...&risk=...&source=...&fid=N
+router.get('/do/new-proposal', async (req, res) => {
   try {
-    const { decision, notes } = req.body;
+    const { title, summary, category, risk, source } = req.query;
+    const fid = req.query.fid ? Number(req.query.fid) : null;
+    if (!title || !summary) return res.status(400).json({ error: 'title and summary required' });
+    const r = await db.run(
+      `INSERT INTO ai_proposals (feedback_id, title, summary, category, risk, source)
+       VALUES (?, ?, ?, ?, ?, ?) RETURNING id`,
+      fid ?? null,
+      String(title),
+      String(summary),
+      category ? String(category) : null,
+      risk ? String(risk) : 'medium',
+      source ? String(source) : null,
+    );
+    res.status(201).json({ id: r.lastInsertRowid });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Отметить proposal done: ?id=N
+router.get('/do/proposal-done', async (req, res) => {
+  try {
+    const id = Number(req.query.id);
+    if (!id) return res.status(400).json({ error: 'id required' });
     await db.run(
-      `UPDATE ai_proposals SET status = ?, admin_notes = COALESCE(?, admin_notes),
-       updated_at = NOW() WHERE id = ?`,
-      decision, notes ?? null, Number(req.params.id),
+      `UPDATE ai_proposals SET status = 'done', updated_at = NOW() WHERE id = ?`, id,
     );
     res.json({ ok: true });
   } catch (e) {
