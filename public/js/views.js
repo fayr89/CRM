@@ -6030,7 +6030,7 @@ function computeStoreView(stockByStore, hiddenSet) {
 
 export async function renderProducts(main) {
   const me = JSON.parse(localStorage.getItem('crm_user') || '{}');
-  const canEdit = ['admin', 'manager'].includes(me.role);
+  const canEdit = me.role === 'admin';
   const isAdmin = me.role === 'admin';
 
   // Скрытые склады (настройка) — загружаем один раз, применяем при отображении остатков.
@@ -6389,10 +6389,10 @@ export async function renderProducts(main) {
           '⬇ Импорт из МойСклад',
         )
       : null,
-    canEdit
+    isAdmin
       ? el('button', { class: 'btn', onClick: () => openPriceTemplate() }, '📥 Шаблон прайса')
       : null,
-    canEdit
+    isAdmin
       ? el(
           'button',
           {

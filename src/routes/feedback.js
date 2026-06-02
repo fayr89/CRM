@@ -291,7 +291,7 @@ router.get(
     if (!fb) throw NotFound('Обращение не найдено');
     if (!(await canSeeThread(req, fb))) throw Forbidden();
     const rows = await db.all(
-      `SELECT id, user_id, user_name, role, text, created_at
+      `SELECT id, user_id, user_name, role, text, attachments, created_at
        FROM feedback_messages WHERE feedback_id = ? ORDER BY created_at ASC, id ASC`,
       fb.id,
     );
