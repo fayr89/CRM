@@ -4,7 +4,9 @@ import { db } from '../db.js';
 import { BadRequest, asyncHandler } from '../errors.js';
 import { requireApiToken, requireScope } from '../middleware/apiToken.js';
 import {
+  buildOrderNotificationBody,
   notify,
+  notifyAdmins,
   notifyAdminsAndManagers,
   notifyWarehouse,
 } from '../services/notifications.js';
@@ -228,17 +230,24 @@ router.post(
       orderId,
     );
     const titleSrc = data.marketplace || data.reference_number || 'внешний источник';
+    const body = await buildOrderNotificationBody(orderId);
     await notify(
       managerId,
       'order.created',
       `Новый заказ (${titleSrc})`,
-      `${data.client_name || 'Клиент'} · ${totalAmount.toLocaleString('ru-RU')} ₽`,
+      body,
+      `#/orders?id=${orderId}`,
+    );
+    await notifyAdmins(
+      'order.created',
+      `🆕 Новый заказ #${orderId} (${titleSrc})`,
+      body,
       `#/orders?id=${orderId}`,
     );
     await notifyWarehouse(
       'order.created',
       'Заказ ожидает резерва',
-      `${data.client_name || data.reference_number || '#' + orderId} · ${totalAmount.toLocaleString('ru-RU')} ₽`,
+      body,
       `#/orders?id=${orderId}`,
     );
     emitEvent('order.created', { ...order, items });

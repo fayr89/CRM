@@ -5,7 +5,7 @@ import { authenticate, requireRole } from '../auth.js';
 import { db } from '../db.js';
 import { BadRequest, Forbidden, NotFound, asyncHandler } from '../errors.js';
 import { parsePagination, parseSort, paginated } from '../query.js';
-import { notify, notifyWarehouse } from '../services/notifications.js';
+import { notify, notifyWarehouse, buildOrderNotificationBody } from '../services/notifications.js';
 import { emitEvent } from '../services/webhooks.js';
 import { toCsv, csvDate } from '../services/csv.js';
 import { nextShippingDate, getSchedule } from '../services/shippingSchedule.js';
@@ -946,10 +946,19 @@ router.post(
       'SELECT * FROM order_items WHERE order_id = ? ORDER BY id',
       newId,
     );
+    // Тело уведомления (сумма + менеджер + клиент + состав) — общее для админов
+    // и склада. Админу важно видеть чужие заказы менеджеров с полной картиной.
+    const body = await buildOrderNotificationBody(newId);
+    await notifyAdmins(
+      'order.created',
+      `🆕 Новый заказ #${newId}`,
+      body,
+      `#/orders?id=${newId}`,
+    );
     await notifyWarehouse(
       'order.created',
       'Новый заказ ожидает резерва',
-      `${order.client_name || order.reference_number || '#' + newId} · ${(order.total_amount || 0).toLocaleString('ru-RU')} ₽`,
+      body,
       `#/orders?id=${newId}`,
     );
     emitEvent('order.created', { ...order, items });
@@ -1157,11 +1166,18 @@ router.post(
     const updated = await db.get('SELECT * FROM orders WHERE id = ?', order.id);
     // МС: ставим/обновляем customerorder с резервом на позициях.
     await enqueueMsJob(order.id, 'customer_order.upsert', { reserve_mode: 'full' });
+    const reservedBody = await buildOrderNotificationBody(order.id);
     await notify(
       order.manager_id,
       'order.reserved',
       'Заказ зарезервирован',
-      `${order.client_name || order.reference_number || '#' + order.id} · склад готов отгружать`,
+      reservedBody + '\n\n✅ Склад готов отгружать',
+      `#/orders?id=${order.id}`,
+    );
+    await notifyAdmins(
+      'order.reserved',
+      `✅ Заказ #${order.id} зарезервирован`,
+      reservedBody,
       `#/orders?id=${order.id}`,
     );
     emitEvent('order.reserved', updated);
@@ -1189,11 +1205,18 @@ router.post(
     // МС: создаём документ «Отгрузка» — остатки в МС физически списываются.
     await enqueueMsJob(order.id, 'demand.create');
     const updated = await db.get('SELECT * FROM orders WHERE id = ?', order.id);
+    const shippedBody = await buildOrderNotificationBody(order.id);
     await notify(
       order.manager_id,
       'order.shipped',
       'Заказ отгружен',
-      `${order.client_name || order.reference_number || '#' + order.id} · можно завершать`,
+      shippedBody + '\n\n📦 Можно завершать',
+      `#/orders?id=${order.id}`,
+    );
+    await notifyAdmins(
+      'order.shipped',
+      `📦 Заказ #${order.id} отгружен`,
+      shippedBody,
       `#/orders?id=${order.id}`,
     );
     emitEvent('order.shipped', updated);
@@ -1231,11 +1254,18 @@ router.post(
     }
     // Уведомляем менеджеров каждого заказа.
     for (const order of orders) {
+      const body = await buildOrderNotificationBody(order.id);
       await notify(
         order.manager_id,
         'order.shipped',
         'Заказ отгружен',
-        `${order.client_name || order.reference_number || '#' + order.id} · можно завершать`,
+        body + '\n\n📦 Можно завершать',
+        `#/orders?id=${order.id}`,
+      );
+      await notifyAdmins(
+        'order.shipped',
+        `📦 Заказ #${order.id} отгружен`,
+        body,
         `#/orders?id=${order.id}`,
       );
       emitEvent('order.shipped', { ...order, status: 'shipped' });

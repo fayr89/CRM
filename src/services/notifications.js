@@ -1,6 +1,39 @@
 import { db } from '../db.js';
 import { sendMaxMessage } from './max-bot.js';
 
+// Тело уведомления о заказе: сумма + менеджер + клиент + первые 5 позиций.
+// Один шаблон для order.created / reserved / shipped — админ/склад/менеджер
+// видят полную картину прямо в МАХ или в колокольчике, без захода в CRM.
+export async function buildOrderNotificationBody(orderId) {
+  const o = await db.get(
+    `SELECT o.client_name, o.total_amount, o.currency, o.marketplace,
+            u.name AS manager_name
+     FROM orders o LEFT JOIN users u ON u.id = o.manager_id
+     WHERE o.id = ?`,
+    orderId,
+  );
+  if (!o) return '';
+  const items = await db.all(
+    `SELECT name, quantity FROM order_items WHERE order_id = ? ORDER BY id LIMIT 5`,
+    orderId,
+  );
+  const countRow = await db.get(
+    `SELECT COUNT(*)::int AS c FROM order_items WHERE order_id = ?`,
+    orderId,
+  );
+  const parts = [];
+  parts.push(`💰 ${(o.total_amount || 0).toLocaleString('ru-RU')} ${o.currency || 'RUB'}`);
+  if (o.manager_name) parts.push(`👤 ${o.manager_name}`);
+  if (o.client_name) parts.push(`🧑 ${o.client_name}`);
+  if (o.marketplace) parts.push(`🛒 ${o.marketplace}`);
+  let body = parts.join(' · ');
+  if (items.length) {
+    body += '\n\nСостав:\n' + items.map((i) => `• ${i.name} × ${i.quantity}`).join('\n');
+    if (countRow.c > items.length) body += `\n…и ещё ${countRow.c - items.length}`;
+  }
+  return body;
+}
+
 // База: сохраняем в notifications для бейджа-колокольчика, и параллельно дублируем
 // в МАХ-бота, если пользователь привязал чат. Сбой пуша не валит запись в БД.
 export async function notify(userId, type, title, body, link) {

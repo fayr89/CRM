@@ -495,7 +495,7 @@ table.data tbody tr:last-child td { border-bottom: none; }
 .notif-item.unread { background: #eff6ff; }
 .notif-item.unread:hover { background: #dbeafe; }
 .notif-title { font-weight: 600; font-size: 13px; }
-.notif-body { color: var(--text-muted); font-size: 12px; margin-top: 2px; }
+.notif-body { color: var(--text-muted); font-size: 12px; margin-top: 2px; white-space: pre-line; }
 .notif-time { color: var(--text-muted); font-size: 11px; margin-top: 4px; }
 
 /* ===== Глобальный поиск Ctrl+K ===== */
