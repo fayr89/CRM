@@ -309,7 +309,7 @@ router.get(
 
 router.post(
   '/',
-  requireRole('admin', 'manager'),
+  requireRole('admin'),
   asyncHandler(async (req, res) => {
     const data = productSchema.parse(req.body);
     const r = await db.run(
@@ -329,7 +329,7 @@ router.post(
 
 router.patch(
   '/:id',
-  requireRole('admin', 'manager'),
+  requireRole('admin'),
   asyncHandler(async (req, res) => {
     const data = updateSchema.parse(req.body);
     const updates = [];
