@@ -1259,3 +1259,19 @@ button, .btn, a { touch-action: manipulation; }
 .main, .modal-body, .table-wrap, .popular-strip, .sidebar-nav {
   -webkit-overflow-scrolling: touch;
 }
+
+/* === iOS-install баннер: компактная инлайн-инструкция под баннером === */
+.ios-install-details {
+  background: #eff6ff; border-bottom: 1px solid #bfdbfe;
+  padding: 8px 16px 12px; font-size: 13px; color: #1e3a8a;
+}
+.ios-install-banner .btn-xs {
+  background: #1e3a8a; color: #fff; border: 0; border-radius: 4px;
+  padding: 4px 10px; font-size: 12px; font-weight: 600; cursor: pointer;
+  flex-shrink: 0;
+}
+.ios-install-banner .btn-xs:hover { background: #1e40af; }
+@media (max-width: 768px) {
+  .ios-install-details { padding: 8px 12px 10px; font-size: 13px; }
+  .ios-install-details ol { padding-left: 20px; }
+}

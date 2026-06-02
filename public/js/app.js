@@ -401,6 +401,9 @@ function renderShell() {
   const noticeBar = el('div', { class: 'notice-bar' });
   root.append(noticeBar);
   loadNoticeBanners(noticeBar);
+  // Подсказка для пользователей iPhone-Safari: «добавьте на домой» — за 1 раз
+  // показываем, потом 3 дня молчим (или навсегда, если юзер ткнул «×»/установил).
+  loadIosInstallBanner(noticeBar);
 
   root.append(el('div', { class: 'shell' }, sidebar, overlay, main), menuBtn);
 
@@ -431,6 +434,65 @@ function getDismissedBanners() {
 function setDismissedBanners(set) {
   localStorage.setItem('crm_dismissed_banners', JSON.stringify([...set]));
 }
+// Баннер «Установите на iPhone как приложение» — показывается только в iOS-Safari,
+// если PWA ещё не установлено. Закрытие по «×» прячет на 3 дня (localStorage TS).
+// Кнопка «Как установить» раскрывает инлайн-инструкцию из 3 шагов.
+function loadIosInstallBanner(container) {
+  const ua = navigator.userAgent || '';
+  const isIos = /iPhone|iPad|iPod/.test(ua) && !window.MSStream;
+  if (!isIos) return;
+  // Уже стоит на домашнем экране → больше не уговариваем.
+  const standalone = window.navigator.standalone === true
+    || window.matchMedia?.('(display-mode: standalone)').matches;
+  if (standalone) return;
+  // Только Safari (Chrome/Firefox/Edge на iOS не дают «Добавить на экран Домой» в нашем виде).
+  const isSafari = /Safari/.test(ua) && !/CriOS|FxiOS|EdgiOS|OPiOS/.test(ua);
+  if (!isSafari) return;
+  // Снулжена ли пауза «не показывать N дней».
+  const until = Number(localStorage.getItem('ios_install_banner_until') || 0);
+  if (until && Date.now() < until) return;
+
+  const banner = el('div', { class: 'notice-banner notice-info ios-install-banner' });
+  const text = el('span', { class: 'notice-text' },
+    el('span', { style: { marginRight: '6px' } }, '📲'),
+    'Добавьте CRM на экран «Домой» — открывается как приложение, без адресной строки.',
+  );
+  const howBtn = el('button', { class: 'btn btn-xs', style: { marginRight: '6px' } }, 'Как установить');
+  const closeBtn = el('button', {
+    class: 'notice-close',
+    title: 'Скрыть на 3 дня',
+    onClick: () => {
+      const THREE_DAYS = 3 * 24 * 60 * 60 * 1000;
+      localStorage.setItem('ios_install_banner_until', String(Date.now() + THREE_DAYS));
+      banner.remove();
+      details.remove();
+    },
+  }, '×');
+
+  // Инлайн-инструкция: появляется под баннером по клику «Как установить».
+  // Без модалки, чтобы юзер видел реальные кнопки Safari пока читает шаги.
+  const details = el('div', { class: 'ios-install-details', style: { display: 'none' } },
+    el('ol', { style: { margin: '8px 0 4px', paddingLeft: '24px', lineHeight: '1.6' } },
+      el('li', {}, 'Тапни на иконку ',
+        el('b', {}, '«Поделиться»'), ' внизу экрана (квадрат со стрелкой вверх ⬆️).'),
+      el('li', {}, 'Прокрути список вниз и выбери ',
+        el('b', {}, '«На экран Домой»'), ' (Add to Home Screen).'),
+      el('li', {}, 'Нажми ',
+        el('b', {}, '«Добавить»'),
+        ' справа сверху — иконка CRM появится на главном экране.'),
+    ),
+    el('div', { style: { fontSize: '12px', color: 'var(--text-muted)', marginTop: '4px' } },
+      'После установки открывай CRM иконкой — Safari больше не нужен.'),
+  );
+  howBtn.addEventListener('click', () => {
+    details.style.display = details.style.display === 'none' ? 'block' : 'none';
+    howBtn.textContent = details.style.display === 'none' ? 'Как установить' : 'Скрыть';
+  });
+
+  banner.append(text, howBtn, closeBtn);
+  container.append(banner, details);
+}
+
 async function loadNoticeBanners(container) {
   try {
     const r = await api.activeBanners();
