@@ -935,6 +935,41 @@ router.get(
   }),
 );
 
+// GET /api/orders/import-template-b2b.csv — шаблон для B2B-импорта.
+// Те же колонки что в шаблоне Авито + дополнительно «Клиент» и «Телефон»,
+// потому что у B2B-заказа обязательно есть клиент (компания/контакт).
+// Тоже до '/:id' по той же причине что и обычный шаблон.
+router.get(
+  '/import-template-b2b.csv',
+  asyncHandler(async (_req, res) => {
+    const setting = await db
+      .get(`SELECT value FROM app_settings WHERE key = 'delivery_methods'`)
+      .catch(() => null);
+    const methods = Array.isArray(setting?.value) && setting.value.length
+      ? setting.value
+      : ['Авито доставка', 'Почта', 'ЯМаркет', 'СДЭК', 'Dpd', '5post'];
+
+    const esc = (v) => {
+      const s = String(v ?? '');
+      return /[;\"\n\r]/.test(s) ? `"${s.replace(/\"/g, '""')}"` : s;
+    };
+    const bom = '﻿';
+    // Артикул | Кол-во | Цена | Клиент | Телефон | Способ отправки | Трек номер
+    // (+ справа справочник способов отправки).
+    const headers = ['Артикул', 'Кол-во', 'Цена', 'Клиент', 'Телефон', 'Способ отправки', 'Трек номер', '', 'Допустимые способы отправки'];
+    const example = ['12345678', '1', '999', 'ООО Ромашка', '+79001234567', methods[0] || 'СДЭК', '', '', methods[0] || ''];
+
+    const lines = [headers.map(esc).join(';'), example.map(esc).join(';')];
+    for (let i = 1; i < methods.length; i++) {
+      lines.push(['', '', '', '', '', '', '', '', methods[i]].map(esc).join(';'));
+    }
+
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', 'attachment; filename="orders-import-template-b2b.csv"');
+    res.send(bom + lines.join('\r\n') + '\r\n');
+  }),
+);
+
 router.get(
   '/:id',
   asyncHandler(async (req, res) => {
@@ -1816,6 +1851,9 @@ const importBodySchema = z.object({
   csv: z.string().min(1),
   dry_run: z.boolean().optional().default(true),
   warehouse: z.string().optional().nullable(),
+  // b2b=true: marketplace создаваемых заказов = NULL, payment по умолчанию rs_no_vat,
+  // classification = B2B. Парсер также прочитает колонки Клиент/Телефон если есть.
+  b2b: z.boolean().optional().default(false),
 });
 
 // POST /api/orders/import — разбор CSV и создание заказов
@@ -1823,7 +1861,7 @@ router.post(
   '/import',
   requireRole('admin', 'manager', 'sales'),
   asyncHandler(async (req, res) => {
-    const { csv, dry_run, warehouse } = importBodySchema.parse(req.body || {});
+    const { csv, dry_run, warehouse, b2b } = importBodySchema.parse(req.body || {});
     const lines = csv.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
     if (!lines.length) throw BadRequest('Файл пуст');
 
@@ -1843,6 +1881,11 @@ router.post(
     const iDelivery = colIdx(['способ отправки', 'способ доставки', 'отправк', 'доставка', 'delivery', 'служба']);
     const iTrack = colIdx(['трек', 'track', 'отправление', 'shipment']);
     const iPayment = colIdx(['оплата', 'payment', 'pay']);
+    // B2B-шаблон: дополнительные колонки клиент/телефон. Один заказ = один трек
+    // (как и в Авито-шаблоне); если трека нет — группируем по (клиент, телефон),
+    // чтобы все строки одного клиента сложились в один заказ.
+    const iClient = colIdx(['клиент', 'компания', 'client', 'company']);
+    const iPhone = colIdx(['телефон', 'phone', 'тел.']);
 
     if (iSku === -1 || iQty === -1 || iPrice === -1) {
       throw BadRequest('Не найдены обязательные колонки: Артикул, Кол-во, Цена. Скачайте шаблон.');
@@ -1861,14 +1904,17 @@ router.post(
       const price = parseFloat((iPrice !== -1 ? cols[iPrice] : '0').replace(',', '.').replace(/[^0-9.]/g, '')) || 0;
       const delivery = (iDelivery !== -1 ? cols[iDelivery] : '').trim() || null;
       const track = (iTrack !== -1 ? cols[iTrack] : '').replace(/^=?"?|"?$/g, '').trim() || null;
-      const payment = (iPayment !== -1 ? cols[iPayment] : '').trim() || 'avito_delivery';
+      // Для B2B-импорта дефолт оплаты «РС без НДС», для маркетплейс-импорта — «Авито доставка».
+      const payment = (iPayment !== -1 ? cols[iPayment] : '').trim() || (b2b ? 'rs_no_vat' : 'avito_delivery');
+      const client = (iClient !== -1 ? cols[iClient] : '').trim() || null;
+      const phone = (iPhone !== -1 ? cols[iPhone] : '').trim() || null;
 
       if (!sku && !name) continue; // пустая строка
       if (!sku) { errors.push({ row: li + 1, message: `Нет артикула — строка пропущена` }); continue; }
       if (qty <= 0) { errors.push({ row: li + 1, message: `Артикул ${sku}: некорректное количество` }); continue; }
 
       skuSet.add(sku);
-      rawRows.push({ li, sku, name, qty, price, delivery, track, payment });
+      rawRows.push({ li, sku, name, qty, price, delivery, track, payment, client, phone });
     }
 
     // Подтягиваем product_id и имя из каталога. Если в файле имя не указано —
@@ -1889,8 +1935,21 @@ router.post(
       const p = productMap.get(r.sku);
       const name = r.name || p?.name || `Товар ${r.sku}`;
       const product_id = p?.id ?? null;
-      const key = r.track || `__notrack_${r.li}__`;
-      if (!groups.has(key)) groups.set(key, { track: r.track, delivery: r.delivery, payment: r.payment, items: [] });
+      // Ключ группировки: трек если есть; в B2B-режиме можем сгруппировать по
+      // клиенту+телефону (один клиент = один заказ из импорта); fallback —
+      // каждая строка отдельным заказом.
+      const key = r.track
+        || (b2b && (r.client || r.phone) ? `__b2b_${(r.client || '').toLowerCase()}_${r.phone || ''}` : `__notrack_${r.li}__`);
+      if (!groups.has(key)) {
+        groups.set(key, {
+          track: r.track,
+          delivery: r.delivery,
+          payment: r.payment,
+          client: r.client,
+          phone: r.phone,
+          items: [],
+        });
+      }
       groups.get(key).items.push({ sku: r.sku, name, qty: r.qty, price: r.price, product_id });
     }
 
@@ -1900,6 +1959,8 @@ router.post(
         track: g.track,
         delivery: g.delivery,
         payment: g.payment,
+        client: g.client,
+        phone: g.phone,
         items: g.items,
         total: g.items.reduce((s, i) => s + i.qty * i.price, 0),
       });
@@ -1909,7 +1970,9 @@ router.post(
       return res.json({ dry_run: true, orders_to_create: preview.length, errors, preview });
     }
 
-    // Создаём заказы
+    // Создаём заказы. В B2B-режиме: classification='B2B', marketplace=NULL,
+    // дефолт payment_method='rs_no_vat' (если в файле не указан другой),
+    // client_name/phone из колонок Клиент/Телефон.
     let created = 0;
     for (const g of preview) {
       const items = g.items.map((i) => ({
@@ -1921,14 +1984,16 @@ router.post(
       }));
       const total = items.reduce((s, i) => s + i.quantity * i.unit_price, 0);
       const r = await db.run(
-        `INSERT INTO orders (manager_id, marketplace, client_name, total_amount, currency,
-          payment_method, delivery_method, shipment_qr, warehouse, status, notes)
-         VALUES (?, ?, ?, ?, 'RUB', ?, ?, ?, ?, 'new', ?) RETURNING id`,
+        `INSERT INTO orders (manager_id, marketplace, client_name, client_phone, client_classification,
+          total_amount, currency, payment_method, delivery_method, shipment_qr, warehouse, status, notes)
+         VALUES (?, ?, ?, ?, ?, ?, 'RUB', ?, ?, ?, ?, 'new', ?) RETURNING id`,
         req.user.id,
         null,
-        null,
+        g.client || null,
+        g.phone || null,
+        b2b ? 'B2B' : null,
         total,
-        null,
+        g.payment || null,
         g.delivery,
         g.track,
         warehouse || null,

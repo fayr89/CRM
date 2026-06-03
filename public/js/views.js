@@ -2516,7 +2516,8 @@ async function reserveOrderWithStockCheck(orderId) {
   }
 }
 
-async function openOrderImportModal(onDone) {
+async function openOrderImportModal(onDone, opts = {}) {
+  const b2b = opts.b2b === true;
   const fileInput = el('input', { type: 'file', accept: '.csv,.txt', style: { marginBottom: '12px' } });
   const previewArea = el('div');
   const statusEl = el('div', { class: 'import-status' });
@@ -2529,16 +2530,19 @@ async function openOrderImportModal(onDone) {
       class: 'btn btn-sm',
       onClick: async () => {
         try {
-          const resp = await fetch('/api/orders/import-template.csv', {
+          // B2B-страница тянет отдельный шаблон с колонками клиент/телефон.
+          // Marketplace-страница — старый шаблон без полей клиента.
+          const url = b2b ? '/api/orders/import-template-b2b.csv' : '/api/orders/import-template.csv';
+          const resp = await fetch(url, {
             headers: { Authorization: `Bearer ${localStorage.getItem('crm_token')}` },
           });
           const blob = await resp.blob();
-          const url = URL.createObjectURL(blob);
+          const blobUrl = URL.createObjectURL(blob);
           const a = document.createElement('a');
-          a.href = url;
-          a.download = 'orders-import-template.csv';
+          a.href = blobUrl;
+          a.download = b2b ? 'orders-import-template-b2b.csv' : 'orders-import-template.csv';
           a.click();
-          URL.revokeObjectURL(url);
+          URL.revokeObjectURL(blobUrl);
         } catch (e) {
           toast(e.message, 'error');
         }
@@ -2553,7 +2557,7 @@ async function openOrderImportModal(onDone) {
     statusEl.textContent = '⏳ Разбираю файл…';
     try {
       const text = await file.text();
-      const result = await api.post('orders/import', { csv: text, dry_run: true });
+      const result = await api.post('orders/import', { csv: text, dry_run: true, b2b });
       parsedPreview = result;
       statusEl.textContent = '';
       if (!result.orders_to_create) {
@@ -2628,7 +2632,7 @@ async function openOrderImportModal(onDone) {
       if (!file) { toast('Файл не выбран', 'error'); return false; }
       try {
         const text = await file.text();
-        const result = await api.post('orders/import', { csv: text, dry_run: false });
+        const result = await api.post('orders/import', { csv: text, dry_run: false, b2b });
         toast(`Создано заказов: ${result.created}`, 'success');
         onDone?.();
       } catch (e) {
@@ -3339,7 +3343,7 @@ export async function renderOrders(main, opts = {}) {
           {
             class: 'btn',
             title: 'Загрузить заказы из CSV-файла',
-            onClick: () => openOrderImportModal(reload),
+            onClick: () => openOrderImportModal(reload, { b2b: directMode }),
           },
           '⬆ Импорт',
         )
