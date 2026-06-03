@@ -858,6 +858,43 @@ router.post(
   }),
 );
 
+// GET /api/orders/import-template.csv — шаблон для импорта.
+// Должен быть ОБЯЗАТЕЛЬНО до роута '/:id', иначе Express ловит «import-template.csv»
+// как :id и запрос валится в 500 (Postgres: invalid integer для o.id).
+router.get(
+  '/import-template.csv',
+  asyncHandler(async (_req, res) => {
+    // Колонки: пользователь просил Дата/Артикул/Наименование/Кол-во/Цена/Способ
+    // отправки/Трек. Справа в шапке — отдельная колонка-справочник со списком
+    // допустимых способов отправки (берём из настроек, чтобы не разъезжалось).
+    const setting = await db
+      .get(`SELECT value FROM app_settings WHERE key = 'delivery_methods'`)
+      .catch(() => null);
+    const methods = Array.isArray(setting?.value) && setting.value.length
+      ? setting.value
+      : ['Авито доставка', 'Почта', 'ЯМаркет', 'СДЭК', 'Dpd', '5post'];
+
+    // Экранирование CSV: значения с ; / " / переносами оборачиваем в кавычки.
+    const esc = (v) => {
+      const s = String(v ?? '');
+      return /[;\"\n\r]/.test(s) ? `"${s.replace(/\"/g, '""')}"` : s;
+    };
+    const bom = '﻿'; // чтобы Excel определил UTF-8 и не показал крякозябры
+    const headers = ['Дата', 'Артикул', 'Наименование', 'Кол-во', 'Цена', 'Способ отправки', 'Трек номер', '', 'Допустимые способы отправки'];
+    const example = ['03.06.2026', '12345678', 'Товар пример', '1', '999', methods[0] || 'Авито доставка', '60912345678', '', methods[0] || ''];
+
+    const lines = [headers.map(esc).join(';'), example.map(esc).join(';')];
+    // Со второй строки заполняем правую колонку остальными способами доставки.
+    for (let i = 1; i < methods.length; i++) {
+      lines.push(['', '', '', '', '', '', '', '', methods[i]].map(esc).join(';'));
+    }
+
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', 'attachment; filename="orders-import-template.csv"');
+    res.send(bom + lines.join('\r\n') + '\r\n');
+  }),
+);
+
 router.get(
   '/:id',
   asyncHandler(async (req, res) => {
@@ -1733,18 +1770,6 @@ function detectSep(header) {
   return (header.match(/;/g) || []).length >= (header.match(/,/g) || []).length ? ';' : ',';
 }
 
-// GET /api/orders/import-template.csv — шаблон для импорта
-router.get(
-  '/import-template.csv',
-  asyncHandler(async (_req, res) => {
-    const bom = '﻿';
-    const header = 'Артикул;Наименование;Кол-во;Цена за штуку;Сумма;Способ доставки;Трек-номер;Способ оплаты';
-    const example = '12345678;Товар пример;1;999;999;Авито Доставка;60912345678;Авито Доставка';
-    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
-    res.setHeader('Content-Disposition', 'attachment; filename="orders-import-template.csv"');
-    res.send(bom + header + '\r\n' + example + '\r\n');
-  }),
-);
 
 const importBodySchema = z.object({
   csv: z.string().min(1),
@@ -1774,7 +1799,7 @@ router.post(
     const iName = colIdx(['наименование', 'название', 'name', 'товар']);
     const iQty = colIdx(['кол-во', 'количество', 'qty', 'кол']);
     const iPrice = colIdx(['цена за', 'цена/шт', 'цена', 'price', 'unit']);
-    const iDelivery = colIdx(['способ доставки', 'доставка', 'delivery', 'служба']);
+    const iDelivery = colIdx(['способ отправки', 'способ доставки', 'отправк', 'доставка', 'delivery', 'служба']);
     const iTrack = colIdx(['трек', 'track', 'отправление', 'shipment']);
     const iPayment = colIdx(['оплата', 'payment', 'pay']);
 
