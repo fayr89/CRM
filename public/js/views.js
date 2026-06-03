@@ -3111,7 +3111,7 @@ export async function renderOrders(main, opts = {}) {
     tableArea.append(
       el(
         'div',
-        { class: 'table-wrap' },
+        { class: 'table-wrap table-sticky-wrap' },
         el('table', { class: 'data' }, el('thead', {}, head), el('tbody', {}, ...body)),
       ),
       paginator(result.pagination, (p) => {
