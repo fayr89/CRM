@@ -179,6 +179,15 @@ router.get(
       const s = `%${req.query.search}%`;
       params.push(s, s, s);
     }
+    // Фильтры дат: YYYY-MM-DD (формат <input type=date>). Включительно границы.
+    if (req.query.date_from) {
+      where.push("o.created_at >= ?::date");
+      params.push(String(req.query.date_from));
+    }
+    if (req.query.date_to) {
+      where.push("o.created_at < (?::date + INTERVAL '1 day')");
+      params.push(String(req.query.date_to));
+    }
     const scope = await orderScope(req.user);
     if (scope.sql) {
       where.push(scope.sql.replace(/manager_id/g, 'o.manager_id'));
@@ -304,6 +313,14 @@ router.get(
     if (req.query.manager_id) {
       where.push('o.manager_id = ?');
       params.push(Number(req.query.manager_id));
+    }
+    if (req.query.date_from) {
+      where.push("o.created_at >= ?::date");
+      params.push(String(req.query.date_from));
+    }
+    if (req.query.date_to) {
+      where.push("o.created_at < (?::date + INTERVAL '1 day')");
+      params.push(String(req.query.date_to));
     }
     // Видимость: то же что в orderScope.
     if (req.user.role === 'sales') {
@@ -485,6 +502,14 @@ router.get(
     } else {
       where.push('o.status = ?');
       params.push(req.query.status || 'reserved');
+    }
+    if (req.query.date_from) {
+      where.push("o.created_at >= ?::date");
+      params.push(String(req.query.date_from));
+    }
+    if (req.query.date_to) {
+      where.push("o.created_at < (?::date + INTERVAL '1 day')");
+      params.push(String(req.query.date_to));
     }
     if (scope.sql) {
       where.push(scope.sql.replace(/manager_id/g, 'o.manager_id'));

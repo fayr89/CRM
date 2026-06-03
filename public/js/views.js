@@ -2645,7 +2645,7 @@ export async function renderOrders(main, opts = {}) {
     refreshOrderFormCache();
   }
 
-  let state = { page: 1, status: '', marketplace: '', search: '', view: localStorage.getItem(viewStorageKey) || 'table' };
+  let state = { page: 1, status: '', marketplace: '', search: '', date_from: '', date_to: '', view: localStorage.getItem(viewStorageKey) || 'table' };
   const tableArea = el('div');
 
   async function reload() {
@@ -3159,6 +3159,44 @@ export async function renderOrders(main, opts = {}) {
       .map((u) => el('option', { value: String(u.id) }, u.name)),
   ) : null;
 
+  // Фильтр дат: от-до. Пустое поле означает «без ограничения с этой стороны».
+  // Чтобы выбрать один день — заполняешь обе даты одной и той же. Бэкенд
+  // включает обе границы (created_at >= from И created_at < to+1d).
+  const dateFromI = el('input', {
+    type: 'date',
+    value: state.date_from || '',
+    title: 'Заказы с этой даты (включительно)',
+    onChange: (e) => { state.date_from = e.target.value; state.page = 1; reload(); },
+  });
+  const dateToI = el('input', {
+    type: 'date',
+    value: state.date_to || '',
+    title: 'Заказы до этой даты (включительно)',
+    onChange: (e) => { state.date_to = e.target.value; state.page = 1; reload(); },
+  });
+  const dateClearBtn = el(
+    'button',
+    {
+      type: 'button',
+      class: 'btn btn-sm',
+      title: 'Сбросить фильтр дат',
+      onClick: () => {
+        dateFromI.value = ''; dateToI.value = '';
+        state.date_from = ''; state.date_to = ''; state.page = 1; reload();
+      },
+    },
+    '✕',
+  );
+  const dateFilterBlock = el(
+    'div',
+    { class: 'date-filter-block', title: 'Фильтр по дате создания заказа' },
+    el('span', { class: 'date-filter-label' }, '📅'),
+    dateFromI,
+    el('span', { class: 'date-filter-sep' }, '—'),
+    dateToI,
+    dateClearBtn,
+  );
+
   const viewToggle = el(
     'div',
     { class: 'view-toggle' },
@@ -3203,6 +3241,7 @@ export async function renderOrders(main, opts = {}) {
     statusFilter,
     marketFilter,
     managerFilter,
+    dateFilterBlock,
     el('div', { class: 'spacer' }),
     viewToggle,
     el(
@@ -3215,6 +3254,8 @@ export async function renderOrders(main, opts = {}) {
             await api.downloadOrdersCsv({
               status: state.status,
               marketplace: state.marketplace,
+              date_from: state.date_from,
+              date_to: state.date_to,
             });
             toast('Excel-файл сохранён', 'success');
           } catch (e) {
@@ -3234,6 +3275,8 @@ export async function renderOrders(main, opts = {}) {
             await api.downloadAssemblyList({
               status: state.status || 'reserved',
               marketplace: state.marketplace,
+              date_from: state.date_from,
+              date_to: state.date_to,
             });
             toast('Лист сборки сохранён', 'success');
           } catch (e) {

@@ -1371,3 +1371,23 @@ tr.order-row-summary:hover > td { background: #111827; cursor: pointer; }
 /* Строки позиций: светлый фон, первые две ячейки пустые → «отступ» от шапки. */
 tr.order-row-item > td { background: #fafafa; color: #1f2937; padding: 6px 10px; }
 tr.order-row-item:hover > td { background: #f3f4f6; cursor: pointer; }
+
+/* === Фильтр дат в тулбаре заказов === */
+.date-filter-block {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 2px 8px; background: #f9fafb;
+  border: 1px solid var(--border); border-radius: 6px;
+  font-size: 12px; flex-wrap: wrap;
+}
+.date-filter-block .date-filter-label { color: var(--text-muted); }
+.date-filter-block input[type="date"] {
+  height: 28px; padding: 2px 6px; font-size: 12px;
+  border: 1px solid var(--border); border-radius: 4px;
+  background: #fff; min-width: 0; width: 130px;
+}
+.date-filter-block .date-filter-sep { color: var(--text-muted); }
+.date-filter-block .btn { padding: 2px 8px; min-height: 0; font-size: 12px; }
+@media (max-width: 768px) {
+  .date-filter-block { width: 100%; }
+  .date-filter-block input[type="date"] { flex: 1; font-size: 16px; height: 36px; }
+}
