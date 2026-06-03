@@ -889,9 +889,10 @@ router.post(
 router.get(
   '/import-template.csv',
   asyncHandler(async (_req, res) => {
-    // Колонки: пользователь просил Дата/Артикул/Наименование/Кол-во/Цена/Способ
-    // отправки/Трек. Справа в шапке — отдельная колонка-справочник со списком
-    // допустимых способов отправки (берём из настроек, чтобы не разъезжалось).
+    // Колонки: Артикул/Кол-во/Цена/Способ отправки/Трек. Без даты (ставится
+    // автоматически по импорту) и без наименования (подтягивается из каталога
+    // по артикулу). Справа после пустой колонки-разделителя — справочник
+    // «Допустимые способы отправки» из настроек CRM.
     const setting = await db
       .get(`SELECT value FROM app_settings WHERE key = 'delivery_methods'`)
       .catch(() => null);
@@ -899,19 +900,17 @@ router.get(
       ? setting.value
       : ['Авито доставка', 'Почта', 'ЯМаркет', 'СДЭК', 'Dpd', '5post'];
 
-    // Экранирование CSV: значения с ; / " / переносами оборачиваем в кавычки.
     const esc = (v) => {
       const s = String(v ?? '');
       return /[;\"\n\r]/.test(s) ? `"${s.replace(/\"/g, '""')}"` : s;
     };
-    const bom = '﻿'; // чтобы Excel определил UTF-8 и не показал крякозябры
-    const headers = ['Дата', 'Артикул', 'Наименование', 'Кол-во', 'Цена', 'Способ отправки', 'Трек номер', '', 'Допустимые способы отправки'];
-    const example = ['03.06.2026', '12345678', 'Товар пример', '1', '999', methods[0] || 'Авито доставка', '60912345678', '', methods[0] || ''];
+    const bom = '﻿';
+    const headers = ['Артикул', 'Кол-во', 'Цена', 'Способ отправки', 'Трек номер', '', 'Допустимые способы отправки'];
+    const example = ['12345678', '1', '999', methods[0] || 'Авито доставка', '60912345678', '', methods[0] || ''];
 
     const lines = [headers.map(esc).join(';'), example.map(esc).join(';')];
-    // Со второй строки заполняем правую колонку остальными способами доставки.
     for (let i = 1; i < methods.length; i++) {
-      lines.push(['', '', '', '', '', '', '', '', methods[i]].map(esc).join(';'));
+      lines.push(['', '', '', '', '', '', methods[i]].map(esc).join(';'));
     }
 
     res.setHeader('Content-Type', 'text/csv; charset=utf-8');
@@ -1828,17 +1827,19 @@ router.post(
     const iTrack = colIdx(['трек', 'track', 'отправление', 'shipment']);
     const iPayment = colIdx(['оплата', 'payment', 'pay']);
 
-    if (iSku === -1 || iName === -1 || iQty === -1 || iPrice === -1) {
-      throw BadRequest('Не найдены обязательные колонки: Артикул, Наименование, Кол-во, Цена за штуку. Скачайте шаблон.');
+    if (iSku === -1 || iQty === -1 || iPrice === -1) {
+      throw BadRequest('Не найдены обязательные колонки: Артикул, Кол-во, Цена. Скачайте шаблон.');
     }
 
-    const groups = new Map(); // track → [{sku,name,qty,price,delivery,payment}]
+    // Сначала собираем сырые строки (с возможно пустым name), затем одним
+    // запросом подтягиваем имена/id из products по артикулам.
+    const rawRows = [];
+    const skuSet = new Set();
     const errors = [];
-
     for (let li = 1; li < lines.length; li++) {
       const cols = parseCsvRow(lines[li], sep);
       const sku = (iSku !== -1 ? cols[iSku] : '').replace(/^=?"?|"?$/g, '').trim();
-      const name = (iName !== -1 ? cols[iName] : '').trim();
+      const name = (iName !== -1 ? (cols[iName] || '').trim() : '');
       const qty = parseInt((iQty !== -1 ? cols[iQty] : '0').replace(/[^0-9]/g, '')) || 0;
       const price = parseFloat((iPrice !== -1 ? cols[iPrice] : '0').replace(',', '.').replace(/[^0-9.]/g, '')) || 0;
       const delivery = (iDelivery !== -1 ? cols[iDelivery] : '').trim() || null;
@@ -1847,12 +1848,33 @@ router.post(
 
       if (!sku && !name) continue; // пустая строка
       if (!sku) { errors.push({ row: li + 1, message: `Нет артикула — строка пропущена` }); continue; }
-      if (!name) { errors.push({ row: li + 1, message: `Нет наименования — строка пропущена` }); continue; }
       if (qty <= 0) { errors.push({ row: li + 1, message: `Артикул ${sku}: некорректное количество` }); continue; }
 
-      const key = track || `__notrack_${li}__`;
-      if (!groups.has(key)) groups.set(key, { track, delivery, payment, items: [] });
-      groups.get(key).items.push({ sku, name, qty, price });
+      skuSet.add(sku);
+      rawRows.push({ li, sku, name, qty, price, delivery, track, payment });
+    }
+
+    // Подтягиваем product_id и имя из каталога. Если в файле имя не указано —
+    // ставим имя из products; если товара нет в каталоге, fallback на "Товар <sku>".
+    const productMap = new Map();
+    if (skuSet.size) {
+      const prodRows = await db.all(
+        'SELECT id, sku, name FROM products WHERE sku = ANY(?)',
+        Array.from(skuSet),
+      );
+      for (const p of prodRows) {
+        productMap.set(String(p.sku).trim(), { id: p.id, name: p.name });
+      }
+    }
+
+    const groups = new Map();
+    for (const r of rawRows) {
+      const p = productMap.get(r.sku);
+      const name = r.name || p?.name || `Товар ${r.sku}`;
+      const product_id = p?.id ?? null;
+      const key = r.track || `__notrack_${r.li}__`;
+      if (!groups.has(key)) groups.set(key, { track: r.track, delivery: r.delivery, payment: r.payment, items: [] });
+      groups.get(key).items.push({ sku: r.sku, name, qty: r.qty, price: r.price, product_id });
     }
 
     const preview = [];
@@ -1878,6 +1900,7 @@ router.post(
         name: i.name,
         quantity: i.qty,
         unit_price: i.price,
+        product_id: i.product_id ?? null,
       }));
       const total = items.reduce((s, i) => s + i.quantity * i.unit_price, 0);
       const r = await db.run(
@@ -1897,9 +1920,9 @@ router.post(
       const orderId = r.lastInsertRowid;
       for (const it of items) {
         await db.run(
-          `INSERT INTO order_items (order_id, sku, name, quantity, unit_price, line_total)
-           VALUES (?, ?, ?, ?, ?, ?)`,
-          orderId, it.sku, it.name, it.quantity, it.unit_price, it.quantity * it.unit_price,
+          `INSERT INTO order_items (order_id, sku, name, quantity, unit_price, line_total, product_id)
+           VALUES (?, ?, ?, ?, ?, ?, ?)`,
+          orderId, it.sku, it.name, it.quantity, it.unit_price, it.quantity * it.unit_price, it.product_id,
         );
       }
       created++;
