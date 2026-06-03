@@ -33,7 +33,6 @@ import cronRoutes from './routes/cron.js';
 import maxRoutes from './routes/max.js';
 import aiProposalsRoutes from './routes/aiProposals.js';
 import noticeBannersRoutes from './routes/noticeBanners.js';
-import diagRoutes from './routes/diag.js';
 import notificationPrefsRoutes from './routes/notificationPrefs.js';
 import projectsRoutes from './routes/projects.js';
 
@@ -147,7 +146,6 @@ export function createApp({ serveStatic = true } = {}) {
   app.use('/api/notice-banners', noticeBannersRoutes);
   app.use('/api/notification-prefs', notificationPrefsRoutes);
   app.use('/api/projects', projectsRoutes);
-  app.use('/api/diag', diagRoutes);
   app.use((req, res) => {
     res.status(404).json({ error: `Route not found: ${req.method} ${req.path}` });
   });
