@@ -215,7 +215,7 @@ router.get(
       const orderIds = rows.map((r) => r.id);
       const itemsRows = await db.all(
         `SELECT order_id, name, sku, quantity, unit_price, image_url,
-                ROW_NUMBER() OVER (PARTITION BY order_id ORDER BY id) AS rn,
+                ROW_NUMBER() OVER (PARTITION BY order_id ORDER BY id)::int AS rn,
                 COUNT(*) OVER (PARTITION BY order_id)::int AS total_count
          FROM order_items
          WHERE order_id = ANY(?)
