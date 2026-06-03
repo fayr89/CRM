@@ -210,20 +210,19 @@ router.get(
       limit,
       offset,
     );
-    // Подтягиваем items: один запрос для всех order_id, ROW_NUMBER для лимита 5 в preview.
-    // JOIN с products нужен для cost_price (валовая прибыль для админа) и чтобы
+    // Подтягиваем items: один запрос для всех order_id. Отдаём весь массив
+    // позиций для каждого заказа — фронт показывает построчно в списке.
+    // JOIN с products нужен для cost_price (валовая прибыль админа) и чтобы
     // знать, у каких позиций нет прайса по этому каналу+складу.
     if (rows.length) {
       const orderIds = rows.map((r) => r.id);
       const itemsRows = await db.all(
-        `SELECT oi.order_id, oi.name, oi.sku, oi.quantity, oi.unit_price, oi.image_url,
-                oi.catalog_price, p.cost_price,
-                ROW_NUMBER() OVER (PARTITION BY oi.order_id ORDER BY oi.id)::int AS rn,
-                COUNT(*) OVER (PARTITION BY oi.order_id)::int AS total_count
+        `SELECT oi.order_id, oi.id, oi.name, oi.sku, oi.quantity, oi.unit_price, oi.line_total,
+                oi.image_url, oi.catalog_price, oi.product_id, p.cost_price
          FROM order_items oi
          LEFT JOIN products p ON p.id = oi.product_id
          WHERE oi.order_id = ANY(?)
-         ORDER BY oi.order_id, rn`,
+         ORDER BY oi.order_id, oi.id`,
         orderIds,
       );
       const byOrder = new Map();
@@ -231,49 +230,41 @@ router.get(
         let agg = byOrder.get(it.order_id);
         if (!agg) {
           agg = {
-            items_count: it.total_count,
-            preview_image: null,
-            items_preview: [],
-            first_item_sku: null,
-            first_item_name: null,
-            first_item_qty: null,
-            first_item_price: null,
-            items_no_price_count: 0, // позиции без catalog_price (нет цены в прайс-листе)
-            cost_total: 0,           // суммарная себестоимость для расчёта валовой прибыли
+            items: [], preview_image: null,
+            items_no_price_count: 0, cost_total: 0,
           };
           byOrder.set(it.order_id, agg);
         }
+        agg.items.push({
+          id: it.id,
+          sku: it.sku, name: it.name,
+          quantity: it.quantity, unit_price: it.unit_price,
+          line_total: it.line_total ?? Number(it.unit_price || 0) * Number(it.quantity || 0),
+          image_url: it.image_url, catalog_price: it.catalog_price,
+          product_id: it.product_id,
+        });
         if (!agg.preview_image && it.image_url) agg.preview_image = it.image_url;
-        if (it.rn <= 5) agg.items_preview.push(it.name);
-        if (it.rn === 1) {
-          agg.first_item_sku = it.sku;
-          agg.first_item_name = it.name;
-          agg.first_item_qty = it.quantity;
-          agg.first_item_price = it.unit_price;
-        }
         if (it.catalog_price == null) agg.items_no_price_count += 1;
         agg.cost_total += Number(it.cost_price || 0) * Number(it.quantity || 0);
       }
       for (const r of rows) {
-        const agg = byOrder.get(r.id) || {
-          items_count: 0, preview_image: null, items_preview: [],
-          first_item_sku: null, first_item_name: null, first_item_qty: null, first_item_price: null,
-          items_no_price_count: 0, cost_total: 0,
-        };
-        r.items_count = agg.items_count;
+        const agg = byOrder.get(r.id) || { items: [], preview_image: null, items_no_price_count: 0, cost_total: 0 };
+        r.items = agg.items;
+        r.items_count = agg.items.length;
         r.preview_image = agg.preview_image;
-        r.items_preview = agg.items_preview.join(', ');
-        r.first_item_sku = agg.first_item_sku;
-        r.first_item_name = agg.first_item_name;
-        r.first_item_qty = agg.first_item_qty;
+        // Совместимость со старыми местами (карточка канбана использует first_item_*).
+        const first = agg.items[0] || {};
+        r.first_item_sku = first.sku ?? null;
+        r.first_item_name = first.name ?? null;
+        r.first_item_qty = first.quantity ?? null;
+        r.first_item_price = first.unit_price ?? null;
+        r.items_preview = agg.items.slice(0, 5).map((i) => i.name).join(', ');
         r.items_no_price_count = agg.items_no_price_count;
-        // Валовая прибыль = total_amount - себестоимость. Отдаём ТОЛЬКО админу
-        // и РОПу — менеджеры/склад себестоимость видеть не должны.
+        // Валовая прибыль — только админ/РОП.
         if (['admin', 'rop'].includes(req.user.role)) {
           r.cost_total = Math.round(agg.cost_total * 100) / 100;
           r.gross_profit = Math.round(((r.total_amount || 0) - agg.cost_total) * 100) / 100;
         }
-        r.first_item_price = agg.first_item_price;
       }
     }
     const { total } = await db.get(

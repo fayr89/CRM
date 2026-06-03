@@ -1339,3 +1339,11 @@ button, .btn, a { touch-action: manipulation; }
   }
   .mobile-user-badge-role { color: #fbbf24; font-size: 10px; }
 }
+
+/* === Список заказов: одна строка = одна позиция, группировка визуально === */
+/* Подсветка hover ловится на всей группе через JS-делегацию, но базово даём
+   разный фон для второй+ строки заказа — чтобы было видно где новая группа. */
+tr.order-row-item td { color: #4b5563; }
+tr.order-row-first { background: #fff; }
+tr.order-row-item { background: #fafafa; }
+tr.order-row:hover { background: #f3f4f6; cursor: pointer; }

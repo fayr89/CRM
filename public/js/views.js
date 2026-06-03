@@ -2929,7 +2929,10 @@ export async function renderOrders(main, opts = {}) {
       el('th', {}, 'Менеджер'),
       el('th', { style: { textAlign: 'right' } }, 'Действия'),
     );
-    const body = rows.map((r) => {
+    // Строим actions один раз на заказ, потом рендерим по строке на каждую
+    // позицию. Первая строка заказа несёт all-cells + actions, остальные —
+    // только sku/name/qty/price (даты/трек/менеджер пустые для компактности).
+    function buildRowsForOrder(r) {
       const actions = [];
       // Действия склада / админа
       if ((isWarehouse || isAdmin) && r.status === 'new') {
@@ -3000,45 +3003,52 @@ export async function renderOrders(main, opts = {}) {
           ),
         );
       }
-      return el(
-        'tr',
-        {
-          onClick: async (e) => {
-            const row = e.currentTarget;
-            if (row.dataset.loading === '1') return;
-            row.dataset.loading = '1';
-            row.style.opacity = '0.5';
-            row.style.pointerEvents = 'none';
-            try {
-              const full = await api.get('orders', r.id);
-              await showOrderDetails(full, reload);
-            } catch (err) {
-              toast(err.message || 'Не удалось открыть заказ', 'error');
-            } finally {
-              row.dataset.loading = '';
-              row.style.opacity = '';
-              row.style.pointerEvents = '';
-            }
-          },
-        },
-        el('td', {}, `#${r.id}`),
-        el('td', {}, fmtDate(r.created_at)),
-        el('td', { style: { fontFamily: 'monospace', fontSize: '12px' } }, r.first_item_sku || '—'),
-        el('td', {}, r.first_item_name || (r.items_preview || '—')),
-        el('td', {}, r.first_item_qty != null ? r.first_item_qty + (r.items_count > 1 ? ` (+${r.items_count - 1})` : '') : '—'),
-        el('td', {}, r.first_item_price != null ? fmtMoney(r.first_item_price, r.currency) : '—'),
-        el('td', {}, fmtMoney(r.total_amount, r.currency)),
-        el('td', {}, r.delivery_method || r.marketplace || '—'),
-        el('td', {}, r.shipment_qr || '—'),
-        el('td', {}, badge(r.status, 'order_status')),
-        el('td', {}, r.manager_name || '—'),
-        el(
-          'td',
-          { style: { textAlign: 'right' }, onClick: (e) => e.stopPropagation() },
-          ...actions,
-        ),
-      );
-    });
+      const onClick = async (e) => {
+        const row = e.currentTarget;
+        if (row.dataset.loading === '1') return;
+        row.dataset.loading = '1';
+        row.style.opacity = '0.5';
+        row.style.pointerEvents = 'none';
+        try {
+          const full = await api.get('orders', r.id);
+          await showOrderDetails(full, reload);
+        } catch (err) {
+          toast(err.message || 'Не удалось открыть заказ', 'error');
+        } finally {
+          row.dataset.loading = '';
+          row.style.opacity = '';
+          row.style.pointerEvents = '';
+        }
+      };
+      // Если позиций нет — одна строка-«пустышка» (на случай битых данных).
+      const items = (r.items && r.items.length) ? r.items : [{ sku: r.first_item_sku, name: r.first_item_name, quantity: r.first_item_qty, unit_price: r.first_item_price }];
+      return items.map((it, idx) => {
+        const isFirst = idx === 0;
+        // Верхний бордер у первой строки заказа — визуально группирует.
+        const trStyle = isFirst ? { borderTop: '2px solid #d1d5db' } : {};
+        return el(
+          'tr',
+          { onClick, class: 'order-row' + (isFirst ? ' order-row-first' : ' order-row-item'), style: trStyle },
+          el('td', {}, isFirst ? `#${r.id}` : ''),
+          el('td', {}, isFirst ? fmtDate(r.created_at) : ''),
+          el('td', { style: { fontFamily: 'monospace', fontSize: '12px' } }, it.sku || '—'),
+          el('td', {}, it.name || '—'),
+          el('td', {}, it.quantity != null ? String(it.quantity) : '—'),
+          el('td', {}, it.unit_price != null ? fmtMoney(it.unit_price, r.currency) : '—'),
+          el('td', {}, isFirst ? fmtMoney(r.total_amount, r.currency) : ''),
+          el('td', {}, isFirst ? (r.delivery_method || r.marketplace || '—') : ''),
+          el('td', {}, isFirst ? (r.shipment_qr || '—') : ''),
+          el('td', {}, isFirst ? badge(r.status, 'order_status') : ''),
+          el('td', {}, isFirst ? (r.manager_name || '—') : ''),
+          el(
+            'td',
+            { style: { textAlign: 'right' }, onClick: (e) => e.stopPropagation() },
+            ...(isFirst ? actions : []),
+          ),
+        );
+      });
+    }
+    const body = rows.flatMap(buildRowsForOrder);
 
     tableArea.append(
       el(
