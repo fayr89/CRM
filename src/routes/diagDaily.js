@@ -77,7 +77,7 @@ router.get('/patch-proposal', async (req, res) => {
   }
 });
 
-// GET /post-message?fb_id=...&text=<base64> — написать в тред от AI ассистента
+// GET /post-message?fb_id=...&text=<url-encoded-base64> — написать в тред от AI ассистента
 router.get('/post-message', async (req, res) => {
   try {
     const { fb_id, text } = req.query;
@@ -100,7 +100,19 @@ router.get('/post-message', async (req, res) => {
   }
 });
 
-// GET /patch-feedback?fb_id=...&status=...&reply=<base64> — сменить статус / ответить
+// GET /delete-message?msg_id=... — удалить сообщение треда
+router.get('/delete-message', async (req, res) => {
+  try {
+    const { msg_id } = req.query;
+    if (!msg_id) return res.status(400).json({ error: 'msg_id required' });
+    const result = await db.run('DELETE FROM feedback_messages WHERE id = ?', msg_id);
+    res.json({ deleted: result.changes });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// GET /patch-feedback?fb_id=...&status=...&reply=<url-encoded-base64> — сменить статус
 router.get('/patch-feedback', async (req, res) => {
   try {
     const { fb_id, status, reply } = req.query;
