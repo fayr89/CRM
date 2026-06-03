@@ -2804,7 +2804,7 @@ export async function renderOrders(main, opts = {}) {
                     'div',
                     { class: 'order-card-items' },
                     ...r.items.slice(0, 8).map((it) => {
-                      const nm = (it.name || '').length > 20 ? it.name.slice(0, 20) + '…' : (it.name || '');
+                      const nm = (it.name || '').length > 30 ? it.name.slice(0, 30) + '…' : (it.name || '');
                       return el(
                         'div',
                         { class: 'order-card-item-row', title: `${it.sku || ''} ${it.name || ''} × ${it.quantity}` },
