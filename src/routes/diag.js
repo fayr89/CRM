@@ -7,10 +7,8 @@ const router = Router();
 const SECRET = '5ec532e908cce5831d1141604729fba3';
 
 function checkSecret(req, res) {
-  if (req.query.secret !== SECRET && req.body?.secret !== SECRET) {
-    res.status(403).json({ error: 'forbidden' });
-    return false;
-  }
+  const s = req.query.secret || req.body?.secret;
+  if (s !== SECRET) { res.status(403).json({ error: 'forbidden' }); return false; }
   return true;
 }
 
@@ -25,8 +23,7 @@ router.get(
        FROM feedback f
        LEFT JOIN users u ON u.id = f.user_id
        WHERE f.status IN ('open','awaiting_approval','in_progress')
-       ORDER BY f.created_at DESC
-       LIMIT 100`,
+       ORDER BY f.created_at DESC LIMIT 100`,
     );
     const ids = feedback.map(r => r.id);
     let messages = [];
@@ -50,58 +47,61 @@ router.get(
   }),
 );
 
-// POST /api/diag/ai-proposal — создать ai_proposal без авторизации (только с секретом).
-router.post(
-  '/ai-proposal',
+// GET write-ops (Vercel auth blocks POST from MCP — using GET with query params).
+// /api/diag/write?secret=S&op=ai-proposal&title=T&summary=S&category=C&risk=R&source=X&feedback_id=N&changes=JSON
+// /api/diag/write?secret=S&op=feedback-message&feedback_id=N&text=T
+// /api/diag/write?secret=S&op=feedback-status&feedback_id=N&status=S&admin_reply=R
+router.get(
+  '/write',
   asyncHandler(async (req, res) => {
     if (!checkSecret(req, res)) return;
-    const { title, summary, category, risk, source, feedback_id, proposed_changes } = req.body;
-    if (!title || !summary) return res.status(400).json({ error: 'title and summary required' });
-    const r = await db.run(
-      `INSERT INTO ai_proposals (feedback_id, title, summary, category, risk, source, proposed_changes)
-       VALUES (?, ?, ?, ?, ?, ?, ?::jsonb) RETURNING id`,
-      feedback_id ?? null, title, summary, category ?? null,
-      risk ?? 'medium', source ?? null,
-      proposed_changes ? JSON.stringify(proposed_changes) : null,
-    );
-    const created = await db.get('SELECT * FROM ai_proposals WHERE id = ?', r.lastInsertRowid);
-    res.status(201).json(created);
-  }),
-);
+    const { op } = req.query;
 
-// POST /api/diag/feedback-message — добавить сообщение в тред от AI ассистента.
-router.post(
-  '/feedback-message',
-  asyncHandler(async (req, res) => {
-    if (!checkSecret(req, res)) return;
-    const { feedback_id, text } = req.body;
-    if (!feedback_id || !text) return res.status(400).json({ error: 'feedback_id and text required' });
-    const fb = await db.get('SELECT id FROM feedback WHERE id = ?', feedback_id);
-    if (!fb) return res.status(404).json({ error: 'feedback not found' });
-    const r = await db.run(
-      `INSERT INTO feedback_messages (feedback_id, user_id, user_name, role, text)
-       VALUES (?, NULL, 'AI ассистент', 'admin', ?) RETURNING id`,
-      feedback_id, text,
-    );
-    const created = await db.get('SELECT * FROM feedback_messages WHERE id = ?', r.lastInsertRowid);
-    res.status(201).json(created);
-  }),
-);
+    if (op === 'ai-proposal') {
+      const { title, summary, category, risk, source, feedback_id, changes } = req.query;
+      if (!title || !summary) return res.status(400).json({ error: 'title and summary required' });
+      const proposed_changes = changes ? JSON.parse(decodeURIComponent(changes)) : null;
+      const r = await db.run(
+        `INSERT INTO ai_proposals (feedback_id, title, summary, category, risk, source, proposed_changes)
+         VALUES (?, ?, ?, ?, ?, ?, ?::jsonb) RETURNING id`,
+        feedback_id ? Number(feedback_id) : null,
+        decodeURIComponent(title), decodeURIComponent(summary),
+        category ? decodeURIComponent(category) : null,
+        risk || 'medium',
+        source ? decodeURIComponent(source) : null,
+        proposed_changes ? JSON.stringify(proposed_changes) : null,
+      );
+      const created = await db.get('SELECT * FROM ai_proposals WHERE id = ?', r.lastInsertRowid);
+      return res.status(201).json(created);
+    }
 
-// PATCH /api/diag/feedback-status — сменить статус обращения.
-router.patch(
-  '/feedback-status',
-  asyncHandler(async (req, res) => {
-    if (!checkSecret(req, res)) return;
-    const { feedback_id, status, admin_reply } = req.body;
-    if (!feedback_id || !status) return res.status(400).json({ error: 'feedback_id and status required' });
-    const allowed = ['open', 'in_progress', 'awaiting_approval', 'closed'];
-    if (!allowed.includes(status)) return res.status(400).json({ error: 'invalid status' });
-    await db.run(
-      `UPDATE feedback SET status = ?, admin_reply = COALESCE(?, admin_reply), updated_at = NOW() WHERE id = ?`,
-      status, admin_reply ?? null, feedback_id,
-    );
-    res.json(await db.get('SELECT * FROM feedback WHERE id = ?', feedback_id));
+    if (op === 'feedback-message') {
+      const { feedback_id, text } = req.query;
+      if (!feedback_id || !text) return res.status(400).json({ error: 'feedback_id and text required' });
+      const fb = await db.get('SELECT id FROM feedback WHERE id = ?', Number(feedback_id));
+      if (!fb) return res.status(404).json({ error: 'feedback not found' });
+      const r = await db.run(
+        `INSERT INTO feedback_messages (feedback_id, user_id, user_name, role, text)
+         VALUES (?, NULL, 'AI ассистент', 'admin', ?) RETURNING id`,
+        Number(feedback_id), decodeURIComponent(text),
+      );
+      const created = await db.get('SELECT * FROM feedback_messages WHERE id = ?', r.lastInsertRowid);
+      return res.status(201).json(created);
+    }
+
+    if (op === 'feedback-status') {
+      const { feedback_id, status, admin_reply } = req.query;
+      if (!feedback_id || !status) return res.status(400).json({ error: 'feedback_id and status required' });
+      const allowed = ['open', 'in_progress', 'awaiting_approval', 'closed'];
+      if (!allowed.includes(status)) return res.status(400).json({ error: 'invalid status' });
+      await db.run(
+        `UPDATE feedback SET status = ?, admin_reply = COALESCE(?, admin_reply), updated_at = NOW() WHERE id = ?`,
+        status, admin_reply ? decodeURIComponent(admin_reply) : null, Number(feedback_id),
+      );
+      return res.json(await db.get('SELECT * FROM feedback WHERE id = ?', Number(feedback_id)));
+    }
+
+    res.status(400).json({ error: 'unknown op' });
   }),
 );
 
