@@ -1,0 +1,396 @@
+# PROJECT-MAP.md — карта репозитория
+
+> **Зачем этот файл.** Чтобы не «искать на ощупь» при правках. Сюда складываются:
+> где что лежит, чем что-то отличается от соседа, неочевидные связи между
+> файлами, граблезоны. **При любом изменении кода — обнови соответствующий
+> раздел тут.** Если меняешь схему БД — секцию «Схема». Если добавил роут —
+> секцию «Бэкенд». Это не документация для конечного пользователя; это
+> инструкция «куда смотреть, чтобы не сломать».
+>
+> Уровень выше — `CLAUDE.md` (рабочие ветки, деплой, доменные решения,
+> правила обращения с feedback и AI). `AI-DAILY.md` — алгоритм ежедневного
+> AI-обхода. Этот файл — **топография кода**.
+
+---
+
+## 1. Стек и слои
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│                       Vercel serverless                      │
+│  ┌─────────────────────┐         ┌────────────────────────┐  │
+│  │  Express (src/)     │         │  Static (public/)      │  │
+│  │  api/index.js       │         │  index.html + js + css │  │
+│  └──────────┬──────────┘         └────────────┬───────────┘  │
+└─────────────┼──────────────────────────────────┼─────────────┘
+              │                                  │
+       ┌──────▼──────┐                  ┌────────▼────────┐
+       │  Postgres   │                  │ Browser / PWA   │
+       │ (external)  │                  │  Vanilla JS SPA │
+       └─────────────┘                  └─────────────────┘
+```
+
+- **Сборщика нет.** Прод-минификация — `scripts/minify.mjs` (esbuild),
+  запускается через `npm run build` (см. `vercel.json` → `buildCommand`).
+- **PWA.** `public/sw.js` + `manifest.webmanifest`. `minify.mjs` стэмпит
+  `__BUILD_VERSION__` в SW на каждом деплое → клиент видит баннер «Обновить».
+- **БД доступна только через API.** Прямого доступа из MCP в прод-Postgres
+  нет (см. `CLAUDE.md` — Supabase MCP = другие проекты).
+
+## 2. Каталог файлов
+
+### Бэкенд (`src/`)
+
+| Файл | За что отвечает |
+|---|---|
+| `app.js` | Express setup, монтаж роутов, CORS, ETag off, trust proxy, MS-queue tick |
+| `server.js` | Локальный запуск (`npm run dev`) |
+| `db.js` | Подключение к Postgres + `ensureInitialized()` (миграции, SCHEMA_VERSION-гейт) |
+| `auth.js` | JWT-логика, `authenticate` middleware, `requireRole`, имперсонация (admin → роль) |
+| `access.js` | `getAccessibleUserIds` / `canAccessUser` / `canAccessOwner` — кто что видит по иерархии |
+| `query.js` | `parsePagination`, `parseSort`, `paginated` — хелперы для роутов |
+| `errors.js` | `BadRequest`, `Forbidden`, `NotFound`, `Unauthorized`, `asyncHandler` |
+| `config.js` | Конфиг + дефолты (⚠ `JWT_SECRET`/`ADMIN_PASSWORD` пока дефолты — см. бэклог) |
+| `middleware/apiToken.js` | `requireApiToken` + `requireScope` для `/api/external` |
+| `db/seed.js` | Сид-данные (вызывается через `npm run seed`) |
+
+### Роуты (`src/routes/`)
+
+| Роут-файл | URL-префикс | Что внутри |
+|---|---|---|
+| `auth.js` | `/api/auth` | login, accept-invite, impersonate, change-password, me |
+| `users.js` | `/api/users` | CRUD пользователей, `access_blocks` |
+| `companies.js` | `/api/companies` | CRUD компаний |
+| `contacts.js` | `/api/contacts` | CRUD контактов |
+| `leads.js` | `/api/leads` | CRUD лидов |
+| `deals.js` | `/api/deals` | CRUD сделок + `/pipeline`, `/win`, `/lose` |
+| `activities.js` | `/api/activities` | CRUD задач + `/complete` |
+| `notes.js` | `/api/notes` | заметки |
+| `dashboard.js` | `/api/dashboard` | агрегаты для главной |
+| `invitations.js` | `/api/invitations` | приглашения |
+| `orders.js` | `/api/orders` | **БОЛЬШОЙ** — заказы, импорт CSV, экспорт CSV, лист сборки, возвраты, потери, recent-items |
+| `payments.js` | `/api/payments` | платежи / подтверждение / отклонение |
+| `cashbox.js` | `/api/cashbox` | касса менеджера |
+| `external.js` | `/api/external/...` | приём заявок снаружи по API-токену (лиды + заказы) |
+| `apiTokens.js` | `/api/api-tokens` | управление токенами интеграций |
+| `webhooks.js` | `/api/webhooks` | исходящие вебхуки на доменные события |
+| `notifications.js` | `/api/notifications` | колокольчик пользователя |
+| `notificationPrefs.js` | `/api/notification-prefs` | пер-юзер тумблеры МАХ-уведомлений |
+| `notifications`*-related* | (registry в `services/notification-types.js`) | список типов + шаблоны |
+| `search.js` | `/api/search` | глобальный поиск |
+| `products.js` | `/api/products` | каталог, прайсы, склады, шаблоны импорта, МойСклад-интеграция |
+| `pricing.js` | `/api/pricing` | способы оплаты + пороги скидок |
+| `warehouseSettings.js` | `/api/warehouse` | график отгрузок + видимость складов |
+| `analytics.js` | `/api/analytics` | revenue/managers/marketplaces/products/funnel/summary |
+| `admin.js` | `/api/admin` | бэкап БД, wipe-operational |
+| `feedback.js` | `/api/feedback` | обращения + тред + аттачменты |
+| `cron.js` | `/api/cron/refresh-stocks` | Vercel-cron остатков МойСклада |
+| `max.js` | `/api/max` | МАХ-бот (вебхук, привязка, диагностика) |
+| `aiProposals.js` | `/api/ai-proposals` | inbox админа для предложений AI |
+| `noticeBanners.js` | `/api/notice-banners` | админ-управляемые плашки сверху |
+| `projects.js` | `/api/projects` | проекты (стикеры на лидах/сделках/заказах/контактах/компаниях) |
+
+> **TEMP diag-роуты.** Авто-claude иногда заводит файлы вроде
+> `routes/diagDaily.js` под `/api/diag/...` для разовой диагностики
+> прод-БД через `web_fetch_vercel_url`. Они помечены TEMP и сносятся в
+> том же раунде (см. `chore(diag): remove ...` коммиты). В постоянных
+> файлах их быть не должно.
+
+### Сервисы (`src/services/`)
+
+| Файл | За что отвечает |
+|---|---|
+| `audit.js` | `logAction(req, {action, entity_type, entity_id, details})` → `audit_log` |
+| `csv.js` | `toCsv(rows, columns)` для экспортов |
+| `labels-pdf.js` | PDF этикетки для отгрузки (bwip-js + pdfkit) |
+| `max-bot.js` | MAX API клиент, `sendMaxMessage`, `setMaxWebhook`, `handleMaxUpdate` |
+| `moysklad.js` | низкоуровневый MS-клиент + ретраи |
+| `ms-handlers.js` | регистрирует обработчики типов задач MS-очереди (импорт через side-effect) |
+| `ms-jobs.js` | очередь MS-задач: `enqueueMsJob`, `tickMsQueue` (опрос таблицы `ms_jobs`) |
+| `ms-orders.js` | конкретные MS-операции: customerorder, demand, salesreturn, loss, markdown |
+| `notifications.js` | `notify`, `notifyMany`, `notifyAdmins(AndManagers)`, `notifyWarehouse` + `buildOrderNotificationBody` |
+| `notification-types.js` | реестр 11 типов уведомлений (key/label/template/roles) |
+| `secrets.js` | хранение и чтение секретов МАХ-бота из app_settings |
+| `shippingSchedule.js` | расчёт ближайшей даты отгрузки по графику + cutoff МСК |
+| `webhooks.js` | `emitEvent` — отправка исходящих вебхуков подписчикам |
+
+### Фронтенд (`public/`)
+
+| Файл | За что отвечает |
+|---|---|
+| `index.html` | HTML-шапка, PWA-метатеги, манифест, иконки |
+| `manifest.webmanifest` | PWA-манифест (name/icons/standalone/theme) |
+| `sw.js` | service-worker (только детект обновлений; НЕ кеширует) |
+| `icon-*.png`, `favicon.ico` | иконки разных размеров |
+| `css/styles.css` | **ОДИН файл со всеми стилями** (~2500 строк). Разделён комментариями по фичам |
+| `js/api.js` | `request(method, path, opts)` + методы (`api.list`, `api.get`, ...). Сессия в localStorage |
+| `js/ui.js` | `el`, `clear`, `fmt*`, `tr`, `toast`, `confirm`, `openModal`, `paginator`, `emptyState` |
+| `js/app.js` | bootstrap: hash-роутинг, sidebar, mobile menu, PWA-регистрация, колокольчик-polling, уведомления |
+| `js/views.js` | **БОЛЬШОЙ (>10000 строк)** — все экранные рендереры (см. ниже) |
+| `embed/form.js` | публичная встраиваемая форма заявки (с лидом-режимом) |
+
+### Скрипты (`scripts/`)
+
+| Файл | Назначение |
+|---|---|
+| `minify.mjs` | прод-минификация JS + стэмп `__BUILD_VERSION__` в `sw.js` |
+| `gen-icons.mjs` | генератор PWA-иконок (PNG через zlib) |
+| `deploy.sh`, `deploy-continue.sh` | вспомогательные скрипты деплоя |
+
+### Конфигурация деплоя
+
+| Файл | Зачем |
+|---|---|
+| `vercel.json` | Vercel-конфиг (functions, rewrites `/api/*` → `api/index`, cron 15-минутный) |
+| `api/index.js` | Vercel entry: импорт `createApp` + `ensureInitialized` |
+| `package.json` | scripts: `start`/`dev`/`test`/`seed`/`build` |
+| `deploy/install.sh`, `deploy/README.md` | one-shot setup VPS-прокси (nginx + Let's Encrypt) |
+
+## 3. Топ-уровневые render-функции в `views.js`
+
+`public/js/views.js` — одно большое полотно. Карта точек входа:
+
+| Функция | URL хеш | Что показывает |
+|---|---|---|
+| `renderDashboard` | `#/dashboard` | главная: статы + последние события |
+| `renderPipeline` | `#/pipeline` | канбан сделок (drag&drop по этапам) |
+| `renderResource(main, key, opts)` | `#/leads`, `#/contacts`, `#/companies`, `#/deals`, `#/activities`, `#/users` | универсальный CRUD-список ресурса (`RESOURCES[key]` — конфиг) |
+| `renderOrders(main, opts)` | `#/orders` | продажи с площадок. **directMode=false** в коде = «не B2B» |
+| `renderDirectOrders` | `#/direct-orders` | B2B-заказы. Прокси `renderOrders(main, {..., directMode: true})` |
+| `renderShipping` | `#/shipping` | график отгрузок для склада |
+| `renderReturns` | `#/returns` | возвраты, обработка складом |
+| `renderLostGoods` | `#/lost-goods` | потерянные товары + аннулирование |
+| `renderProducts` | `#/products` | каталог + прайсы + импорт МойСклад |
+| `renderCashbox` | `#/cashbox` | касса менеджера |
+| `renderAnalytics` | `#/analytics` | аналитика для admin/rop |
+| `renderIntegrations` | `#/integrations` | админ-настройки: МС, склады, площадки, доставки, оплаты, проекты, MAX |
+| `renderInvitations` | `#/invitations` | приглашения |
+| `renderFeedback` | `#/feedback` | обращения для админа |
+| `renderMyFeedback` | `#/my-feedback` | свои обращения |
+| `renderMyProfile` | `#/my-profile` | смена пароля + настройки МАХ-уведомлений |
+| `renderAudit` | `#/audit` | лог действий |
+| `renderAiInbox` | `#/ai-inbox` | inbox AI-предложений |
+| `renderAcceptInvite` | `#/accept?token=…` | приём приглашения без авторизации |
+| `renderMaxBotSection` | внутри `renderIntegrations` | MAX-бот: токен, вебхук, диагностика |
+
+**Внутренние helper-функции в `views.js`** (не экспортируются, но важные):
+- `openOrderForm(order, onSaved, opts)` — модал создания/редактирования заказа.
+  `opts.b2b=true` или `!order.marketplace` → b2b-режим (см. секцию «Доменные решения»).
+- `showOrderDetails(order, reload)` — модал с деталями заказа.
+- `openOrderImportModal(onDone, opts)` — модал импорта CSV. `opts.b2b=true` → b2b-шаблон.
+- `itemsEditor(initialItems, opts)` — редактор позиций (поиск, популярные, каталог).
+- `loadLookups()` — прогрев `CACHE.users/companies/contacts/projects` при заходе в раздел.
+- `MARKETPLACES`, `DELIVERY_METHODS`, `FEEDBACK_CATEGORIES` — справочники.
+
+## 4. Доменные решения (что важно держать в голове)
+
+### Заказы: каналы и режимы
+
+CRM разделяет заказы на два потока:
+
+1. **Маркетплейс-заказы** (`marketplace IS NOT NULL`, значения: `Avito`,
+   `Wildberries`, `Ozon`, …):
+   - Раздел сайдбара «🛒 Авито (менеджеры площадок)» → `#/orders`.
+   - Список + канбан фильтруют `marketplace_only=1` на бэке.
+   - В форме видны: площадка, ссылка на диалог Avito, номер отправления.
+   - Резервировать без `shipment_qr` нельзя.
+   - Стандартный access_block = `direct`.
+
+2. **B2B-заказы** (`marketplace IS NULL`, `client_classification='B2B'`):
+   - Раздел сайдбара «📋 B2B (менеджеры по продажам)» → `#/direct-orders`.
+   - Список + канбан фильтруют `direct=1` (= `marketplace IS NULL`).
+   - В форме: НЕТ площадки, НЕТ Avito-диалога, НЕТ трека. Дефолт оплаты
+     `rs_no_vat` («РС без НДС»), дефолт классификации `B2B`.
+   - Резерв без трека разрешён.
+   - Стандартный access_block = `sales`.
+
+Маршрут `#/direct-orders` остался для бэк-совместимости (ссылки в уведомлениях,
+закладки) — переименование только в лейбле сайдбара.
+
+### Прайсы: единый «Общий прайс»
+
+- В `product_prices` ключ строки = `(product_id, marketplace, warehouse)`.
+- **Раньше** `marketplace` совпадал с площадкой заказа (Avito/WB/...).
+- **Сейчас** канал зафиксирован одной строкой `'Общий прайс'`. Миграция в
+  `db.js` (SCHEMA_VERSION 19): `UPDATE product_prices SET marketplace='Общий прайс'
+  WHERE marketplace='Avito'`. Идемпотентна.
+- **Все** lookup-запросы цены жёстко используют `pp.marketplace = 'Общий прайс'`:
+  `orders.js` (list/by-id/recent-items), `products.js` (`/for-marketplace`,
+  `/popular`), `analytics.js` (top-products).
+- Форма цены в карточке товара показывает единственный пункт «Общий прайс».
+- Цена редактируется инлайн (`<input>` в строке прайса, save on blur/Enter,
+  Esc откат). Кнопка «Удалить» осталась.
+- **Если в будущем понадобится per-marketplace pricing** — это снова разводить
+  на ключ `marketplace`. Сейчас намеренно унифицировано.
+
+### Склад, остатки, прайс
+
+- Склад на заказе — `orders.warehouse` (одна строка из списка `app_settings.warehouses.all`).
+- Остатки в `products.stock_by_store` (jsonb массив `{store, stock, reserve}`).
+- Цена строго привязана к складу (`product_prices.warehouse`). Без склада
+  цена запрещена (`priceSchema.warehouse.min(1)`).
+- Lookup цены = `(product_id, 'Общий прайс', order.warehouse)`.
+
+### Видимость заказов (`orderScope`)
+
+В `routes/orders.js`:
+- `admin` / `warehouse` → видят все
+- `sales` → только свои (`manager_id = user.id`)
+- `manager` / `rop` → свои + подчинённых (см. `access.getAccessibleUserIds`)
+
+Это применяется в:
+- `GET /api/orders`
+- `GET /api/orders/export.csv`
+- `GET /api/orders/assembly-list.csv`
+- В `GET /api/orders/:id` через `canAccessOrder`.
+
+### Импорт заказов
+
+Эндпоинты:
+- `GET /api/orders/import-template.csv` — Avito-шаблон (Артикул/Кол-во/Цена/Способ отправки/Трек номер + справочник).
+- `GET /api/orders/import-template-b2b.csv` — B2B-шаблон (то же + Клиент/Телефон).
+- `POST /api/orders/import` — парсер CSV. Принимает `b2b=true` →
+  `marketplace=NULL`, `classification='B2B'`, дефолт оплаты `rs_no_vat`,
+  читает колонки Клиент/Телефон.
+
+**Важно про порядок роутов:** `/import-template*.csv` ОБЯЗАНЫ стоять
+ДО роута `/:id`, иначе Express ловит URL как `id="import-template.csv"`
+и Postgres валится `invalid integer` → 500. Уже наступали — см. историю
+коммитов с `fix(orders): import-template.csv ушёл в 500`.
+
+### Имперсонация (admin → роль)
+
+`auth.js`:
+```js
+if (payload.act && user.role === 'admin' && payload.act !== 'admin') {
+  user.realRole = 'admin';
+  user.role = payload.act;
+  user.impersonating = true;
+}
+```
+
+`orderScope` смотрит на `user.role` — НЕ на `realRole`. То есть админ
+в режиме «Смотреть как менеджер» видит то же что менеджер.
+
+На UI: оранжевая sticky-полоса сверху (`.impersonation-bar` в `styles.css`,
+рендер в `app.js renderShell`). На мобиле ещё плашка справа сверху с
+именем+ролью (`.mobile-user-badge`).
+
+### Глубокие ссылки из уведомлений
+
+`notify(userId, type, title, body, link)` хранит `link` в БД и шлёт в МАХ:
+- Хеш-ссылку оборачивает `https://crm.iitit.ru/#…` (см. `services/notifications.js`).
+- Формат `#/orders?id=123`, `#/leads?id=42`, `#/feedback?id=7`.
+- Все ROUTES принимают `(main, opts)` где `opts.params` = `URLSearchParams`
+  из хеша. Каждый renderer сам обрабатывает `opts.params?.get('id')` и
+  открывает detail.
+- В колокольчике (`renderShell` → `openNotificationsDropdown`) клик по
+  записи летит на `href={n.link}` → hashchange → renderApp → detail.
+
+### MAX-бот
+
+- Токен и webhook URL хранятся в `app_settings`. Управляются через
+  «Настройки → 🔔 MAX» (admin only).
+- Авторизация: `Authorization: <token>` (без `Bearer`!). См. `services/max-bot.js`.
+- Юзер привязывает свой чат через deep-link `/start CODE`. Код одноразовый,
+  TTL 30 мин (`user.max_bind_code`/`max_bind_expires`).
+- Per-user toggles типов уведомлений: `user_notification_prefs(user_id,
+  notification_type, enabled)`. Default ON; при сохранении только
+  изменённые с дефолта пишутся в БД. Реестр типов — `services/notification-types.js`.
+
+### PWA
+
+- `manifest.webmanifest`: standalone, theme `#111827`, иконки 192/512/maskable.
+- `index.html`: `viewport-fit=cover`, `apple-mobile-web-app-capable=yes`,
+  `apple-touch-icon` = `icon-180.png`.
+- `sw.js`: НЕ кеширует ресурсы. Только триггерит `updatefound` →
+  баннер «🔄 Доступна новая версия CRM» снизу → клик `skipWaiting` → reload.
+- Версия SW стэмпится `scripts/minify.mjs` на каждом деплое.
+- iOS-баннер «📲 Добавьте на экран Домой» (`loadIosInstallBanner` в `app.js`)
+  показывается только iPhone-Safari, прячется на 3 дня после «×» или
+  навсегда после standalone-инсталла.
+
+### Проекты (стикеры)
+
+Сущность `projects (id, name, color, active)`. Прикрепляется к
+`leads`, `deals`, `orders`, `contacts`, `companies` через `project_id`
+(nullable). Управление: «Настройки → Проекты». Фильтр по проекту в
+списках + цветной стикер на карточках.
+
+### Уведомления админу о заказах
+
+`notify*` в `routes/orders.js` (created/reserved/shipped) сейчас:
+- `order.created` → admins + warehouse
+- `order.reserved` → manager + admins
+- `order.shipped` → manager + admins
+
+Тело собирает `buildOrderNotificationBody(orderId)` из
+`services/notifications.js` — сумма + менеджер + клиент + площадка + первые
+5 позиций. Один шаблон для всех событий заказа.
+
+## 5. Граблезоны (где наступали)
+
+| Грабли | Симптом | Исправление |
+|---|---|---|
+| Express ловит `/import-template.csv` как `:id` | `Internal server error` в скачанном Excel | роуты с литералами ДО `:id`-роутов |
+| ROW_NUMBER + LIMIT N в кaнбане | первая позиция не попадала в `items_preview` | `ROW_NUMBER()::int` + проверять `rn <= N` корректно |
+| Auto-claude deploy сессии комитят прямо в прод-ветку | dev отстаёт, ff-merge падает | merge prod→dev перед ff-merge dev→prod; см. поток в `CLAUDE.md` |
+| Стэмп `__BUILD_VERSION__` в `sw.js` при дев-run `minify.mjs` локально | sw.js ушёл в коммит со стэмпом, надо откатить | НЕ запускай `minify.mjs` локально перед коммитом без необходимости. На Vercel стэмп делается автоматом |
+| `localStorage` в iOS standalone PWA изолирован от Safari | админ в браузере, в PWA — может быть менеджер | плашка `.mobile-user-badge` с ролью; sidebar «Выйти» → fresh login |
+| `web_fetch_vercel_url` отдаёт 502 при долгом ответе | Cloudflare timeout | для тяжёлых импортов — батчевый UPSERT (один SQL), не N-инсертов |
+| Очередь миграций `ALTER ... IF NOT EXISTS` бежит на каждом холодном старте | медленный cold start | `SCHEMA_VERSION` гейт: бежит только при росте версии. Бамп вручную в `db.js` |
+| Запросы к Supabase MCP бьются в `crm-prod-v2`/`crm-v3` — это НЕ прод | можно случайно изменить чужой проект | для диагностики прод-БД — временный `/api/diag/...` эндпоинт + Vercel MCP `web_fetch_vercel_url`, потом сразу снести |
+| Diag-эндпоинты остаются в проде | мусор + дыра доступа | sec-чек: после каждой авто-сессии — `git log --grep="TEMP\\|diag"` и cleanup |
+
+## 6. Конвенции при правках
+
+### Бэкенд
+
+- Все роуты должны быть idempotent на повторах (особенно деньги).
+- Деньги (касса/payments) трогаем по одной правке, с подтверждением.
+- Лог в `audit_log` через `logAction(req, {...})` для всех изменений данных.
+- `WHERE` на основе `getAccessibleUserIds` для всего что про чужие данные.
+- Прайс-lookup — `marketplace='Общий прайс'`, не `ord.marketplace`.
+- Длинные импорты — батчевый UPSERT (один SQL с N placeholders).
+- DDL — идемпотентные `ALTER ... IF NOT EXISTS` + бамп `SCHEMA_VERSION`.
+
+### Фронтенд
+
+- Без сборки → ES-модули, `import {…} from './ui.js'`.
+- DOM строим через `el(tag, attrs, ...children)` из `ui.js`.
+- Модалы только через `openModal(title, body, opts)`.
+- Тосты — `toast(text, kind)`.
+- Подтверждения — `await confirm(text)`.
+- Глубокие ссылки: рендерер принимает `(main, opts)`, читает
+  `opts.params?.get('id')`, открывает detail.
+- Новые render-функции — экспортируем в `views.js`, регистрируем в
+  `ROUTES` в `app.js`. Добавляем пункт в `NAV_GROUPS`.
+
+### Git-поток
+
+- dev: `claude/creation-command-failure-HrDNn`
+- prod (автодеплой): `claude/build-crm-system-JzCP9`
+- коммит → push dev → `git fetch origin prod` → checkout prod →
+  ff-merge dev → push prod → checkout dev → `git merge prod` → push dev
+- если ff не проходит (auto-claude комитнул в прод) → `git merge origin/prod`
+  с маркером `merge: auto-claude` → дальше как обычно
+
+### Деплой и проверка
+
+- `/health` → 200 = миграции прошли.
+- Эндпоинт пробуется через Vercel MCP `web_fetch_vercel_url` (curl даёт 403).
+- Прод-домен через nginx-прокси: `https://crm.iitit.ru`. Уведомления туда же.
+
+## 7. Что обновлять в этой карте
+
+| Сменил что | Обнови раздел |
+|---|---|
+| Добавил/удалил роут-файл | `2. Каталог → Роуты` + `3. Топ-уровневые render-функции` (если есть UI) |
+| Изменил SCHEMA_VERSION или добавил миграцию | `4. Доменные решения → Прайсы` или релевантную секцию |
+| Поменял порядок роутов из-за конфликта `/:id` | `5. Граблезоны` |
+| Добавил новый render в `views.js` | `3. Топ-уровневые render-функции` |
+| Изменил доменное решение (формы заказа, видимость, прайсы) | `4. Доменные решения` |
+| Изменил соглашения по коммитам / деплою | `6. Конвенции` |
+
+Не стесняйся **удалять** устаревшие пункты: лучше короткая правдивая
+карта, чем длинная и протухшая.
