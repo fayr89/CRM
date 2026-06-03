@@ -3067,40 +3067,24 @@ export async function renderOrders(main, opts = {}) {
         }
       };
       const items = (r.items && r.items.length) ? r.items : [{ sku: r.first_item_sku, name: r.first_item_name, quantity: r.first_item_qty, unit_price: r.first_item_price, effective_price: r.first_item_catalog_price }];
-      // Шапка заказа: отдельная строка с colspan на всю ширину — несёт
-      // №, дату, площадку/доставку, трек, статус, менеджера + кнопки действий.
-      // Под ней — строки позиций. Так визуально сразу понятно: «вот заказ,
-      // вот что в нём».
+      // Шапка заказа: строка с данными, выровненными по колонкам таблицы —
+      // №, дата, [Артикул/Наим/Кол-во/Цена — в строках позиций], Сумма,
+      // Служба доставки, Трек №, Статус, Менеджер, Действия.
       const summaryRow = el(
         'tr',
         { onClick: openOrder, class: 'order-row order-row-summary' },
-        el(
-          'td',
-          { colspan: '12' },
-          el(
-            'div',
-            { class: 'order-summary-line' },
-            el('span', { class: 'order-summary-id' }, `#${r.id}`),
-            el('span', { class: 'order-summary-date' }, fmtDate(r.created_at)),
-            badge(r.status, 'order_status'),
-            r.delivery_method || r.marketplace
-              ? el('span', { class: 'order-summary-chip' }, r.delivery_method || r.marketplace)
-              : null,
-            r.shipment_qr
-              ? el('span', { class: 'order-summary-chip mono' }, '📦 ' + r.shipment_qr)
-              : null,
-            el('span', { class: 'order-summary-chip' }, '👤 ' + (r.manager_name || '—')),
-            r.client_name
-              ? el('span', { class: 'order-summary-chip' }, '🧑 ' + r.client_name)
-              : null,
-            el('span', { class: 'order-summary-total' }, fmtMoney(r.total_amount, r.currency)),
-            el(
-              'span',
-              { class: 'order-summary-actions', onClick: (e) => e.stopPropagation() },
-              ...actions,
-            ),
-          ),
-        ),
+        el('td', { style: { fontWeight: '700', fontSize: '15px' } }, `#${r.id}`),
+        el('td', { style: { color: '#9ca3af', fontSize: '12px' } }, fmtDate(r.created_at)),
+        el('td', {}),
+        el('td', {}),
+        el('td', {}),
+        el('td', {}),
+        el('td', { style: { fontWeight: '700', color: '#fbbf24' } }, fmtMoney(r.total_amount, r.currency)),
+        el('td', {}, r.delivery_method || r.marketplace || ''),
+        el('td', { style: { fontFamily: 'monospace', fontSize: '12px' } }, r.shipment_qr ? '📦 ' + r.shipment_qr : ''),
+        el('td', {}, badge(r.status, 'order_status')),
+        el('td', {}, '👤 ' + (r.manager_name || '—')),
+        el('td', { style: { textAlign: 'right' }, onClick: (e) => e.stopPropagation() }, ...actions),
       );
       // Строки позиций: только колонки SKU/Название/Кол-во/Цена/шт + Сумма
       // по строке (qty × price). Прочие ячейки пустые → таблица читается

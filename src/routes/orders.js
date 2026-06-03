@@ -10,6 +10,7 @@ import { emitEvent } from '../services/webhooks.js';
 import { toCsv, csvDate } from '../services/csv.js';
 import { nextShippingDate, getSchedule } from '../services/shippingSchedule.js';
 import { enqueueMsJob } from '../services/ms-jobs.js';
+import { applyLocalStockReserveDelta } from '../services/ms-orders.js';
 import { notifyAdmins } from '../services/notifications.js';
 import { logAction } from '../services/audit.js';
 
@@ -1309,6 +1310,11 @@ router.post(
       }
     });
     const updated = await db.get('SELECT * FROM orders WHERE id = ?', order.id);
+    // Синхронно обновляем локальный резерв — не ждём МС-очереди, чтобы другой менеджер
+    // сразу видел актуальное доступное количество.
+    try { await applyLocalStockReserveDelta(order.id, 0, +1); } catch (e) {
+      console.warn('[reserve] applyLocalStockReserveDelta failed:', e.message);
+    }
     // МС: ставим/обновляем customerorder с резервом на позициях.
     await enqueueMsJob(order.id, 'customer_order.upsert', { reserve_mode: 'full' });
     const reservedBody = await buildOrderNotificationBody(order.id);
@@ -1529,6 +1535,10 @@ router.post(
         order.id,
       );
     });
+    // Синхронно снимаем локальный резерв — сразу видно доступное количество.
+    try { await applyLocalStockReserveDelta(order.id, 0, -1); } catch (e) {
+      console.warn('[unreserve] applyLocalStockReserveDelta failed:', e.message);
+    }
     // МС: снимаем резерв в customerorder (reserve = 0 на позициях).
     await enqueueMsJob(order.id, 'customer_order.upsert', { reserve_mode: 'none' });
     const updated = await db.get('SELECT * FROM orders WHERE id = ?', order.id);
