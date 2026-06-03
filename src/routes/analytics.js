@@ -116,7 +116,7 @@ router.get(
        JOIN order_items oi ON oi.product_id = p.id
        JOIN orders o ON o.id = oi.order_id
        LEFT JOIN product_prices pp ON pp.product_id = p.id
-         AND pp.marketplace = o.marketplace
+         AND pp.marketplace = 'Общий прайс'
          AND pp.warehouse = COALESCE(o.warehouse, '')
        WHERE o.status = 'completed'
          AND o.completed_at > NOW() - (? || ' days')::interval

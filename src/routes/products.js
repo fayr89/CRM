@@ -193,10 +193,9 @@ router.get(
         `SELECT p.id, p.sku, p.name, p.image_url, p.cost_price, p.unit, p.stock, p.stock_by_store,
                 pp.price AS marketplace_price
          FROM products p
-         LEFT JOIN product_prices pp ON pp.product_id = p.id AND pp.marketplace = ? AND pp.warehouse = ?
+         LEFT JOIN product_prices pp ON pp.product_id = p.id AND pp.marketplace = 'Общий прайс' AND pp.warehouse = ?
          WHERE ${where.join(' AND ')}
          ${orderClause} LIMIT 50`,
-        marketplace,
         warehouse,
         ...params,
         ...(ss.similarityArg ? [ss.similarityArg] : []),
@@ -208,10 +207,9 @@ router.get(
           `SELECT p.id, p.sku, p.name, p.image_url, p.cost_price, p.unit, p.stock, p.stock_by_store,
                   pp.price AS marketplace_price
            FROM products p
-           LEFT JOIN product_prices pp ON pp.product_id = p.id AND pp.marketplace = ? AND pp.warehouse = ?
+           LEFT JOIN product_prices pp ON pp.product_id = p.id AND pp.marketplace = 'Общий прайс' AND pp.warehouse = ?
            WHERE ${where.join(' AND ')}
            ORDER BY p.name ASC LIMIT 50`,
-          marketplace,
           warehouse,
           ...params,
         );
@@ -244,12 +242,11 @@ router.get(
                   AND o.status != 'cancelled'
               ), 0) AS recent_usage
        FROM products p
-       LEFT JOIN product_prices pp ON pp.product_id = p.id AND pp.marketplace = ? AND pp.warehouse = ?
+       LEFT JOIN product_prices pp ON pp.product_id = p.id AND pp.marketplace = 'Общий прайс' AND pp.warehouse = ?
        WHERE p.active = TRUE
        ORDER BY recent_usage DESC, p.name ASC
        LIMIT ?`,
       String(days),
-      marketplace,
       warehouse,
       limit,
     );

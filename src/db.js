@@ -453,7 +453,7 @@ export const db = {
 // БАМПАЙ ПРИ КАЖДОМ ДОБАВЛЕНИИ МИГРАЦИИ. Текущие миграции прогоняются
 // только если запись в app_settings.schema_version отличается. Это экономит
 // ~500-2000мс на каждом холодном старте serverless-лямбды.
-const SCHEMA_VERSION = 18;
+const SCHEMA_VERSION = 19;
 
 export async function ensureInitialized() {
   if (globalThis.__crmInitialized) return;
@@ -786,6 +786,11 @@ export async function ensureInitialized() {
       await pool.query('ALTER TABLE leads ADD COLUMN IF NOT EXISTS expected_volume REAL');
       await pool.query('ALTER TABLE leads ADD COLUMN IF NOT EXISTS buy_readiness TEXT');
       await pool.query('ALTER TABLE leads ADD COLUMN IF NOT EXISTS classification TEXT');
+      // Единый прайс «Общий прайс»: раньше Avito-цены были единственным прайсом
+      // у клиента, теперь распространяем на B2B и все площадки. Идемпотентно.
+      await pool.query(
+        `UPDATE product_prices SET marketplace = 'Общий прайс' WHERE marketplace = 'Avito'`,
+      );
       // Маркер успешно прогнанных миграций — следующие холодные старты пропустят DDL.
       await pool.query(
         `INSERT INTO app_settings (key, value, updated_at)

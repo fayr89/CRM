@@ -233,7 +233,7 @@ router.get(
          LEFT JOIN products p ON p.id = oi.product_id
          LEFT JOIN orders ord ON ord.id = oi.order_id
          LEFT JOIN product_prices pp ON pp.product_id = oi.product_id
-           AND pp.marketplace = ord.marketplace
+           AND pp.marketplace = 'Общий прайс'
            AND pp.warehouse = COALESCE(ord.warehouse, '')
          WHERE oi.order_id = ANY(?)
          ORDER BY oi.order_id, oi.id`,
@@ -702,7 +702,7 @@ router.get(
        FROM client_items ci
        LEFT JOIN products p ON p.id = ci.product_id
        LEFT JOIN product_prices pp ON pp.product_id = ci.product_id
-              AND pp.marketplace = ? AND pp.warehouse = ?
+              AND pp.marketplace = 'Общий прайс' AND pp.warehouse = ?
        LEFT JOIN LATERAL (
          SELECT oi2.name, oi2.sku FROM order_items oi2
          JOIN orders o2 ON o2.id = oi2.order_id
@@ -713,7 +713,7 @@ router.get(
       name, name,
       phone, phone,
       ...scopeParams,
-      marketplace, warehouse,
+      warehouse,
     );
     res.json({ data: rows });
   }),
@@ -1187,8 +1187,9 @@ router.post(
       throw Forbidden('Нет прав на этот заказ');
     }
     if (order.status !== 'new') throw BadRequest('Зарезервировать можно только новый заказ');
-    // Номер отправления обязателен при резерве любого заказа.
-    if (!order.shipment_qr || !String(order.shipment_qr).trim()) {
+    // Номер отправления обязателен для маркетплейс-заказов. B2B-заказы (marketplace=NULL)
+    // отгружаются напрямую клиенту, у них нет внешнего трека маркетплейса.
+    if (order.marketplace && (!order.shipment_qr || !String(order.shipment_qr).trim())) {
       throw BadRequest('Заполните «Номер отправления» в заказе — он обязателен при резерве.');
     }
     // Проверка остатков на складе списания: available = stock − reserve.

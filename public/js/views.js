@@ -1622,10 +1622,14 @@ function refreshOrderFormCache() {
 // `order` со свойством `__template = true` означает «повторить»: предзаполняем поля,
 // но не редактируем существующий заказ (создаём новый). track-номер не копируем —
 // он уникален на отправление.
-async function openOrderForm(order, onSaved) {
+async function openOrderForm(order, onSaved, opts = {}) {
   const isTemplate = order && order.__template === true;
   const isEdit = !!order && !isTemplate;
   const cur = order || {};
+  // B2B-режим (новый заказ из раздела «B2B заказы»): дефолтная классификация
+  // клиента — B2B, способ оплаты — РС без НДС, маркетплейс/QR/диалог Avito
+  // не показываем. Для существующего заказа определяем по marketplace.
+  const isB2B = opts.b2b === true || (isEdit && !cur.marketplace);
 
   // Если в кеше есть свежие (TTL 60с) — используем мгновенно, иначе ждём fetch.
   const hasCache = ORDER_FORM_CACHE.pricing && ORDER_FORM_CACHE.warehouses
@@ -1732,11 +1736,13 @@ async function openOrderForm(order, onSaved) {
         el('option', { value: 'waiting_stock' }, 'Ожидает товара'))
     : null;
   // Классификация клиента: B2C по умолчанию, при B2B — обязательны данные клиента.
+  // В B2B-разделе дефолт «B2B (компания)», в обычных заказах — «B2C (физлицо)».
+  const defaultClass = cur.client_classification || (isB2B ? 'B2B' : 'B2C');
   const classI = el(
     'select',
     {},
-    el('option', { value: 'B2C', selected: (cur.client_classification || 'B2C') === 'B2C' }, 'B2C (физлицо)'),
-    el('option', { value: 'B2B', selected: cur.client_classification === 'B2B' }, 'B2B (компания)'),
+    el('option', { value: 'B2C', selected: defaultClass === 'B2C' }, 'B2C (физлицо)'),
+    el('option', { value: 'B2B', selected: defaultClass === 'B2B' }, 'B2B (компания)'),
   );
   const clientI = el('input', { type: 'text', value: cur.client_name || '', autocomplete: 'off' });
   const clientPhoneI = el('input', { type: 'tel', value: cur.client_phone || '', placeholder: '+7…', autocomplete: 'off' });
@@ -1877,8 +1883,10 @@ async function openOrderForm(order, onSaved) {
   const deliveryRow = el('div', { class: 'form-row' }, el('label', {}, 'Способ отправки'), deliveryI);
 
   // При создании нового заказа cur.payment_method пуст → используем default из настроек.
-  // При редактировании — сохранённое значение приоритетнее.
-  const initialPayment = cur.payment_method || defaultPaymentMethod || '';
+  // При редактировании — сохранённое значение приоритетнее. Для B2B-заказа жёстко
+  // дефолтим «РС без НДС» (rs_no_vat) — менеджер чаще всего работает именно так.
+  const b2bDefaultPayment = isB2B && !isEdit ? 'rs_no_vat' : null;
+  const initialPayment = cur.payment_method || b2bDefaultPayment || defaultPaymentMethod || '';
   const payI = paymentMethods.length
     ? el(
         'select',
@@ -2138,7 +2146,8 @@ async function openOrderForm(order, onSaved) {
     el(
       'div',
       { class: 'form-grid' },
-      el('div', { class: 'form-row' }, el('label', {}, 'Площадка'), marketI),
+      // В B2B-режиме площадку не показываем — заказ привязки к маркетплейсу не имеет.
+      isB2B ? null : el('div', { class: 'form-row' }, el('label', {}, 'Площадка'), marketI),
       el('div', { class: 'form-row' }, el('label', {}, 'Склад списания'), warehouseI),
       statusI ? el('div', { class: 'form-row' }, el('label', {}, 'Стартовый статус'), statusI) : null,
       el('div', { class: 'form-row' }, el('label', {}, 'Классификация клиента'), classI),
@@ -2147,8 +2156,9 @@ async function openOrderForm(order, onSaved) {
       payI ? el('div', { class: 'form-row' }, el('label', {}, 'Способ оплаты'), payI) : null,
       deliveryRow,
       el('div', { class: 'form-row' }, el('label', {}, 'Валюта'), currencyI),
-      avitoDialogRow,
-      el('div', { class: 'form-row', style: { gridColumn: '1 / -1' } },
+      // Ссылка на диалог Avito и трек-номер не нужны в B2B (нет площадки, нет отправления через её доставку).
+      isB2B ? null : avitoDialogRow,
+      isB2B ? null : el('div', { class: 'form-row', style: { gridColumn: '1 / -1' } },
         el('label', {}, 'Номер отправления'), el('div', {}, qrI, qrWarning)),
       el('div', { class: 'form-row' }, el('label', {}, 'Заметки'), notesI),
       managerNoteI ? el('div', { class: 'form-row', style: { gridColumn: '1 / -1' } },
@@ -2230,7 +2240,8 @@ async function openOrderForm(order, onSaved) {
         if (!ok) return false;
       }
       const payload = {
-        marketplace: marketI.value || null,
+        // В B2B-режиме поля площадки/Avito-диалога/трека спрятаны и шлются как null.
+        marketplace: isB2B ? null : (marketI.value || null),
         client_classification: classI.value || null,
         client_name: clientI.value || null,
         client_phone: clientPhoneI.value.trim() || null,
@@ -2241,9 +2252,9 @@ async function openOrderForm(order, onSaved) {
         payment_method: payI ? payI.value || null : cur.payment_method ?? null,
         price_deviation: p.hasRule ? p.deviation : null,
         recommended_total: p.hasRule ? p.recommendedTotal : null,
-        shipment_qr: qrI.value.trim() || null,
+        shipment_qr: isB2B ? null : (qrI.value.trim() || null),
         delivery_method: deliveryI.value || null,
-        avito_dialog_url: avitoDialogI.value.trim() || null,
+        avito_dialog_url: isB2B ? null : (avitoDialogI.value.trim() || null),
         warehouse: warehouseI.value || null,
         ...(statusI ? { status: statusI.value } : {}),
       };
@@ -2634,9 +2645,11 @@ export async function renderOrders(main, opts = {}) {
   const isWarehouse = me.role === 'warehouse';
   const isAdmin = me.role === 'admin';
   const canCreate = ['admin', 'manager', 'sales'].includes(me.role);
+  // directMode оставлено как имя переменной для совместимости — теперь это «B2B-режим».
+  // В b2b-заказах нет маркетплейс-поля, дефолты подкручены под B2B (см. форму заказа).
   const directMode = opts.directMode || false;
-  const pageTitle = directMode ? 'Продажи (прямые)' : 'Продажи с площадок (Avito)';
-  const pageSubtitle = directMode ? 'Заказы без привязки к маркетплейсу' : 'Заказы из маркетплейсов и с собственных сайтов';
+  const pageTitle = directMode ? 'B2B заказы' : 'Продажи с площадок (Avito)';
+  const pageSubtitle = directMode ? 'Заказы менеджеров: B2B-клиенты и активные продажи' : 'Заказы из маркетплейсов и с собственных сайтов';
   const viewStorageKey = directMode ? 'direct_orders_view' : 'orders_view';
 
   // Прогрев кеша формы заказа: пока пользователь смотрит на список, в фоне
@@ -3148,7 +3161,8 @@ export async function renderOrders(main, opts = {}) {
       el('option', { value: v }, `Статус: ${l}`),
     ),
   );
-  const marketFilter = el(
+  // В b2b-режиме маркетплейса как такового нет — фильтр прячем.
+  const marketFilter = directMode ? null : el(
     'select',
     {
       onChange: (e) => {
@@ -3331,7 +3345,7 @@ export async function renderOrders(main, opts = {}) {
             const orig = btn.textContent;
             btn.textContent = '⏳ Загрузка…';
             try {
-              await openOrderForm(null, reload);
+              await openOrderForm(null, reload, { b2b: directMode });
             } finally {
               btn.disabled = false;
               btn.textContent = orig;
@@ -6770,14 +6784,14 @@ async function openProductForm(product, onSaved) {
       pricesArea.append(list);
     }
 
-    // Форма добавления (канал + склад → цена)
+    // Форма добавления цены. Раньше тут была площадка (Avito/Wildberries/...) —
+    // теперь единый ключ «Общий прайс»: одна цена работает и для маркетплейсов,
+    // и для B2B-заказов. Старые marketplace-значения (если ещё есть) показываем
+    // в списке выше как есть, но новые добавляются только под «Общий прайс».
     const newMarketI = el(
       'select',
       {},
-      el('option', { value: '' }, 'Площадка…'),
-      ...MARKETPLACES.filter((m) => m.value).map((m) =>
-        el('option', { value: m.value }, m.label),
-      ),
+      el('option', { value: 'Общий прайс', selected: true }, 'Общий прайс'),
     );
     const newWarehouseI = el(
       'select',
