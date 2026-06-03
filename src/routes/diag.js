@@ -59,6 +59,46 @@ router.get('/feedback-full', asyncHandler(async (req, res) => {
   res.json({ feedbacks: feedbacks.map(f => ({ ...f, messages: msgMap[f.id] || [] })) });
 }));
 
+// GET /api/diag/close-fb?secret=...&id=... — close a feedback silently
+router.get('/close-fb', asyncHandler(async (req, res) => {
+  if (!checkSecret(req, res)) return;
+  const id = Number(req.query.id);
+  const reason = String(req.query.reason || 'Автор не ответил на уточняющие вопросы, закрыто автоматически.');
+  if (!id) return res.status(400).json({ error: 'id required' });
+  await db.run(
+    `UPDATE feedback SET status = 'closed', admin_reply = ?, updated_at = NOW() WHERE id = ?`,
+    reason, id,
+  );
+  res.json({ ok: true, id });
+}));
+
+// GET /api/diag/post-msg?secret=...&fb=...&text=... — post AI message to feedback thread
+router.get('/post-msg', asyncHandler(async (req, res) => {
+  if (!checkSecret(req, res)) return;
+  const fb = Number(req.query.fb);
+  const text = String(req.query.text || '');
+  if (!fb || !text) return res.status(400).json({ error: 'fb and text required' });
+  const r = await db.run(
+    `INSERT INTO feedback_messages (feedback_id, user_id, user_name, role, text, created_at)
+     VALUES (?, NULL, 'AI ассистент', 'admin', ?, NOW()) RETURNING id`,
+    fb, text,
+  );
+  res.json({ ok: true, id: r.lastID });
+}));
+
+// GET /api/diag/post-proposal?secret=...&fb=...&title=...&summary=...&risk=...&cat=... — create ai_proposal
+router.get('/post-proposal', asyncHandler(async (req, res) => {
+  if (!checkSecret(req, res)) return;
+  const { fb, title, summary, risk, cat } = req.query;
+  if (!title || !summary) return res.status(400).json({ error: 'title and summary required' });
+  const r = await db.run(
+    `INSERT INTO ai_proposals (title, summary, category, risk, source, proposed_changes, feedback_id, status, created_at, updated_at)
+     VALUES (?, ?, ?, ?, 'daily-run-2026-06-03', '[]'::jsonb, ?, 'pending', NOW(), NOW()) RETURNING id`,
+    title, summary, cat || 'feature', risk || 'medium', fb ? Number(fb) : null,
+  );
+  res.json({ ok: true, id: r.lastID });
+}));
+
 // POST /api/diag/write?secret=... — write operations (POST proposals, PATCH feedback, POST messages)
 router.post('/write', asyncHandler(async (req, res) => {
   if (!checkSecret(req, res)) return;
