@@ -218,10 +218,15 @@ router.get(
       const itemsRows = await db.all(
         `SELECT oi.order_id, oi.name, oi.sku, oi.quantity, oi.unit_price, oi.image_url,
                 oi.catalog_price, p.cost_price,
+                COALESCE(pp.price, oi.catalog_price) AS effective_price,
                 ROW_NUMBER() OVER (PARTITION BY oi.order_id ORDER BY oi.id)::int AS rn,
                 COUNT(*) OVER (PARTITION BY oi.order_id)::int AS total_count
          FROM order_items oi
          LEFT JOIN products p ON p.id = oi.product_id
+         LEFT JOIN orders ord ON ord.id = oi.order_id
+         LEFT JOIN product_prices pp ON pp.product_id = oi.product_id
+           AND pp.marketplace = ord.marketplace
+           AND pp.warehouse = COALESCE(ord.warehouse, '')
          WHERE oi.order_id = ANY(?)
          ORDER BY oi.order_id, rn`,
         orderIds,
@@ -238,6 +243,7 @@ router.get(
             first_item_name: null,
             first_item_qty: null,
             first_item_price: null,
+            first_item_catalog_price: null,
             items_no_price_count: 0, // позиции без catalog_price (нет цены в прайс-листе)
             cost_total: 0,           // суммарная себестоимость для расчёта валовой прибыли
           };
@@ -250,6 +256,7 @@ router.get(
           agg.first_item_name = it.name;
           agg.first_item_qty = it.quantity;
           agg.first_item_price = it.unit_price;
+          agg.first_item_catalog_price = it.effective_price ?? null;
         }
         if (it.catalog_price == null) agg.items_no_price_count += 1;
         agg.cost_total += Number(it.cost_price || 0) * Number(it.quantity || 0);
@@ -274,6 +281,7 @@ router.get(
           r.gross_profit = Math.round(((r.total_amount || 0) - agg.cost_total) * 100) / 100;
         }
         r.first_item_price = agg.first_item_price;
+        r.first_item_catalog_price = agg.first_item_catalog_price;
       }
     }
     const { total } = await db.get(
@@ -572,6 +580,11 @@ router.get(
        WHERE o.status = 'reserved'
        ORDER BY o.reserved_at ASC`,
     );
+    // Вычисляем дату отгрузки для каждого заказа по дате его резервации.
+    for (const o of orders) {
+      const d = o.reserved_at ? nextShippingDate(schedule?.days ?? '', schedule?.cutoff_time ?? '14:00', new Date(o.reserved_at)) : null;
+      o.shipping_date = d ? d.toISOString() : null;
+    }
     res.json({
       next_shipping_date: next ? next.toISOString() : null,
       schedule: schedule
