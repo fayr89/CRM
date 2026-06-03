@@ -2811,6 +2811,23 @@ export async function renderOrders(main, opts = {}) {
                     `${r.price_deviation > 0 ? '▲ выше' : '▼ ниже'} прайса на ${Math.abs(r.price_deviation).toLocaleString('ru-RU')} ₽`,
                   )
                 : null,
+              // Позиции без прайс-листа (catalog_price=null): менеджер выставил цену
+              // вручную, потому что для этого канала+склада прайса нет.
+              r.items_no_price_count > 0
+                ? el(
+                    'div',
+                    { class: 'order-card-dev no-price' },
+                    `⚠️ ${r.items_no_price_count} ${r.items_no_price_count === 1 ? 'товар без прайса' : 'товара(ов) без прайса'}`,
+                  )
+                : null,
+              // Валовая прибыль (продажа − себестоимость). Бэк отдаёт только админу/РОПу.
+              r.gross_profit != null
+                ? el(
+                    'div',
+                    { class: 'order-card-profit ' + (r.gross_profit >= 0 ? 'positive' : 'negative') },
+                    `${r.gross_profit >= 0 ? '💰' : '⚠️'} Прибыль: ${r.gross_profit.toLocaleString('ru-RU')} ₽`,
+                  )
+                : null,
               // Заметка для менеджеров — бумажный стикер в правом верхнем углу карточки.
               // Жёлтый фон, лёгкий поворот, тень. Видна всем кроме склада (бэк не отдаёт).
               r.manager_note
@@ -3508,6 +3525,20 @@ async function showOrderDetails(order, reload) {
               (order.recommended_total != null
                 ? ` (по прайсу ${order.recommended_total.toLocaleString('ru-RU')} ₽)`
                 : ''),
+          )
+        : null,
+      // Позиции без прайс-листа
+      order.items_no_price_count > 0 ? el('div', { class: 'k' }, 'Без прайса') : null,
+      order.items_no_price_count > 0
+        ? el('div', { class: 'dev-up' }, `⚠️ ${order.items_no_price_count} ${order.items_no_price_count === 1 ? 'позиция' : 'позиций'} без цены в прайс-листе`)
+        : null,
+      // Валовая прибыль — только для админа/РОПа (бэк отдаёт gross_profit только им).
+      order.gross_profit != null ? el('div', { class: 'k' }, 'Валовая прибыль') : null,
+      order.gross_profit != null
+        ? el(
+            'div',
+            { style: { color: order.gross_profit >= 0 ? '#15803d' : '#b91c1c', fontWeight: 600 } },
+            `${order.gross_profit.toLocaleString('ru-RU')} ${order.currency || 'RUB'} (себес ${(order.cost_total || 0).toLocaleString('ru-RU')} ₽)`,
           )
         : null,
       el('div', { class: 'k' }, 'Создан'),

@@ -211,15 +211,19 @@ router.get(
       offset,
     );
     // Подтягиваем items: один запрос для всех order_id, ROW_NUMBER для лимита 5 в preview.
+    // JOIN с products нужен для cost_price (валовая прибыль для админа) и чтобы
+    // знать, у каких позиций нет прайса по этому каналу+складу.
     if (rows.length) {
       const orderIds = rows.map((r) => r.id);
       const itemsRows = await db.all(
-        `SELECT order_id, name, sku, quantity, unit_price, image_url,
-                ROW_NUMBER() OVER (PARTITION BY order_id ORDER BY id)::int AS rn,
-                COUNT(*) OVER (PARTITION BY order_id)::int AS total_count
-         FROM order_items
-         WHERE order_id = ANY(?)
-         ORDER BY order_id, rn`,
+        `SELECT oi.order_id, oi.name, oi.sku, oi.quantity, oi.unit_price, oi.image_url,
+                oi.catalog_price, p.cost_price,
+                ROW_NUMBER() OVER (PARTITION BY oi.order_id ORDER BY oi.id)::int AS rn,
+                COUNT(*) OVER (PARTITION BY oi.order_id)::int AS total_count
+         FROM order_items oi
+         LEFT JOIN products p ON p.id = oi.product_id
+         WHERE oi.order_id = ANY(?)
+         ORDER BY oi.order_id, rn`,
         orderIds,
       );
       const byOrder = new Map();
@@ -234,6 +238,8 @@ router.get(
             first_item_name: null,
             first_item_qty: null,
             first_item_price: null,
+            items_no_price_count: 0, // позиции без catalog_price (нет цены в прайс-листе)
+            cost_total: 0,           // суммарная себестоимость для расчёта валовой прибыли
           };
           byOrder.set(it.order_id, agg);
         }
@@ -245,11 +251,14 @@ router.get(
           agg.first_item_qty = it.quantity;
           agg.first_item_price = it.unit_price;
         }
+        if (it.catalog_price == null) agg.items_no_price_count += 1;
+        agg.cost_total += Number(it.cost_price || 0) * Number(it.quantity || 0);
       }
       for (const r of rows) {
         const agg = byOrder.get(r.id) || {
           items_count: 0, preview_image: null, items_preview: [],
           first_item_sku: null, first_item_name: null, first_item_qty: null, first_item_price: null,
+          items_no_price_count: 0, cost_total: 0,
         };
         r.items_count = agg.items_count;
         r.preview_image = agg.preview_image;
@@ -257,6 +266,13 @@ router.get(
         r.first_item_sku = agg.first_item_sku;
         r.first_item_name = agg.first_item_name;
         r.first_item_qty = agg.first_item_qty;
+        r.items_no_price_count = agg.items_no_price_count;
+        // Валовая прибыль = total_amount - себестоимость. Отдаём ТОЛЬКО админу
+        // и РОПу — менеджеры/склад себестоимость видеть не должны.
+        if (['admin', 'rop'].includes(req.user.role)) {
+          r.cost_total = Math.round(agg.cost_total * 100) / 100;
+          r.gross_profit = Math.round(((r.total_amount || 0) - agg.cost_total) * 100) / 100;
+        }
         r.first_item_price = agg.first_item_price;
       }
     }
@@ -852,10 +868,23 @@ router.get(
     );
     if (!order) throw NotFound('Заказ не найден');
     if (!(await canAccessOrder(req.user, order))) throw Forbidden();
+    // JOIN с products чтобы посчитать себестоимость и позиции без прайса (нужно
+    // для отображения «N товаров без прайса» и валовой прибыли админу).
     const items = await db.all(
-      'SELECT * FROM order_items WHERE order_id = ? ORDER BY id',
+      `SELECT oi.*, p.cost_price
+       FROM order_items oi
+       LEFT JOIN products p ON p.id = oi.product_id
+       WHERE oi.order_id = ?
+       ORDER BY oi.id`,
       order.id,
     );
+    order.items_no_price_count = items.filter((i) => i.catalog_price == null).length;
+    // Валовая прибыль (продажа − себес) — только админу и РОПу.
+    if (['admin', 'rop'].includes(req.user.role)) {
+      const costTotal = items.reduce((s, i) => s + Number(i.cost_price || 0) * Number(i.quantity || 0), 0);
+      order.cost_total = Math.round(costTotal * 100) / 100;
+      order.gross_profit = Math.round(((order.total_amount || 0) - costTotal) * 100) / 100;
+    }
     // Заметка для менеджера — склад не видит.
     if (req.user.role === 'warehouse') order.manager_note = null;
     res.json({ ...order, items });
