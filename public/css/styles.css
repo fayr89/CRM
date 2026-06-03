@@ -1340,10 +1340,34 @@ button, .btn, a { touch-action: manipulation; }
   .mobile-user-badge-role { color: #fbbf24; font-size: 10px; }
 }
 
-/* === Список заказов: одна строка = одна позиция, группировка визуально === */
-/* Подсветка hover ловится на всей группе через JS-делегацию, но базово даём
-   разный фон для второй+ строки заказа — чтобы было видно где новая группа. */
-tr.order-row-item td { color: #4b5563; }
-tr.order-row-first { background: #fff; }
-tr.order-row-item { background: #fafafa; }
-tr.order-row:hover { background: #f3f4f6; cursor: pointer; }
+/* === Список заказов: тёмная сводная строка + светлые строки позиций ===
+   Сразу видно «вот заказ X», под ним «вот его SKU». Шапка заказа собирает
+   №/дату/статус/трек/менеджера/сумму/действия в один компактный flex-ряд. */
+tr.order-row-summary > td {
+  background: #1f2937; color: #f3f4f6;
+  padding: 10px 12px; border-top: 3px solid #111827;
+}
+tr.order-row-summary:hover > td { background: #111827; cursor: pointer; }
+.order-summary-line {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 10px;
+  font-size: 13px;
+}
+.order-summary-id { font-weight: 700; font-size: 15px; }
+.order-summary-date { color: #9ca3af; font-size: 12px; }
+.order-summary-total {
+  margin-left: auto; font-weight: 700; font-size: 15px; color: #fbbf24;
+}
+.order-summary-chip {
+  background: rgba(255,255,255,0.1); padding: 2px 8px; border-radius: 4px;
+  font-size: 12px; white-space: nowrap;
+}
+.order-summary-chip.mono { font-family: monospace; }
+.order-summary-actions { display: flex; gap: 6px; margin-left: 8px; }
+.order-summary-actions .btn {
+  min-height: 0; padding: 4px 10px; font-size: 12px;
+  background: #f3f4f6; color: #1f2937; border: 0;
+}
+.order-summary-actions .btn:hover { background: #fff; }
+/* Строки позиций: светлый фон, первые две ячейки пустые → «отступ» от шапки. */
+tr.order-row-item > td { background: #fafafa; color: #1f2937; padding: 6px 10px; }
+tr.order-row-item:hover > td { background: #f3f4f6; cursor: pointer; }

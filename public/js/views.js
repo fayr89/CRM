@@ -3003,7 +3003,7 @@ export async function renderOrders(main, opts = {}) {
           ),
         );
       }
-      const onClick = async (e) => {
+      const openOrder = async (e) => {
         const row = e.currentTarget;
         if (row.dataset.loading === '1') return;
         row.dataset.loading = '1';
@@ -3020,35 +3020,68 @@ export async function renderOrders(main, opts = {}) {
           row.style.pointerEvents = '';
         }
       };
-      // Если позиций нет — одна строка-«пустышка» (на случай битых данных).
       const items = (r.items && r.items.length) ? r.items : [{ sku: r.first_item_sku, name: r.first_item_name, quantity: r.first_item_qty, unit_price: r.first_item_price, effective_price: r.first_item_catalog_price }];
-      return items.map((it, idx) => {
-        const isFirst = idx === 0;
-        // Верхний бордер у первой строки заказа — визуально группирует.
-        const trStyle = isFirst ? { borderTop: '2px solid #d1d5db' } : {};
-        // «Цена/шт» — приоритетно цена из прайса (effective_price), иначе фактическая.
+      // Шапка заказа: отдельная строка с colspan на всю ширину — несёт
+      // №, дату, площадку/доставку, трек, статус, менеджера + кнопки действий.
+      // Под ней — строки позиций. Так визуально сразу понятно: «вот заказ,
+      // вот что в нём».
+      const summaryRow = el(
+        'tr',
+        { onClick: openOrder, class: 'order-row order-row-summary' },
+        el(
+          'td',
+          { colspan: '12' },
+          el(
+            'div',
+            { class: 'order-summary-line' },
+            el('span', { class: 'order-summary-id' }, `#${r.id}`),
+            el('span', { class: 'order-summary-date' }, fmtDate(r.created_at)),
+            badge(r.status, 'order_status'),
+            r.delivery_method || r.marketplace
+              ? el('span', { class: 'order-summary-chip' }, r.delivery_method || r.marketplace)
+              : null,
+            r.shipment_qr
+              ? el('span', { class: 'order-summary-chip mono' }, '📦 ' + r.shipment_qr)
+              : null,
+            el('span', { class: 'order-summary-chip' }, '👤 ' + (r.manager_name || '—')),
+            r.client_name
+              ? el('span', { class: 'order-summary-chip' }, '🧑 ' + r.client_name)
+              : null,
+            el('span', { class: 'order-summary-total' }, fmtMoney(r.total_amount, r.currency)),
+            el(
+              'span',
+              { class: 'order-summary-actions', onClick: (e) => e.stopPropagation() },
+              ...actions,
+            ),
+          ),
+        ),
+      );
+      // Строки позиций: только колонки SKU/Название/Кол-во/Цена/шт + Сумма
+      // по строке (qty × price). Прочие ячейки пустые → таблица читается
+      // как «шапка заказа + содержимое».
+      const itemRows = items.map((it) => {
         const priceCell = it.effective_price ?? it.unit_price;
+        const lineSum = (priceCell != null && it.quantity != null)
+          ? Number(priceCell) * Number(it.quantity)
+          : null;
         return el(
           'tr',
-          { onClick, class: 'order-row' + (isFirst ? ' order-row-first' : ' order-row-item'), style: trStyle },
-          el('td', {}, isFirst ? `#${r.id}` : ''),
-          el('td', {}, isFirst ? fmtDate(r.created_at) : ''),
+          { onClick: openOrder, class: 'order-row order-row-item' },
+          el('td', {}, ''),
+          el('td', {}, ''),
           el('td', { style: { fontFamily: 'monospace', fontSize: '12px' } }, it.sku || '—'),
           el('td', {}, it.name || '—'),
           el('td', {}, it.quantity != null ? String(it.quantity) : '—'),
           el('td', {}, priceCell != null ? fmtMoney(priceCell, r.currency) : '—'),
-          el('td', {}, isFirst ? fmtMoney(r.total_amount, r.currency) : ''),
-          el('td', {}, isFirst ? (r.delivery_method || r.marketplace || '—') : ''),
-          el('td', {}, isFirst ? (r.shipment_qr || '—') : ''),
-          el('td', {}, isFirst ? badge(r.status, 'order_status') : ''),
-          el('td', {}, isFirst ? (r.manager_name || '—') : ''),
-          el(
-            'td',
-            { style: { textAlign: 'right' }, onClick: (e) => e.stopPropagation() },
-            ...(isFirst ? actions : []),
-          ),
+          el('td', {}, lineSum != null ? fmtMoney(lineSum, r.currency) : ''),
+          el('td', {}, ''),
+          el('td', {}, ''),
+          el('td', {}, ''),
+          el('td', {}, ''),
+          el('td', {}, ''),
         );
       });
+      return [summaryRow, ...itemRows];
     }
     const body = rows.flatMap(buildRowsForOrder);
 
