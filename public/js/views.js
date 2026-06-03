@@ -2796,9 +2796,32 @@ export async function renderOrders(main, opts = {}) {
                   )
                 : null,
               el('div', { class: 'meta' }, '👤 ' + (r.manager_name || '—') + ' · 📅 ' + fmtDate(r.created_at)),
-              r.items_preview
-                ? el('div', { class: 'order-card-items', title: r.items_preview }, '📦 ' + r.items_preview)
-                : null,
+              // Состав заказа на карточке: одна строка на позицию вида
+              // «12345678  Контейнер ТРУФАСТ × 4». Имя обрезаем до 20 символов
+              // (с многоточием), чтобы не ломало layout канбана.
+              (r.items && r.items.length)
+                ? el(
+                    'div',
+                    { class: 'order-card-items' },
+                    ...r.items.slice(0, 8).map((it) => {
+                      const nm = (it.name || '').length > 20 ? it.name.slice(0, 20) + '…' : (it.name || '');
+                      return el(
+                        'div',
+                        { class: 'order-card-item-row', title: `${it.sku || ''} ${it.name || ''} × ${it.quantity}` },
+                        it.sku
+                          ? el('span', { class: 'order-card-item-sku' }, it.sku)
+                          : null,
+                        el('span', { class: 'order-card-item-name' }, nm || '—'),
+                        el('span', { class: 'order-card-item-qty' }, '× ' + (it.quantity ?? '?')),
+                      );
+                    }),
+                    r.items.length > 8
+                      ? el('div', { class: 'order-card-item-more' }, `…и ещё ${r.items.length - 8}`)
+                      : null,
+                  )
+                : (r.items_preview
+                  ? el('div', { class: 'order-card-items', title: r.items_preview }, '📦 ' + r.items_preview)
+                  : null),
               r.parent_order_id
                 ? el('div', { class: 'order-card-split', title: 'Создан разделением' }, `🔀 из #${r.parent_order_id}`)
                 : (r.notes && /Разделён → создан заказ #(\d+)/.test(r.notes))
