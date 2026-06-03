@@ -1242,11 +1242,11 @@ function itemsEditor(initialItems = [], { getMarketplace, getWarehouse, onChange
               'div',
               { class: 'qa-meta' },
               (p.sku ? `Арт: ${p.sku}` : 'Без артикула') + (() => {
-                const sv = computeStoreView(p.stock_by_store, hiddenSet);
+                const sv = filteredStoreView(p.stock_by_store);
                 const hasStores = Array.isArray(p.stock_by_store) && p.stock_by_store.length;
-                const total = hasStores ? sv.totalStock : p.stock;
-                if (total == null) return '';
-                return total > 0 ? ` · 📦 ${total} шт` : ' · ⚠️ нет в наличии';
+                const available = hasStores ? Math.max(0, sv.totalStock - sv.totalReserve) : p.stock;
+                if (available == null) return '';
+                return available > 0 ? ` · 📦 ${available} шт` : ' · ⚠️ нет в наличии';
               })(),
             ),
           ),
@@ -1388,13 +1388,13 @@ function itemsEditor(initialItems = [], { getMarketplace, getWarehouse, onChange
                 : el('span', { class: 'popular-no-price' }, 'нет в прайсе'),
             ),
             (() => {
-              // Наличие по видимым складам (сумма), иначе общий остаток.
-              const sv = computeStoreView(p.stock_by_store, hiddenSet);
+              // Наличие по выбранному складу (доступно = stock − reserve).
+              const sv = filteredStoreView(p.stock_by_store);
               const hasStores = Array.isArray(p.stock_by_store) && p.stock_by_store.length;
-              const total = hasStores ? sv.totalStock : p.stock;
-              if (total == null) return null;
-              return el('div', { class: `popular-card-stock${total <= 0 ? ' out' : ''}` },
-                total > 0 ? `📦 ${total} шт` : '⚠️ нет');
+              const available = hasStores ? Math.max(0, sv.totalStock - sv.totalReserve) : p.stock;
+              if (available == null) return null;
+              return el('div', { class: `popular-card-stock${available <= 0 ? ' out' : ''}` },
+                available > 0 ? `📦 ${available} шт` : '⚠️ нет');
             })(),
             p.recent_usage > 0
               ? el('div', { class: 'popular-card-badge' }, `× ${p.recent_usage}`)
@@ -1534,11 +1534,11 @@ async function openProductPicker(marketplace, hiddenSet = new Set(), warehouse =
                 p.cost_price.toLocaleString('ru-RU'),
                 ' ₽',
                 (() => {
-                  const sv = computeStoreView(p.stock_by_store, hiddenSet);
+                  const sv = filteredStoreView(p.stock_by_store);
                   const hasStores = Array.isArray(p.stock_by_store) && p.stock_by_store.length;
-                  const total = hasStores ? sv.totalStock : p.stock;
-                  if (total == null) return '';
-                  return total > 0 ? ` · 📦 ${total} шт` : ' · ⚠️ нет в наличии';
+                  const available = hasStores ? Math.max(0, sv.totalStock - sv.totalReserve) : p.stock;
+                  if (available == null) return '';
+                  return available > 0 ? ` · 📦 ${available} шт` : ' · ⚠️ нет в наличии';
                 })(),
               ),
             ),
@@ -3021,11 +3021,13 @@ export async function renderOrders(main, opts = {}) {
         }
       };
       // Если позиций нет — одна строка-«пустышка» (на случай битых данных).
-      const items = (r.items && r.items.length) ? r.items : [{ sku: r.first_item_sku, name: r.first_item_name, quantity: r.first_item_qty, unit_price: r.first_item_price }];
+      const items = (r.items && r.items.length) ? r.items : [{ sku: r.first_item_sku, name: r.first_item_name, quantity: r.first_item_qty, unit_price: r.first_item_price, effective_price: r.first_item_catalog_price }];
       return items.map((it, idx) => {
         const isFirst = idx === 0;
         // Верхний бордер у первой строки заказа — визуально группирует.
         const trStyle = isFirst ? { borderTop: '2px solid #d1d5db' } : {};
+        // «Цена/шт» — приоритетно цена из прайса (effective_price), иначе фактическая.
+        const priceCell = it.effective_price ?? it.unit_price;
         return el(
           'tr',
           { onClick, class: 'order-row' + (isFirst ? ' order-row-first' : ' order-row-item'), style: trStyle },
@@ -3034,7 +3036,7 @@ export async function renderOrders(main, opts = {}) {
           el('td', { style: { fontFamily: 'monospace', fontSize: '12px' } }, it.sku || '—'),
           el('td', {}, it.name || '—'),
           el('td', {}, it.quantity != null ? String(it.quantity) : '—'),
-          el('td', {}, it.unit_price != null ? fmtMoney(it.unit_price, r.currency) : '—'),
+          el('td', {}, priceCell != null ? fmtMoney(priceCell, r.currency) : '—'),
           el('td', {}, isFirst ? fmtMoney(r.total_amount, r.currency) : ''),
           el('td', {}, isFirst ? (r.delivery_method || r.marketplace || '—') : ''),
           el('td', {}, isFirst ? (r.shipment_qr || '—') : ''),
@@ -8231,63 +8233,122 @@ function renderContent(container, schedule, readyList, canEdit, reload) {
     );
     if (canEdit) headRow.append(el('th', {}, 'Действия'));
 
-    const rowsEls = orders.map((o) => {
-      const rowEl = el('tr', {
-        style: { cursor: 'pointer' },
-        onClick: async (e) => {
-          // Не открываем детали при клике по интерактивным элементам (чекбокс, кнопки).
-          if (e.target.closest('button, input, a, label')) return;
-          try {
-            const full = await api.get('orders', o.id);
-            await showOrderDetails(full, reload);
-          } catch (err) { toast(err.message, 'error'); }
-        },
-      });
-      if (canEdit) {
-        const cb = el('input', { type: 'checkbox', class: 'ship-row-cb' });
-        cb.dataset.id = String(o.id);
-        cb.addEventListener('change', () => {
-          if (cb.checked) selected.add(o.id);
-          else selected.delete(o.id);
+    function makeRows(list) {
+      return list.map((o) => {
+        const rowEl = el('tr', {
+          style: { cursor: 'pointer' },
+          onClick: async (e) => {
+            if (e.target.closest('button, input, a, label')) return;
+            try {
+              const full = await api.get('orders', o.id);
+              await showOrderDetails(full, reload);
+            } catch (err) { toast(err.message, 'error'); }
+          },
         });
-        rowEl.append(el('td', {}, cb));
-      }
-      const needQr = o.marketplace === 'Avito' && o.payment_method === 'avito_delivery';
-      rowEl.append(
-        el('td', {}, '#' + o.id),
-        el('td', {}, o.marketplace || '—'),
-        el('td', {}, o.client_name || '—'),
-        el('td', {}, o.payment_method || '—'),
-        el('td', {}, o.shipment_qr ? el('span', { title: o.shipment_qr }, '✓ есть') : (needQr ? el('span', { class: 'dev-down' }, '✗ нет!') : '—')),
-        el('td', {}, o.manager_name || '—'),
-        el('td', {}, fmtDateTime(o.reserved_at)),
-        el('td', {}, fmtMoney(o.total_amount, o.currency)),
-      );
-      if (canEdit) {
+        if (canEdit) {
+          const cb = el('input', { type: 'checkbox', class: 'ship-row-cb' });
+          cb.dataset.id = String(o.id);
+          cb.addEventListener('change', () => {
+            if (cb.checked) selected.add(o.id);
+            else selected.delete(o.id);
+          });
+          rowEl.append(el('td', {}, cb));
+        }
+        const needQr = o.marketplace === 'Avito' && o.payment_method === 'avito_delivery';
         rowEl.append(
-          el('td', {},
-            el('button', {
-              class: 'btn btn-sm btn-danger',
-              onClick: () => openCancelDialog(o.id, reload),
-            }, '🚫 Отменить'),
-          ),
+          el('td', {}, '#' + o.id),
+          el('td', {}, o.marketplace || '—'),
+          el('td', {}, o.client_name || '—'),
+          el('td', {}, o.payment_method || '—'),
+          el('td', {}, o.shipment_qr ? el('span', { title: o.shipment_qr }, '✓ есть') : (needQr ? el('span', { class: 'dev-down' }, '✗ нет!') : '—')),
+          el('td', {}, o.manager_name || '—'),
+          el('td', {}, fmtDateTime(o.reserved_at)),
+          el('td', {}, fmtMoney(o.total_amount, o.currency)),
         );
+        if (canEdit) {
+          rowEl.append(
+            el('td', {},
+              el('button', {
+                class: 'btn btn-sm btn-danger',
+                onClick: () => openCancelDialog(o.id, reload),
+              }, '🚫 Отменить'),
+            ),
+          );
+        }
+        return rowEl;
+      });
+    }
+
+    // Группировка по дате отгрузки. Прошедшие — свёрнутый блок сверху.
+    const todayMsk = new Date(Date.now() + 3 * 3600000);
+    todayMsk.setUTCHours(0, 0, 0, 0);
+    const pastOrders = [];
+    const futureGroups = new Map(); // dateStr → { dateMs, orders[] }
+    const noDateOrders = [];
+    for (const o of orders) {
+      if (!o.shipping_date) {
+        noDateOrders.push(o);
+        continue;
       }
-      return rowEl;
-    });
+      const d = new Date(o.shipping_date);
+      const dMsk = new Date(d.getTime() + 3 * 3600000);
+      dMsk.setUTCHours(0, 0, 0, 0);
+      if (dMsk.getTime() < todayMsk.getTime()) {
+        pastOrders.push(o);
+      } else {
+        const key = dMsk.getTime();
+        if (!futureGroups.has(key)) futureGroups.set(key, { dateMs: key, date: d, orders: [] });
+        futureGroups.get(key).orders.push(o);
+      }
+    }
+    const sortedGroups = [...futureGroups.values()].sort((a, b) => a.dateMs - b.dateMs);
+
+    function makeGroupTable(list) {
+      const clonedHead = headRow.cloneNode(true);
+      return el('div', { class: 'table-wrap' },
+        el('table', { class: 'data' }, el('thead', {}, clonedHead), el('tbody', {}, ...makeRows(list))),
+      );
+    }
+
+    const card = el('div', { class: 'card' });
+    card.append(actions);
+
+    if (pastOrders.length > 0) {
+      const details = el('details', {});
+      details.append(
+        el('summary', { style: { cursor: 'pointer', padding: '8px 0', fontWeight: '600', color: 'var(--muted)' } },
+          `Прошедшие даты (${pastOrders.length} заказов)`),
+        makeGroupTable(pastOrders),
+      );
+      card.append(details);
+    }
+
+    for (const g of sortedGroups) {
+      const label = new Intl.DateTimeFormat('ru-RU', {
+        weekday: 'short', day: 'numeric', month: 'long', timeZone: 'Europe/Moscow',
+      }).format(g.date);
+      card.append(
+        el('div', { style: { fontWeight: '600', padding: '12px 0 6px', borderTop: pastOrders.length || sortedGroups.indexOf(g) > 0 ? '1px solid var(--border)' : 'none' } },
+          `${label} — ${g.orders.length} заказов`),
+        makeGroupTable(g.orders),
+      );
+    }
+
+    if (noDateOrders.length > 0) {
+      card.append(
+        el('div', { style: { fontWeight: '600', padding: '12px 0 6px', borderTop: '1px solid var(--border)' } },
+          `Без даты отгрузки — ${noDateOrders.length} заказов`),
+        makeGroupTable(noDateOrders),
+      );
+    }
+
+    if (pastOrders.length === 0 && sortedGroups.length === 0 && noDateOrders.length === 0) {
+      card.append(makeGroupTable(orders));
+    }
 
     container.append(
       el('h3', { style: { marginTop: '20px' } }, `Заказы к отгрузке (${orders.length})`),
-      el(
-        'div',
-        { class: 'card' },
-        actions,
-        el(
-          'div',
-          { class: 'table-wrap' },
-          el('table', { class: 'data' }, el('thead', {}, headRow), el('tbody', {}, ...rowsEls)),
-        ),
-      ),
+      card,
     );
   }
 }

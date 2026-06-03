@@ -218,9 +218,14 @@ router.get(
       const orderIds = rows.map((r) => r.id);
       const itemsRows = await db.all(
         `SELECT oi.order_id, oi.id, oi.name, oi.sku, oi.quantity, oi.unit_price, oi.line_total,
-                oi.image_url, oi.catalog_price, oi.product_id, p.cost_price
+                oi.image_url, oi.catalog_price, oi.product_id, p.cost_price,
+                COALESCE(pp.price, oi.catalog_price) AS effective_price
          FROM order_items oi
          LEFT JOIN products p ON p.id = oi.product_id
+         LEFT JOIN orders ord ON ord.id = oi.order_id
+         LEFT JOIN product_prices pp ON pp.product_id = oi.product_id
+           AND pp.marketplace = ord.marketplace
+           AND pp.warehouse = COALESCE(ord.warehouse, '')
          WHERE oi.order_id = ANY(?)
          ORDER BY oi.order_id, oi.id`,
         orderIds,
@@ -241,6 +246,7 @@ router.get(
           quantity: it.quantity, unit_price: it.unit_price,
           line_total: it.line_total ?? Number(it.unit_price || 0) * Number(it.quantity || 0),
           image_url: it.image_url, catalog_price: it.catalog_price,
+          effective_price: it.effective_price ?? null,
           product_id: it.product_id,
         });
         if (!agg.preview_image && it.image_url) agg.preview_image = it.image_url;
@@ -258,6 +264,7 @@ router.get(
         r.first_item_name = first.name ?? null;
         r.first_item_qty = first.quantity ?? null;
         r.first_item_price = first.unit_price ?? null;
+        r.first_item_catalog_price = first.effective_price ?? null;
         r.items_preview = agg.items.slice(0, 5).map((i) => i.name).join(', ');
         r.items_no_price_count = agg.items_no_price_count;
         // Валовая прибыль — только админ/РОП.
@@ -563,6 +570,11 @@ router.get(
        WHERE o.status = 'reserved'
        ORDER BY o.reserved_at ASC`,
     );
+    // Вычисляем дату отгрузки для каждого заказа по дате его резервации.
+    for (const o of orders) {
+      const d = o.reserved_at ? nextShippingDate(schedule?.days ?? '', schedule?.cutoff_time ?? '14:00', new Date(o.reserved_at)) : null;
+      o.shipping_date = d ? d.toISOString() : null;
+    }
     res.json({
       next_shipping_date: next ? next.toISOString() : null,
       schedule: schedule

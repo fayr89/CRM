@@ -110,11 +110,14 @@ router.get(
       `SELECT
          p.id, p.sku, p.name, p.image_url, p.cost_price,
          SUM(oi.quantity)::int AS units_sold,
-         COALESCE(SUM(oi.line_total), 0)::float AS revenue,
-         COALESCE(SUM((oi.unit_price - p.cost_price) * oi.quantity), 0)::float AS profit
+         COALESCE(SUM(COALESCE(pp.price, oi.catalog_price, oi.unit_price) * oi.quantity), 0)::float AS revenue,
+         COALESCE(SUM((COALESCE(pp.price, oi.catalog_price, oi.unit_price) - p.cost_price) * oi.quantity), 0)::float AS profit
        FROM products p
        JOIN order_items oi ON oi.product_id = p.id
        JOIN orders o ON o.id = oi.order_id
+       LEFT JOIN product_prices pp ON pp.product_id = p.id
+         AND pp.marketplace = o.marketplace
+         AND pp.warehouse = COALESCE(o.warehouse, '')
        WHERE o.status = 'completed'
          AND o.completed_at > NOW() - (? || ' days')::interval
        GROUP BY p.id, p.sku, p.name, p.image_url, p.cost_price
