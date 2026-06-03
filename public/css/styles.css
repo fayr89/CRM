@@ -633,6 +633,15 @@ table.data tbody tr:last-child td { border-bottom: none; }
 }
 .price-marketplace { font-weight: 600; flex: 1; }
 .price-value { font-family: ui-monospace, "SF Mono", Menlo, monospace; }
+.price-value-wrap { display: flex; align-items: center; gap: 4px; }
+.price-value-input {
+  width: 100px; padding: 4px 8px; text-align: right;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace; font-weight: 600;
+  border: 1px solid var(--border); border-radius: 4px; background: #fff;
+}
+.price-value-input:focus { border-color: var(--primary); outline: none; }
+.price-value-input:disabled { opacity: 0.5; }
+.price-currency { color: var(--text-muted); font-size: 13px; }
 .price-add-row { display: flex; gap: 8px; align-items: center; }
 .price-add-row select, .price-add-row input { flex: 1; }
 

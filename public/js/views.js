@@ -6707,12 +6707,49 @@ async function openProductForm(product, onSaved) {
       const list = el('div', { class: 'prices-list' });
       for (const pp of prices) {
         const wh = pp.warehouse || '';
+        // Цену редактируем инлайн: input с предзаполненным значением.
+        // Сохраняем по blur или Enter, если значение изменилось (api.setProductPrice
+        // делает INSERT ... ON CONFLICT DO UPDATE → апдейтит существующий ряд).
+        const priceInput = el('input', {
+          type: 'number',
+          min: '0',
+          step: 'any',
+          value: String(pp.price),
+          class: 'price-value-input',
+        });
+        let savedValue = pp.price;
+        async function savePrice() {
+          const v = Number(priceInput.value);
+          if (!Number.isFinite(v) || v <= 0) {
+            priceInput.value = String(savedValue);
+            toast('Цена должна быть положительным числом', 'error');
+            return;
+          }
+          if (v === savedValue) return; // ничего не изменилось
+          priceInput.disabled = true;
+          try {
+            await api.setProductPrice(cur.id, { marketplace: pp.marketplace, warehouse: wh, price: v });
+            savedValue = v;
+            pp.price = v;
+            toast(`Цена обновлена: ${v.toLocaleString('ru-RU')} ₽`, 'success');
+          } catch (e) {
+            priceInput.value = String(savedValue);
+            toast(e.message || 'Не удалось сохранить', 'error');
+          } finally {
+            priceInput.disabled = false;
+          }
+        }
+        priceInput.addEventListener('blur', savePrice);
+        priceInput.addEventListener('keydown', (e) => {
+          if (e.key === 'Enter') { e.preventDefault(); priceInput.blur(); }
+          if (e.key === 'Escape') { priceInput.value = String(savedValue); priceInput.blur(); }
+        });
         list.append(
           el(
             'div',
             { class: 'price-row' },
             el('span', { class: 'price-marketplace' }, pp.marketplace + (wh ? ` · ${wh}` : ' · (все склады)')),
-            el('span', { class: 'price-value' }, `${pp.price.toLocaleString('ru-RU')} ₽`),
+            el('div', { class: 'price-value-wrap' }, priceInput, el('span', { class: 'price-currency' }, '₽')),
             el(
               'button',
               {
