@@ -89,7 +89,12 @@
 | `aiProposals.js` | `/api/ai-proposals` | inbox админа для предложений AI |
 | `noticeBanners.js` | `/api/notice-banners` | админ-управляемые плашки сверху |
 | `projects.js` | `/api/projects` | проекты (стикеры на лидах/сделках/заказах/контактах/компаниях) |
-| `diagDaily.js` | `/api/diag/daily` | **TEMP** — diag для ежедневного AI-обхода. Автоудаляется. |
+
+> **TEMP diag-роуты.** Авто-claude иногда заводит файлы вроде
+> `routes/diagDaily.js` под `/api/diag/...` для разовой диагностики
+> прод-БД через `web_fetch_vercel_url`. Они помечены TEMP и сносятся в
+> том же раунде (см. `chore(diag): remove ...` коммиты). В постоянных
+> файлах их быть не должно.
 
 ### Сервисы (`src/services/`)
 
