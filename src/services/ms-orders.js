@@ -73,7 +73,7 @@ async function fetchOrderPositions(orderId) {
 // stockMul/reserveMul: -1 / 0 / +1, домножается на quantity позиции.
 // Так пользователь видит актуальное состояние сразу, не ждёт ручного импорта
 // (МС в /report/stock/* имеет лаг, плюс пересчёт всего отчёта медленный).
-async function applyLocalStockReserveDelta(orderId, stockMul, reserveMul, warehouseOverride = null) {
+export async function applyLocalStockReserveDelta(orderId, stockMul, reserveMul, warehouseOverride = null) {
   const order = await db.get('SELECT warehouse FROM orders WHERE id = ?', orderId);
   const warehouse = warehouseOverride || order?.warehouse || null;
   const items = await db.all(
@@ -192,13 +192,6 @@ export async function customerOrderUpsertHandler(job) {
   } else {
     result = await msCreate(token, 'customerorder', body);
     await db.run('UPDATE orders SET ms_customer_order_id = ? WHERE id = ?', result.id, order.id);
-  }
-  // Локально обновляем reserve в stock_by_store: full → +qty, none → -qty.
-  // stock не трогаем — товар физически на складе до отгрузки.
-  if (reserveMode === 'full') {
-    await applyLocalStockReserveDelta(order.id, 0, +1);
-  } else if (reserveMode === 'none') {
-    await applyLocalStockReserveDelta(order.id, 0, -1);
   }
   return { ms_document_id: result.id };
 }
