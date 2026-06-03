@@ -32,7 +32,6 @@ import feedbackRoutes from './routes/feedback.js';
 import cronRoutes from './routes/cron.js';
 import maxRoutes from './routes/max.js';
 import aiProposalsRoutes from './routes/aiProposals.js';
-import diagDailyDMU44Routes from './routes/diag-daily-dMU44.js';
 import noticeBannersRoutes from './routes/noticeBanners.js';
 import notificationPrefsRoutes from './routes/notificationPrefs.js';
 import projectsRoutes from './routes/projects.js';
@@ -144,7 +143,6 @@ export function createApp({ serveStatic = true } = {}) {
   app.use('/api/cron', cronRoutes);
   app.use('/api/max', maxRoutes);
   app.use('/api/ai-proposals', aiProposalsRoutes);
-  app.use('/api/diag/daily-dMU44', diagDailyDMU44Routes);
   app.use('/api/notice-banners', noticeBannersRoutes);
   app.use('/api/notification-prefs', notificationPrefsRoutes);
   app.use('/api/projects', projectsRoutes);
