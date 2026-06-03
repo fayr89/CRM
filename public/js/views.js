@@ -2665,7 +2665,13 @@ export async function renderOrders(main, opts = {}) {
     clear(tableArea);
     tableArea.append(el('div', { class: 'loading' }, 'Загрузка…'));
     try {
-      const baseParams = directMode ? { ...state, direct: '1' } : state;
+      // directMode → только B2B (marketplace IS NULL).
+      // Иначе — только маркетплейс-заказы (marketplace IS NOT NULL). Раньше тут
+      // не было фильтра и страница «Продажи с площадок» показывала всё подряд,
+      // включая B2B — что путало менеджеров и админа.
+      const baseParams = directMode
+        ? { ...state, direct: '1' }
+        : { ...state, marketplace_only: '1' };
       if (state.view === 'kanban') {
         const result = await api.list('orders', { ...baseParams, status: '', limit: 200 });
         renderOrdersKanban(result);
@@ -3293,6 +3299,8 @@ export async function renderOrders(main, opts = {}) {
               marketplace: state.marketplace,
               date_from: state.date_from,
               date_to: state.date_to,
+              direct: directMode ? '1' : undefined,
+              marketplace_only: directMode ? undefined : '1',
             });
             toast('Excel-файл сохранён', 'success');
           } catch (e) {
@@ -3314,6 +3322,8 @@ export async function renderOrders(main, opts = {}) {
               marketplace: state.marketplace,
               date_from: state.date_from,
               date_to: state.date_to,
+              direct: directMode ? '1' : undefined,
+              marketplace_only: directMode ? undefined : '1',
             });
             toast('Лист сборки сохранён', 'success');
           } catch (e) {

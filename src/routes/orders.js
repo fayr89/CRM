@@ -165,8 +165,14 @@ router.get(
       where.push('o.marketplace = ?');
       params.push(req.query.marketplace);
     }
+    // Разделение каналов: direct=1 → только B2B (marketplace IS NULL),
+    // marketplace_only=1 → только площадка-заказы (marketplace IS NOT NULL).
+    // Без обоих фильтров — отдаются вообще все (используется для общих списков
+    // вроде дашборда и админ-выгрузок).
     if (req.query.direct === '1') {
       where.push('o.marketplace IS NULL');
+    } else if (req.query.marketplace_only === '1') {
+      where.push('o.marketplace IS NOT NULL');
     }
     if (req.query.manager_id) {
       where.push('o.manager_id = ?');
@@ -321,6 +327,11 @@ router.get(
     if (req.query.date_to) {
       where.push("o.created_at < (?::date + INTERVAL '1 day')");
       params.push(String(req.query.date_to));
+    }
+    if (req.query.direct === '1') {
+      where.push('o.marketplace IS NULL');
+    } else if (req.query.marketplace_only === '1') {
+      where.push('o.marketplace IS NOT NULL');
     }
     // Видимость: то же что в orderScope.
     if (req.user.role === 'sales') {
@@ -510,6 +521,11 @@ router.get(
     if (req.query.date_to) {
       where.push("o.created_at < (?::date + INTERVAL '1 day')");
       params.push(String(req.query.date_to));
+    }
+    if (req.query.direct === '1') {
+      where.push('o.marketplace IS NULL');
+    } else if (req.query.marketplace_only === '1') {
+      where.push('o.marketplace IS NOT NULL');
     }
     if (scope.sql) {
       where.push(scope.sql.replace(/manager_id/g, 'o.manager_id'));

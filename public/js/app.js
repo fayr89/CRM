@@ -37,11 +37,13 @@ const SALES_ROLES = ['admin', 'rop', 'manager', 'sales'];
 const NAV_GROUPS = [
   { items: [{ hash: '#/dashboard', label: 'Дашборд' }] },
   {
-    title: 'Продажи',
+    title: 'B2B (менеджеры по продажам)',
     items: [
+      // Раздел для sales-менеджеров: воронка, сделки, лиды, контакты, B2B-заказы.
+      // Видимость: пользователь с access_blocks включающим 'sales'.
       { hash: '#/pipeline', label: 'Воронка', roles: SALES_ROLES, block: 'sales' },
       { hash: '#/deals', label: 'Сделки', roles: SALES_ROLES, block: 'sales' },
-      { hash: '#/direct-orders', label: 'B2B заказы', roles: SALES_ROLES, block: 'direct' },
+      { hash: '#/direct-orders', label: 'B2B заказы', roles: SALES_ROLES, block: 'sales' },
       { hash: '#/leads', label: 'Лиды', roles: SALES_ROLES, block: 'sales' },
       { hash: '#/contacts', label: 'Контакты', roles: SALES_ROLES, block: 'sales' },
       { hash: '#/companies', label: 'Компании', roles: SALES_ROLES, block: 'sales' },
@@ -49,8 +51,10 @@ const NAV_GROUPS = [
     ],
   },
   {
-    title: 'Продажи с площадок',
+    title: 'Авито (менеджеры площадок)',
     items: [
+      // Раздел для Avito/marketplace-менеджеров: только заказы с площадок + касса.
+      // Видимость: пользователь с access_blocks включающим 'direct'.
       { hash: '#/orders', label: 'Продажи с площадок', roles: SALES_ROLES, block: 'direct' },
       { hash: '#/cashbox', label: 'Касса', roles: [...SALES_ROLES, 'finance'], block: 'direct' },
     ],
