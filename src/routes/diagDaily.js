@@ -100,6 +100,18 @@ router.get('/post-message', async (req, res) => {
   }
 });
 
+// GET /delete-message?msg_id=... — удалить сообщение треда
+router.get('/delete-message', async (req, res) => {
+  try {
+    const { msg_id } = req.query;
+    if (!msg_id) return res.status(400).json({ error: 'msg_id required' });
+    const result = await db.run('DELETE FROM feedback_messages WHERE id = ?', msg_id);
+    res.json({ deleted: result.changes });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // GET /patch-feedback?fb_id=...&status=...&reply=<base64> — сменить статус / ответить
 router.get('/patch-feedback', async (req, res) => {
   try {
