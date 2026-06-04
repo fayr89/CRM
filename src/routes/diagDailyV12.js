@@ -19,7 +19,7 @@ router.get('/', async (req, res) => {
       const st = req.query.status;
       const rows = st
         ? await db.all(
-            `SELECT p.*, f.subject AS feedback_subject, f.status AS feedback_status, f.user_id AS feedback_user_id, f.admin_notes AS feedback_admin_notes FROM ai_proposals p LEFT JOIN feedback f ON f.id = p.feedback_id WHERE p.status = ? ORDER BY p.created_at DESC LIMIT 100`,
+            `SELECT p.*, f.subject AS feedback_subject, f.status AS feedback_status, f.user_id AS feedback_user_id FROM ai_proposals p LEFT JOIN feedback f ON f.id = p.feedback_id WHERE p.status = ? ORDER BY p.created_at DESC LIMIT 100`,
             st,
           )
         : await db.all(
