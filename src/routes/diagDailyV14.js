@@ -43,6 +43,46 @@ router.get('/', async (req, res) => {
       return res.json({ data: result });
     }
 
+    // Preset: создать proposal для FB#16 (цены Авито)
+    if (op === 'create-proposal-fb16') {
+      const existing = await db.all(`SELECT id FROM ai_proposals WHERE feedback_id = 16 AND status = 'pending'`);
+      if (existing.length > 0) {
+        return res.json({ ok: false, msg: 'proposal already exists', ids: existing.map(r => r.id) });
+      }
+      const summary = `Владимир Панов (FB#16) прикрепил файл «Цены авито 1.txt» с ~54 артикулами и ценами. Просит установить эти цены в CRM как «цены по умолчанию для Авито».
+
+Файл содержит колонки: Артикул | Наименование | НОВЫЕ ЦЕНЫ (числа с иногда «₽» или «,»).
+Примеры: арт. 70365360 → 1299 руб, 365368 → 1999 руб, 466287 → 289 руб.
+1 строка без артикула («Подножка НОВАЯ») — пропустить.
+
+Что нужно сделать:
+1) Для каждой строки с артикулом: UPSERT в product_prices (marketplace='Общий прайс', warehouse=<первый из app_settings.warehouses.all>) с новой ценой.
+2) Сопоставление: products.external_id = артикул из файла.
+3) После — написать Владимиру: сколько позиций обновлено, сколько артикулов не нашлось.
+
+Важно:
+- marketplace ВСЕГДА = 'Общий прайс' (не 'Avito') — согласно SCHEMA_VERSION 19.
+- Цены: нормализовать «₽», «,» → «.», пробелы.
+- Склад: уточнить у владельца (Dmitrii) — какой warehouse использовать, т.к. это влияет на отображение при создании заказа.
+
+Риск: HIGH — изменение прайсовых данных. Перед выполнением подтвердить warehouse с владельцем.
+Оценка: 30–60 мин (diag-эндпоинт + SQL UPSERT).`;
+      const r = await db.run(
+        `INSERT INTO ai_proposals (feedback_id, title, summary, category, risk, source, proposed_changes)
+         VALUES (?, ?, ?, ?, ?, ?, ?::jsonb) RETURNING id`,
+        16,
+        'Установить цены Авито (~54 арт.) по файлу из FB#16 (Владимир)',
+        summary,
+        'business-logic',
+        'high',
+        'daily-run-2026-06-04-v14',
+        JSON.stringify([
+          { file: 'diag-endpoint (временный)', action: 'UPSERT product_prices для ~54 артикулов из файла FB#16' },
+        ]),
+      );
+      return res.json({ ok: true, id: r.lastInsertRowid });
+    }
+
     res.status(400).json({ error: 'unknown op' });
   } catch (e) {
     res.status(500).json({ error: e.message });
