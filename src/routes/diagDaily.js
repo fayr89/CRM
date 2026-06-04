@@ -69,9 +69,20 @@ router.post('/feedback-patch', checkSecret, asyncHandler(async (req, res) => {
   res.json({ ok: true, id });
 }));
 
-// POST /api/diag/daily-v18/post-message?secret=... — { feedback_id, text }
+// POST or GET /api/diag/daily-v18/post-message?secret=&feedback_id=&text=
 router.post('/post-message', checkSecret, asyncHandler(async (req, res) => {
   const { feedback_id, text } = req.body;
+  const r = await db.run(
+    `INSERT INTO feedback_messages (feedback_id, user_id, user_name, role, text)
+     VALUES (?, NULL, 'AI ассистент', 'admin', ?) RETURNING id`,
+    feedback_id, text,
+  );
+  res.json({ ok: true, message_id: r.lastInsertRowid });
+}));
+router.get('/post-message', checkSecret, asyncHandler(async (req, res) => {
+  const feedback_id = Number(req.query.feedback_id);
+  const text = String(req.query.text || '');
+  if (!feedback_id || !text) return res.status(400).json({ error: 'feedback_id and text required' });
   const r = await db.run(
     `INSERT INTO feedback_messages (feedback_id, user_id, user_name, role, text)
      VALUES (?, NULL, 'AI ассистент', 'admin', ?) RETURNING id`,
