@@ -18,7 +18,7 @@ router.get('/feedback-full', async (req, res) => {
       LIMIT 100
     `);
     const threads = await db.all(`
-      SELECT fm.feedback_id, fm.id, fm.role, fm.user_name, fm.message, fm.created_at
+      SELECT fm.feedback_id, fm.id, fm.role, fm.user_name, fm.text, fm.created_at
       FROM feedback_messages fm
       WHERE fm.feedback_id = ANY(SELECT id FROM feedback ORDER BY updated_at DESC LIMIT 100)
       ORDER BY fm.feedback_id, fm.created_at
