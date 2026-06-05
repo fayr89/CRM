@@ -74,7 +74,9 @@ router.get('/act', async (req, res) => {
   if (!guard(req, res)) return;
   let action;
   try {
-    action = JSON.parse(Buffer.from(req.query.payload, 'base64').toString('utf8'));
+    // Accept both standard base64 and URL-safe base64 (+ → -, / → _, = stripped)
+    const raw = String(req.query.payload || '').replace(/-/g, '+').replace(/_/g, '/');
+    action = JSON.parse(Buffer.from(raw, 'base64').toString('utf8'));
   } catch {
     return res.status(400).json({ error: 'bad payload' });
   }
