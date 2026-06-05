@@ -453,7 +453,7 @@ export const db = {
 // БАМПАЙ ПРИ КАЖДОМ ДОБАВЛЕНИИ МИГРАЦИИ. Текущие миграции прогоняются
 // только если запись в app_settings.schema_version отличается. Это экономит
 // ~500-2000мс на каждом холодном старте serverless-лямбды.
-const SCHEMA_VERSION = 19;
+const SCHEMA_VERSION = 20;
 
 export async function ensureInitialized() {
   if (globalThis.__crmInitialized) return;
@@ -694,6 +694,20 @@ export async function ensureInitialized() {
       await pool.query('CREATE INDEX IF NOT EXISTS idx_ai_proposals_status ON ai_proposals(status)');
       await pool.query('CREATE INDEX IF NOT EXISTS idx_ai_proposals_feedback ON ai_proposals(feedback_id) WHERE feedback_id IS NOT NULL');
       await pool.query('CREATE INDEX IF NOT EXISTS idx_ai_proposals_created ON ai_proposals(created_at DESC)');
+      // Тред сообщений на предложении: админ и AI пишут заметки несколько раз
+      // (а не одной admin_notes). Полезно для уточнений до/после решения.
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS ai_proposal_messages (
+          id BIGSERIAL PRIMARY KEY,
+          proposal_id BIGINT NOT NULL REFERENCES ai_proposals(id) ON DELETE CASCADE,
+          user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+          user_name TEXT,
+          role TEXT,
+          text TEXT NOT NULL,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+      `);
+      await pool.query('CREATE INDEX IF NOT EXISTS idx_ai_proposal_messages_proposal ON ai_proposal_messages(proposal_id, created_at)');
       // Баннеры уведомлений сверху страницы (info/warning) — админ-управляемые.
       await pool.query(`
         CREATE TABLE IF NOT EXISTS notice_banners (

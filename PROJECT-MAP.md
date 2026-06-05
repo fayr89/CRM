@@ -86,7 +86,7 @@
 | `feedback.js` | `/api/feedback` | обращения + тред + аттачменты |
 | `cron.js` | `/api/cron/refresh-stocks` | Vercel-cron остатков МойСклада |
 | `max.js` | `/api/max` | МАХ-бот (вебхук, привязка, диагностика) |
-| `aiProposals.js` | `/api/ai-proposals` | inbox админа для предложений AI |
+| `aiProposals.js` | `/api/ai-proposals` | inbox админа для предложений AI + тред заметок (`/messages`) |
 | `noticeBanners.js` | `/api/notice-banners` | админ-управляемые плашки сверху |
 | `projects.js` | `/api/projects` | проекты (стикеры на лидах/сделках/заказах/контактах/компаниях) |
 
@@ -316,6 +316,21 @@ if (payload.act && user.role === 'admin' && payload.act !== 'admin') {
 `leads`, `deals`, `orders`, `contacts`, `companies` через `project_id`
 (nullable). Управление: «Настройки → Проекты». Фильтр по проекту в
 списках + цветной стикер на карточках.
+
+### AI-инбокс предложений + тред заметок
+
+Таблицы: `ai_proposals` (карточка) + `ai_proposal_messages` (тред). AI
+постит предложение через `POST /api/ai-proposals` под admin-токеном.
+Админ смотрит в `#/ai-inbox`, решает (approved/rejected/revision/done).
+
+Для итеративного уточнения — тред заметок:
+- `GET /api/ai-proposals/:id/messages` / `POST .../messages` — простой
+  чат. AI постит от имени «AI ассистент» (см. правило в `CLAUDE.md`),
+  человек — под своим именем.
+- В карточке `#/ai-inbox` блок «💬 Заметки / уточнения» свёрнут по
+  умолчанию, разворачивается lazy-load. Ctrl+Enter — быстрая отправка.
+- Поле `admin_notes` в `ai_proposals` оставлено для финальной заметки
+  при решении (вверху карточки), тред — для всего остального.
 
 ### Уведомления админу о заказах
 

@@ -9633,6 +9633,91 @@ export async function renderAiInbox(main) {
     } catch (e) { toast(e.message, 'error'); }
   }
 
+  // Тред заметок на предложении: список + textarea + кнопка «Добавить».
+  // Lazy-load: тянем messages при раскрытии. Видимо как сворачиваемый блок.
+  function renderProposalThread(p) {
+    const wrap = el('div', { class: 'ai-proposal-thread', style: { marginTop: '10px' } });
+    const toggle = el('button', {
+      type: 'button',
+      class: 'btn btn-sm',
+      style: { background: '#eff6ff', border: '1px solid #bfdbfe', color: '#1e3a8a' },
+    }, '💬 Заметки / уточнения');
+    const messagesArea = el('div', { class: 'ai-proposal-messages', style: { display: 'none', marginTop: '10px' } });
+    let loaded = false;
+    let loading = false;
+
+    async function load() {
+      loading = true;
+      clear(messagesArea);
+      messagesArea.append(el('div', { class: 'muted', style: { fontSize: '13px' } }, 'Загружаю…'));
+      try {
+        const r = await api.aiProposalMessages(p.id);
+        clear(messagesArea);
+        const msgs = r.data || [];
+        if (!msgs.length) {
+          messagesArea.append(el('div', { class: 'muted', style: { fontSize: '13px', marginBottom: '8px' } }, 'Пока нет заметок. Напишите свою — AI прочитает на следующем обходе.'));
+        } else {
+          for (const m of msgs) {
+            messagesArea.append(
+              el('div', { class: 'ai-proposal-msg', style: { marginBottom: '8px', padding: '8px 10px', background: '#f9fafb', borderRadius: '6px', fontSize: '13px' } },
+                el('div', { style: { fontSize: '11px', color: 'var(--text-muted)', marginBottom: '2px' } },
+                  `${m.user_name || 'Аноним'} · ${fmtDateTime(m.created_at)}`),
+                el('div', { style: { whiteSpace: 'pre-wrap' } }, m.text),
+              ),
+            );
+          }
+        }
+        const ta = el('textarea', {
+          rows: '3',
+          placeholder: 'Добавить заметку (вопрос к AI, уточнение, контекст)…',
+          style: { width: '100%', fontFamily: 'inherit', fontSize: '13px', padding: '8px', boxSizing: 'border-box' },
+        });
+        const sendBtn = el('button', { class: 'btn btn-sm btn-primary' }, 'Добавить заметку');
+        async function send() {
+          const text = ta.value.trim();
+          if (!text) return;
+          sendBtn.disabled = true;
+          const orig = sendBtn.textContent;
+          sendBtn.textContent = '⏳ Сохраняю…';
+          try {
+            await api.postAiProposalMessage(p.id, text);
+            ta.value = '';
+            await load();
+          } catch (e) {
+            toast(e.message || 'Не удалось сохранить', 'error');
+          } finally {
+            sendBtn.disabled = false;
+            sendBtn.textContent = orig;
+          }
+        }
+        sendBtn.addEventListener('click', send);
+        ta.addEventListener('keydown', (e) => {
+          if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); send(); }
+        });
+        messagesArea.append(
+          el('div', { style: { marginTop: '8px' } }, ta),
+          el('div', { style: { marginTop: '6px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' } },
+            el('span', { class: 'muted', style: { fontSize: '11px' } }, 'Ctrl+Enter — быстро отправить'),
+            sendBtn,
+          ),
+        );
+        loaded = true;
+      } catch (e) {
+        clear(messagesArea);
+        messagesArea.append(el('div', { class: 'error' }, e.message || 'Ошибка'));
+      } finally {
+        loading = false;
+      }
+    }
+    toggle.addEventListener('click', async () => {
+      const isOpen = messagesArea.style.display !== 'none';
+      messagesArea.style.display = isOpen ? 'none' : 'block';
+      if (!isOpen && !loaded && !loading) await load();
+    });
+    wrap.append(toggle, messagesArea);
+    return wrap;
+  }
+
   function renderList(rows) {
     clear(tableArea);
     if (!rows.length) {
@@ -9685,6 +9770,7 @@ export async function renderAiInbox(main) {
           p.admin_notes,
           p.admin_decision_by_name ? el('span', { class: 'muted' }, ` — ${p.admin_decision_by_name}, ${fmtDateTime(p.admin_decision_at)}`) : null,
         ) : null,
+        renderProposalThread(p),
         ['pending', 'revision'].includes(p.status)
           ? el('div', { style: { marginTop: '12px', display: 'flex', gap: '8px', flexWrap: 'wrap' } },
               el('button', {

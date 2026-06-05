@@ -132,6 +132,59 @@ router.patch(
   }),
 );
 
+// Тред сообщений предложения: чтобы админ и AI могли несколько раз уточнить
+// детали (одной admin_notes мало). GET — список. POST — добавить заметку.
+router.get(
+  '/:id/messages',
+  requireRole('admin'),
+  asyncHandler(async (req, res) => {
+    const id = Number(req.params.id);
+    if (!id) throw BadRequest('id required');
+    const rows = await db.all(
+      `SELECT id, user_id, user_name, role, text, created_at
+       FROM ai_proposal_messages
+       WHERE proposal_id = ?
+       ORDER BY created_at ASC, id ASC`,
+      id,
+    );
+    res.json({ data: rows });
+  }),
+);
+
+const messageSchema = z.object({
+  text: z.string().min(1).max(5000),
+  // user_name переопределяемое: AI постит от имени «AI ассистент», а не от
+  // реального пользователя-владельца токена. См. правило в CLAUDE.md.
+  user_name: z.string().max(120).optional().nullable(),
+});
+router.post(
+  '/:id/messages',
+  requireRole('admin'),
+  asyncHandler(async (req, res) => {
+    const id = Number(req.params.id);
+    if (!id) throw BadRequest('id required');
+    const data = messageSchema.parse(req.body || {});
+    const cur = await db.get('SELECT id FROM ai_proposals WHERE id = ?', id);
+    if (!cur) throw NotFound('Предложение не найдено');
+    const r = await db.run(
+      `INSERT INTO ai_proposal_messages (proposal_id, user_id, user_name, role, text)
+       VALUES (?, ?, ?, ?, ?) RETURNING id, created_at`,
+      id,
+      req.user.id,
+      data.user_name || req.user.name || null,
+      req.user.role,
+      data.text,
+    );
+    await logAction(req, {
+      action: 'ai_proposal.message',
+      entity_type: 'ai_proposal',
+      entity_id: id,
+      details: { length: data.text.length },
+    });
+    res.status(201).json({ id: r.lastInsertRowid, created_at: r.created_at });
+  }),
+);
+
 // Удалить предложение (например, дубль).
 router.delete(
   '/:id',

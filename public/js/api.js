@@ -181,6 +181,8 @@ export const api = {
   decideAiProposal: (id, decision, notes) =>
     request('PATCH', `/api/ai-proposals/${id}`, { body: { decision, notes } }),
   deleteAiProposal: (id) => request('DELETE', `/api/ai-proposals/${id}`),
+  aiProposalMessages: (id) => request('GET', `/api/ai-proposals/${id}/messages`),
+  postAiProposalMessage: (id, text, userName) => request('POST', `/api/ai-proposals/${id}/messages`, { body: { text, user_name: userName || undefined } }),
   wipeOperational: () => request('POST', '/api/admin/wipe-operational', { body: { confirm: 'УДАЛИТЬ' } }),
 
   // МАХ-бот
