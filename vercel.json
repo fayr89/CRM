@@ -16,6 +16,10 @@
     {
       "path": "/api/cron/refresh-stocks",
       "schedule": "*/15 * * * *"
+    },
+    {
+      "path": "/api/cron/auto-reserve-waiting",
+      "schedule": "0 2,5,8,11,14,17 * * *"
     }
   ]
 }

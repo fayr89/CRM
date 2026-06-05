@@ -17,29 +17,36 @@ const NET = `COALESCE(SUM(CASE WHEN kind = 'expense' THEN -amount ELSE amount EN
 const COMM = `COALESCE(SUM(CASE WHEN kind = 'expense' THEN -commission ELSE commission END), 0)::float`;
 
 // scopeSql/params — фильтр (manager_id = ? для менеджера, пусто для admin/finance — вся касса).
-async function cashboxSummary(scopeSql, params) {
-  const w = scopeSql ? `${scopeSql} AND` : '';
+// projectId — опциональный фильтр по проекту (orders.project_id через JOIN).
+async function cashboxSummary(scopeSql, params, projectId = null) {
+  let scope = scopeSql;
+  const p = [...params];
+  if (projectId) {
+    scope = scope ? `${scope} AND p.project_id = ?` : 'p.project_id = ?';
+    p.push(Number(projectId));
+  }
+  const w = scope ? `${scope} AND` : '';
   const confirmed = await db.get(
     `SELECT ${NET} AS sum, ${COMM} AS commission, COUNT(*)::int AS count
      FROM payments p WHERE ${w} status = 'confirmed'`,
-    ...params,
+    ...p,
   );
   const pending = await db.get(
     `SELECT ${NET} AS sum, ${COMM} AS commission, COUNT(*)::int AS count
      FROM payments p WHERE ${w} status = 'pending'`,
-    ...params,
+    ...p,
   );
   const rejected = await db.get(
     `SELECT COUNT(*)::int AS count FROM payments p WHERE ${w} status = 'rejected'`,
-    ...params,
+    ...p,
   );
   const recent = await db.all(
     `SELECT p.*, o.reference_number AS order_reference, u.name AS manager_name
      FROM payments p
      LEFT JOIN orders o ON o.id = p.order_id
      LEFT JOIN users u ON u.id = p.manager_id
-     ${scopeSql ? `WHERE ${scopeSql}` : ''} ORDER BY p.created_at DESC LIMIT 20`,
-    ...params,
+     ${scope ? `WHERE ${scope}` : ''} ORDER BY p.created_at DESC LIMIT 20`,
+    ...p,
   );
   return {
     balance: confirmed.sum - confirmed.commission,
@@ -58,16 +65,17 @@ async function cashboxSummary(scopeSql, params) {
 router.get(
   '/',
   asyncHandler(async (req, res) => {
+    const projectId = req.query.project_id ? Number(req.query.project_id) : null;
     if (['admin', 'finance'].includes(req.user.role)) {
       // Опциональный фильтр по конкретному менеджеру.
       const mid = req.query.manager_id ? Number(req.query.manager_id) : null;
       if (mid) {
-        res.json(await cashboxSummary('p.manager_id = ?', [mid]));
+        res.json(await cashboxSummary('p.manager_id = ?', [mid], projectId));
       } else {
-        res.json(await cashboxSummary('', []));
+        res.json(await cashboxSummary('', [], projectId));
       }
     } else {
-      res.json(await cashboxSummary('p.manager_id = ?', [req.user.id]));
+      res.json(await cashboxSummary('p.manager_id = ?', [req.user.id], projectId));
     }
   }),
 );
@@ -80,7 +88,8 @@ router.get(
     if (req.user.role !== 'admin' && !(await canAccessUser(req.user, id))) {
       throw Forbidden();
     }
-    res.json(await cashboxSummary('p.manager_id = ?', [id]));
+    const projectId = req.query.project_id ? Number(req.query.project_id) : null;
+    res.json(await cashboxSummary('p.manager_id = ?', [id], projectId));
   }),
 );
 

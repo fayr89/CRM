@@ -130,6 +130,30 @@ router.get('/', async (req, res) => {
       return res.json({ ok: true });
     }
 
+    if (action === 'update-product-names') {
+      const { id } = req.query;
+      if (!id) return res.status(400).json({ error: 'missing id' });
+      const proposal = await db.get(`SELECT proposed_changes FROM ai_proposals WHERE id = ?`, Number(id));
+      if (!proposal) return res.status(404).json({ error: 'proposal not found' });
+      const raw = proposal.proposed_changes;
+      const changes = Array.isArray(raw) ? raw : (raw?.updates ?? null);
+      if (!Array.isArray(changes)) return res.status(400).json({ error: 'proposed_changes has no array' });
+      let matched = 0;
+      const notFound = [];
+      for (const item of changes) {
+        const { external_id, sku, name } = item || {};
+        if (!name) continue;
+        const lookup = external_id || sku || null;
+        const r = await db.run(
+          `UPDATE products SET name = ?, updated_at = NOW() WHERE external_id = ? OR sku = ?`,
+          name, lookup, lookup,
+        );
+        if ((r.changes || 0) > 0) matched++;
+        else notFound.push(lookup);
+      }
+      return res.json({ ok: true, total: changes.length, matched, notFound });
+    }
+
     if (action === 'patch-proposal') {
       const { id, status } = req.query;
       const summary = b64(req.query.summary_b64);

@@ -7,6 +7,8 @@ import { db } from '../db.js';
 import { asyncHandler } from '../errors.js';
 import { decryptSecret } from '../services/secrets.js';
 import { fetchMoyskladStockByStorePage } from '../services/moysklad.js';
+import { applyLocalStockReserveDelta } from '../services/ms-orders.js';
+import { enqueueMsJob } from '../services/ms-jobs.js';
 
 const router = Router();
 
@@ -143,6 +145,69 @@ router.get(
       clearedMissing,
       nextOffset: offset,
     });
+  }),
+);
+
+// Auto-резервирование заказов «Ожидает товара»: проверяет наличие и резервирует.
+// Дёргается Vercel Cron несколько раз в день (см. vercel.json).
+router.get(
+  '/auto-reserve-waiting',
+  asyncHandler(async (req, res) => {
+    if (!verifyCron(req)) return res.status(401).send();
+    const utcHour = new Date().getUTCHours();
+    // МСК = UTC+3. Пропускаем ночь (22:00-05:00 МСК = 19:00-02:00 UTC).
+    if (utcHour < 2 || utcHour >= 19) {
+      return res.json({ ok: true, skipped: 'night', utcHour });
+    }
+
+    const orders = await db.all(
+      `SELECT * FROM orders WHERE status = 'waiting_stock' AND warehouse IS NOT NULL AND warehouse != ''`,
+    );
+    const reserved = [];
+    const skipped = [];
+
+    for (const order of orders) {
+      const items = await db.all(
+        `SELECT oi.id, oi.name, oi.quantity, oi.product_id, p.stock_by_store
+         FROM order_items oi LEFT JOIN products p ON p.id = oi.product_id
+         WHERE oi.order_id = ?`,
+        order.id,
+      );
+      const wh = order.warehouse.trim();
+      let canReserve = true;
+      for (const it of items) {
+        if (!it.product_id) continue;
+        const sbs = Array.isArray(it.stock_by_store) ? it.stock_by_store
+          : (typeof it.stock_by_store === 'string' ? JSON.parse(it.stock_by_store || '[]') : []);
+        const row = sbs.find((e) => String(e.store || '').trim() === wh);
+        const stock = Number(row?.stock) || 0;
+        const reserve = Number(row?.reserve) || 0;
+        if (it.quantity > Math.max(0, stock - reserve)) { canReserve = false; break; }
+      }
+      if (!canReserve) { skipped.push(order.id); continue; }
+
+      await db.withTransaction(async (tx) => {
+        await tx.run(
+          `UPDATE orders SET status = 'reserved', reserved_at = NOW(), updated_at = NOW() WHERE id = ?`,
+          order.id,
+        );
+        const existing = await tx.get(`SELECT id FROM payments WHERE order_id = ? AND kind = 'income'`, order.id);
+        if (!existing && (order.total_amount || 0) > 0) {
+          await tx.run(
+            `INSERT INTO payments (manager_id, order_id, amount, currency, kind, status, notes, project_id, created_at, updated_at)
+             VALUES (?, ?, ?, ?, 'income', 'pending', ?, ?, NOW(), NOW())`,
+            order.manager_id, order.id, order.total_amount, order.currency || 'RUB',
+            `Заказ #${order.id}${order.marketplace ? ' · ' + order.marketplace : ''}`,
+            order.project_id ?? null,
+          );
+        }
+      });
+      try { await applyLocalStockReserveDelta(order.id, 0, +1); } catch { /* ignore */ }
+      await enqueueMsJob(order.id, 'customer_order.upsert', { reserve_mode: 'full' });
+      reserved.push(order.id);
+    }
+
+    res.json({ ok: true, reserved, skipped });
   }),
 );
 

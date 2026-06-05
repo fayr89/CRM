@@ -136,10 +136,15 @@ export const api = {
   rejectPayment: (id, reason) =>
     request('POST', `/api/payments/${id}/reject`, { body: { reason } }),
 
-  cashbox: (userId, managerId) =>
+  cashbox: (userId, managerId, projectId) =>
     request('GET', userId ? `/api/cashbox/${userId}` : '/api/cashbox', {
-      query: managerId ? { manager_id: String(managerId) } : {},
+      query: {
+        ...(managerId ? { manager_id: String(managerId) } : {}),
+        ...(projectId ? { project_id: String(projectId) } : {}),
+      },
     }),
+
+  importProductNames: (csv) => request('POST', '/api/products/import-names', { body: { csv } }),
 
   // Интеграции и уведомления
   notifications: (unread) =>

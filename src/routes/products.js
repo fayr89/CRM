@@ -1122,4 +1122,35 @@ router.post(
   }),
 );
 
+router.post(
+  '/import-names',
+  requireRole('admin'),
+  asyncHandler(async (req, res) => {
+    const csv = String(req.body?.csv || '');
+    if (!csv) throw BadRequest('CSV не передан');
+    const lines = csv.split('\n').filter((l) => l.trim());
+    const updates = [];
+    for (const line of lines) {
+      const sep = line.includes(';') ? ';' : ',';
+      const parts = line.split(sep);
+      if (parts.length < 2) continue;
+      const sku = parts[0].trim().replace(/^"|"$/g, '');
+      const name = parts.slice(1).join(sep).trim().replace(/^"|"$/g, '');
+      if (sku && name) updates.push({ sku, name });
+    }
+    if (!updates.length) throw BadRequest('Нет данных для обновления');
+    let matched = 0;
+    const notFound = [];
+    for (const { sku, name } of updates) {
+      const r = await db.run(
+        `UPDATE products SET name = ?, updated_at = NOW() WHERE external_id = ? OR sku = ?`,
+        name, sku, sku,
+      );
+      if ((r.changes || 0) > 0) matched++;
+      else notFound.push(sku);
+    }
+    res.json({ ok: true, total: updates.length, matched, notFound });
+  }),
+);
+
 export default router;
