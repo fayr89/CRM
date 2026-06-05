@@ -19,8 +19,7 @@ router.get('/', async (req, res) => {
       const proposals = await db.all(
         `SELECT p.*, u.name AS admin_decision_by_name
          FROM ai_proposals p LEFT JOIN users u ON u.id = p.admin_decision_by
-         WHERE p.status IN ('approved','revision','rejected')
-         ORDER BY p.created_at DESC`,
+         ORDER BY p.status, p.created_at DESC`,
       );
       const feedback = await db.all(
         `SELECT f.id, f.status, f.category, f.subject, f.message, f.admin_reply,
