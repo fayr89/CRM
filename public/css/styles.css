@@ -1371,10 +1371,10 @@ button, .btn, a { touch-action: manipulation; }
    Сразу видно «вот заказ X», под ним «вот его SKU». Шапка заказа собирает
    №/дату/статус/трек/менеджера/сумму/действия в один компактный flex-ряд. */
 tr.order-row-summary > td {
-  background: #374151; color: #f3f4f6;
-  padding: 10px 12px; border-top: 3px solid #1f2937;
+  background: #4b5563; color: #f3f4f6;
+  padding: 10px 12px; border-top: 3px solid #374151;
 }
-tr.order-row-summary:hover > td { background: #1f2937; cursor: pointer; }
+tr.order-row-summary:hover > td { background: #374151; cursor: pointer; }
 .order-summary-line {
   display: flex; flex-wrap: wrap; align-items: center; gap: 10px;
   font-size: 13px;
