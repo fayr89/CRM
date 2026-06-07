@@ -431,6 +431,7 @@ if (payload.act && user.role === 'admin' && payload.act !== 'admin') {
 | `localStorage` в iOS standalone PWA изолирован от Safari | админ в браузере, в PWA — может быть менеджер | плашка `.mobile-user-badge` с ролью; sidebar «Выйти» → fresh login |
 | `web_fetch_vercel_url` отдаёт 502 при долгом ответе | Cloudflare timeout | для тяжёлых импортов — батчевый UPSERT (один SQL), не N-инсертов |
 | Очередь миграций `ALTER ... IF NOT EXISTS` бежит на каждом холодном старте | медленный cold start | `SCHEMA_VERSION` гейт: бежит только при росте версии. Бамп вручную в `db.js` |
+| Параллельная сессия auto-claude и я добавили миграции под одной и той же `SCHEMA_VERSION` | их версия задеплоилась первой, в БД записалось `schema_version=N`, мои миграции не прогнались никогда (код видит «уже актуально») | ВСЕГДА бампать `SCHEMA_VERSION` если добавляешь миграции — даже если она «своя». Миграции идемпотентны (`CREATE TABLE IF NOT EXISTS`), повторный прогон auto-claude миграций безопасен |
 | Запросы к Supabase MCP бьются в `crm-prod-v2`/`crm-v3` — это НЕ прод | можно случайно изменить чужой проект | для диагностики прод-БД — временный `/api/diag/...` эндпоинт + Vercel MCP `web_fetch_vercel_url`, потом сразу снести |
 | Diag-эндпоинты остаются в проде | мусор + дыра доступа | sec-чек: после каждой авто-сессии — `git log --grep="TEMP\\|diag"` и cleanup |
 
