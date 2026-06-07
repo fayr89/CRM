@@ -77,6 +77,21 @@ router.get(
       projectIds, fromD, toD,
     );
 
+    // 2b. Доход через выигранные сделки (deals.stage='won') с production-project.
+    //    У многих клиентов «подряд» = выигранная сделка в CRM, отдельной сущности
+    //    contracts может вообще не быть. Берём amount у won-сделок, фильтр по
+    //    updated_at (когда сделка перешла в won — приближение).
+    const dealIncomeRows = await db.all(
+      `SELECT pr.id AS project_id, pr.name AS project_name, pr.color,
+              COALESCE(SUM(d.amount), 0)::float AS amount
+       FROM deals d
+       JOIN projects pr ON pr.id = d.project_id
+       WHERE pr.id = ANY(?) AND d.stage = 'won'
+         AND d.updated_at::date >= ?::date AND d.updated_at::date <= ?::date
+       GROUP BY pr.id, pr.name, pr.color`,
+      projectIds, fromD, toD,
+    );
+
     // 3. Расход подрядов: материалы + труд + прочие. Только для подрядов с
     //    производственным проектом, по записям в окне.
     const contractCostsRows = await db.all(
@@ -115,12 +130,14 @@ router.get(
     for (const p of projects) byProject.set(p.id, { id: p.id, name: p.name, color: p.color, income: 0, expense: 0 });
     for (const r of orderIncomeRows) byProject.get(r.project_id).income += Number(r.amount || 0);
     for (const r of contractIncomeRows) byProject.get(r.project_id).income += Number(r.amount || 0);
+    for (const r of dealIncomeRows) byProject.get(r.project_id).income += Number(r.amount || 0);
     for (const r of contractCostsRows) byProject.get(r.project_id).expense += Number(r.amount || 0);
 
     const ordersTotal = orderIncomeRows.reduce((s, r) => s + Number(r.amount || 0), 0);
     const contractsTotal = contractIncomeRows.reduce((s, r) => s + Number(r.amount || 0), 0);
+    const dealsTotal = dealIncomeRows.reduce((s, r) => s + Number(r.amount || 0), 0);
     const contractCostsTotal = contractCostsRows.reduce((s, r) => s + Number(r.amount || 0), 0);
-    const incomeTotal = ordersTotal + contractsTotal;
+    const incomeTotal = ordersTotal + contractsTotal + dealsTotal;
     const expenseTotal = contractCostsTotal + manualTotal;
 
     res.json({
@@ -131,6 +148,7 @@ router.get(
         by_source: {
           orders: Math.round(ordersTotal * 100) / 100,
           contracts: Math.round(contractsTotal * 100) / 100,
+          deals: Math.round(dealsTotal * 100) / 100,
         },
         by_project: Array.from(byProject.values()).map((p) => ({ id: p.id, name: p.name, color: p.color, income: Math.round(p.income * 100) / 100 })),
       },

@@ -36,10 +36,21 @@ async function loadPlanFull(planId, includeCost) {
     planId,
   );
   plan.items = items;
+  // Этапы: имя + минуты на этап. Эффективное время труда — сумма по этапам;
+  // если этапов нет, fallback на labor_minutes_per_unit поля плана.
+  const stages = await db.all(
+    `SELECT id, name, minutes, sort_order FROM processing_plan_stages
+     WHERE plan_id = ? ORDER BY sort_order ASC, id ASC`,
+    planId,
+  );
+  plan.stages = stages;
+  const stagesTotal = stages.reduce((s, x) => s + Number(x.minutes || 0), 0);
+  const effectiveLaborMinutes = stages.length ? stagesTotal : Number(plan.labor_minutes_per_unit || 0);
+  plan.effective_labor_minutes = Math.round(effectiveLaborMinutes * 100) / 100;
   if (includeCost) {
     const rate = await getLaborRate();
     const materialsTotal = items.reduce((s, i) => s + Number(i.cost_price || 0) * Number(i.qty_per_unit || 0), 0);
-    const laborTotal = Number(plan.labor_minutes_per_unit || 0) * rate;
+    const laborTotal = effectiveLaborMinutes * rate;
     plan.cost_per_unit = Math.round((materialsTotal + laborTotal) * 100) / 100;
     plan.materials_total_per_unit = Math.round(materialsTotal * 100) / 100;
     plan.labor_total_per_unit = Math.round(laborTotal * 100) / 100;
@@ -59,6 +70,15 @@ router.get(
        ${req.query.active === 'false' ? 'WHERE pp.active = FALSE' : req.query.active === 'true' ? 'WHERE pp.active = TRUE' : ''}
        ORDER BY p.name ASC`,
     );
+    // Подтянем суммарное время этапов — если есть, перекрывает labor_minutes_per_unit.
+    const stagesAgg = await db.all(
+      `SELECT plan_id, SUM(minutes) AS minutes_sum FROM processing_plan_stages GROUP BY plan_id`,
+    );
+    const stagesByPlan = new Map(stagesAgg.map((x) => [Number(x.plan_id), Number(x.minutes_sum) || 0]));
+    for (const r of rows) {
+      const stMin = stagesByPlan.get(Number(r.id));
+      r.effective_labor_minutes = stMin != null ? Math.round(stMin * 100) / 100 : Number(r.labor_minutes_per_unit || 0);
+    }
     if (!includeCost) return res.json({ data: rows });
     const rate = await getLaborRate();
     // Подтянем суммарную себестоимость для каждой техкарты одной выборкой.
@@ -70,7 +90,7 @@ router.get(
     const byPlan = new Map(items.map((x) => [Number(x.plan_id), Number(x.materials_total) || 0]));
     for (const r of rows) {
       const mat = byPlan.get(Number(r.id)) || 0;
-      const labor = Number(r.labor_minutes_per_unit || 0) * rate;
+      const labor = Number(r.effective_labor_minutes || 0) * rate;
       r.cost_per_unit = Math.round((mat + labor) * 100) / 100;
     }
     res.json({ data: rows, labor_rate_per_minute: rate });
@@ -90,12 +110,20 @@ const itemSchema = z.object({
   material_id: z.number().int().positive(),
   qty_per_unit: z.number().positive(),
 });
+const stageSchema = z.object({
+  name: z.string().min(1).max(100),
+  minutes: z.number().nonnegative(),
+});
 const planSchema = z.object({
   product_id: z.number().int().positive(),
+  // labor_minutes_per_unit оставлено для обратной совместимости. Если в payload
+  // приходят stages — labor_minutes_per_unit игнорируется и считается как
+  // SUM(stages.minutes) при чтении.
   labor_minutes_per_unit: z.number().nonnegative().optional().default(0),
   active: z.boolean().optional().default(true),
   notes: z.string().max(1000).optional().nullable(),
   items: z.array(itemSchema).optional().default([]),
+  stages: z.array(stageSchema).optional(),
 });
 
 router.post(
@@ -117,6 +145,15 @@ router.post(
           `INSERT INTO processing_plan_items (plan_id, material_id, qty_per_unit) VALUES (?, ?, ?)`,
           planId, it.material_id, it.qty_per_unit,
         );
+      }
+      if (data.stages && data.stages.length) {
+        for (let i = 0; i < data.stages.length; i++) {
+          const s = data.stages[i];
+          await tx.run(
+            `INSERT INTO processing_plan_stages (plan_id, name, minutes, sort_order) VALUES (?, ?, ?, ?)`,
+            planId, s.name, s.minutes, i,
+          );
+        }
       }
       return planId;
     });
@@ -154,6 +191,17 @@ router.patch(
           await tx.run(
             `INSERT INTO processing_plan_items (plan_id, material_id, qty_per_unit) VALUES (?, ?, ?)`,
             cur.id, it.material_id, it.qty_per_unit,
+          );
+        }
+      }
+      // Та же логика для этапов: если передан массив — перезаписываем целиком.
+      if (data.stages) {
+        await tx.run('DELETE FROM processing_plan_stages WHERE plan_id = ?', cur.id);
+        for (let i = 0; i < data.stages.length; i++) {
+          const s = data.stages[i];
+          await tx.run(
+            `INSERT INTO processing_plan_stages (plan_id, name, minutes, sort_order) VALUES (?, ?, ?, ?)`,
+            cur.id, s.name, s.minutes, i,
           );
         }
       }

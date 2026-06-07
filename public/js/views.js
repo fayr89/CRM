@@ -10533,7 +10533,7 @@ export async function renderProcessingPlans(main) {
     const body = rows.map((r) => el('tr', { onClick: () => openForm(r.id) },
       el('td', {}, r.product_name),
       el('td', { style: { fontFamily: 'monospace', fontSize: '12px' } }, r.product_sku || '—'),
-      el('td', {}, String(r.labor_minutes_per_unit ?? 0)),
+      el('td', {}, String(r.effective_labor_minutes ?? r.labor_minutes_per_unit ?? 0)),
       showCost ? el('td', {}, r.cost_per_unit != null ? fmtMoney(r.cost_per_unit, 'RUB') : '—') : null,
       el('td', { style: { textAlign: 'right' }, onClick: (e) => e.stopPropagation() },
         canEditPlans() ? el('button', { class: 'btn btn-sm', onClick: () => openForm(r.id) }, 'Открыть') : null,
@@ -10548,7 +10548,7 @@ export async function renderProcessingPlans(main) {
   }
 
   async function openForm(planId) {
-    let plan = { product_id: null, labor_minutes_per_unit: 0, items: [], active: true };
+    let plan = { product_id: null, labor_minutes_per_unit: 0, items: [], stages: [], active: true };
     if (planId) plan = await api.get('processing-plans', planId);
 
     // Грузим товары и материалы — для селектов.
@@ -10559,11 +10559,18 @@ export async function renderProcessingPlans(main) {
     const products = productsR.data || [];
     const materials = materialsR.data || [];
 
+    // Если материалов нет вообще — подсказываем куда идти.
+    const materialsHint = !materials.length
+      ? el('div', { style: { padding: '10px', background: '#fef3c7', borderLeft: '4px solid #f59e0b', borderRadius: '6px', fontSize: '13px', marginBottom: '8px' } },
+          '⚠️ Материалов пока нет. ',
+          el('a', { href: '#/materials' }, 'Создайте их в разделе «🧱 Материалы»'),
+          ' — они появятся в выпадашке.')
+      : null;
+
     const productSel = el('select', { disabled: !!planId },
       el('option', { value: '' }, '— выберите товар —'),
       ...products.map((p) => el('option', { value: String(p.id), selected: p.id === plan.product_id }, `${p.name}${p.sku ? ' (' + p.sku + ')' : ''}`)),
     );
-    const laborI = el('input', { type: 'number', min: '0', step: '0.1', value: String(plan.labor_minutes_per_unit ?? 0) });
 
     const itemsArea = el('div', { class: 'plan-items', style: { display: 'flex', flexDirection: 'column', gap: '6px', marginTop: '8px' } });
     function addItemRow(item) {
@@ -10580,14 +10587,49 @@ export async function renderProcessingPlans(main) {
     for (const it of plan.items || []) addItemRow(it);
     if (!plan.items?.length) addItemRow();
 
+    // Этапы изготовления + время на каждый. Сумма минут используется как
+    // общая норма труда; labor_minutes_per_unit оставлен для совместимости.
+    const stagesArea = el('div', { class: 'plan-stages', style: { display: 'flex', flexDirection: 'column', gap: '6px', marginTop: '8px' } });
+    const stagesTotalEl = el('span', { style: { fontWeight: 600 } }, '0 мин');
+    function updateStagesTotal() {
+      let s = 0;
+      for (const row of stagesArea.children) {
+        s += Number(row._min.value) || 0;
+      }
+      stagesTotalEl.textContent = `${s.toLocaleString('ru-RU')} мин`;
+    }
+    function addStageRow(stg) {
+      const nameI = el('input', { type: 'text', value: stg?.name || '', placeholder: 'Этап (раскрой, сварка, покраска…)', style: { flex: 1, minWidth: '120px' } });
+      const minI = el('input', { type: 'number', min: '0', step: '0.1', value: stg ? String(stg.minutes) : '', placeholder: 'мин', style: { width: '90px' } });
+      const removeBtn = el('button', { class: 'btn btn-sm', onClick: () => { row.remove(); updateStagesTotal(); } }, '×');
+      minI.addEventListener('input', updateStagesTotal);
+      const row = el('div', { class: 'plan-stage-row', style: { display: 'flex', gap: '6px', alignItems: 'center', flexWrap: 'wrap' } }, nameI, minI, removeBtn);
+      row._name = nameI; row._min = minI;
+      stagesArea.append(row);
+    }
+    for (const stg of plan.stages || []) addStageRow(stg);
+    if (!plan.stages?.length) addStageRow();
+    updateStagesTotal();
+
     const body = el('div', {},
+      materialsHint,
       el('div', { class: 'form-row' }, el('label', {}, 'Товар *'), productSel),
-      el('div', { class: 'form-row' }, el('label', {}, 'Норма труда (минут на 1 ед)'), laborI),
       el('div', { class: 'form-row' },
-        el('label', {}, 'Состав'),
+        el('label', {}, 'Этапы изготовления'),
+        el('div', {},
+          el('div', { style: { fontSize: '12px', color: 'var(--text-muted)', marginBottom: '4px' } }, 'Распишите по операциям; общее время труда = сумма этапов.'),
+          stagesArea,
+          el('div', { style: { display: 'flex', gap: '8px', alignItems: 'center', marginTop: '6px', flexWrap: 'wrap' } },
+            el('button', { type: 'button', class: 'btn btn-sm', onClick: () => addStageRow() }, '+ Добавить этап'),
+            el('span', { style: { fontSize: '13px' } }, 'Итого труда: ', stagesTotalEl),
+          ),
+        ),
+      ),
+      el('div', { class: 'form-row' },
+        el('label', {}, 'Состав (материалы)'),
         el('div', {},
           itemsArea,
-          el('button', { type: 'button', class: 'btn btn-sm', style: { marginTop: '6px' }, onClick: () => addItemRow() }, '+ Добавить материал'),
+          el('button', { type: 'button', class: 'btn btn-sm', style: { marginTop: '6px' }, onClick: () => addItemRow(), disabled: !materials.length }, '+ Добавить материал'),
         ),
       ),
       canSeeProdCost() && plan.cost_per_unit != null
@@ -10607,7 +10649,14 @@ export async function renderProcessingPlans(main) {
           const qty = Number(row._qty.value);
           if (mid && qty > 0) items.push({ material_id: mid, qty_per_unit: qty });
         }
-        const data = { labor_minutes_per_unit: Number(laborI.value) || 0, items };
+        const stages = [];
+        for (const row of stagesArea.children) {
+          const name = row._name.value.trim();
+          const minutes = Number(row._min.value) || 0;
+          if (name && minutes > 0) stages.push({ name, minutes });
+        }
+        const totalLabor = stages.reduce((s, x) => s + x.minutes, 0);
+        const data = { labor_minutes_per_unit: totalLabor, items, stages };
         if (!planId) data.product_id = productId;
         if (planId) await api.update('processing-plans', planId, data);
         else await api.create('processing-plans', data);
@@ -11084,17 +11133,58 @@ export async function renderProductionPL(main) {
     clear(body);
     body.append(el('div', { class: 'loading' }, 'Загрузка…'));
     try {
-      const [pl, exp] = await Promise.all([
+      const [pl, exp, projectsAll] = await Promise.all([
         api.productionPL(state.from, state.to),
         api.productionExpenses(state.from, state.to),
+        api.projectsList(false),
       ]);
-      renderPL(pl, exp);
+      renderPL(pl, exp, (projectsAll.data || []));
     } catch (e) {
       clear(body);
       body.append(el('div', { class: 'card error' }, e.message || 'Ошибка'));
     } finally {
       setBusy(false);
     }
+  }
+
+  // Карточка управления производственными проектами — вверху страницы.
+  // Чекбокс «🏭 Производственный» на любом проекте — клик меняет флаг.
+  function renderProjectsManager(allProjects) {
+    const card = el('div', { class: 'card', style: { marginBottom: '12px' } },
+      el('h3', { style: { marginTop: 0 } }, '🏷️ Производственные проекты'),
+      el('div', { class: 'page-subtitle' },
+        'Отметьте проекты, которые относятся к производству (например ЧПБ — полимерная краска). ',
+        'Доход с их сделок/заказов/подрядов попадает в P&L выше.'),
+    );
+    if (!allProjects.length) {
+      card.append(el('p', { class: 'muted' }, 'Проектов нет. Создайте их в Настройках → Проекты.'));
+      return card;
+    }
+    const list = el('div', { style: { display: 'flex', flexDirection: 'column', gap: '6px', marginTop: '10px' } });
+    for (const p of allProjects) {
+      const cb = el('input', { type: 'checkbox', checked: !!p.is_production });
+      cb.addEventListener('change', async () => {
+        cb.disabled = true;
+        try {
+          await api.projectUpdate(p.id, { is_production: cb.checked });
+          toast(`«${p.name}» ${cb.checked ? 'теперь производственный' : 'снят с производства'}`, 'success');
+          reload();
+        } catch (e) {
+          cb.checked = !cb.checked;
+          toast(e.message, 'error');
+        } finally { cb.disabled = false; }
+      });
+      list.append(
+        el('label', { style: { display: 'flex', gap: '10px', alignItems: 'center', padding: '6px 8px', background: '#f9fafb', borderRadius: '6px', cursor: 'pointer' } },
+          cb,
+          el('span', { class: 'project-sticker', style: { background: p.color || '#6366f1' } }, p.name),
+          p.is_production ? el('span', { style: { fontSize: '12px', color: '#15803d', fontWeight: 600 } }, '🏭 в производстве') : null,
+          !p.active ? el('span', { style: { fontSize: '12px', color: 'var(--text-muted)' } }, '(архив)') : null,
+        ),
+      );
+    }
+    card.append(list);
+    return card;
   }
 
   function statTile(title, value, color) {
@@ -11109,16 +11199,20 @@ export async function renderProductionPL(main) {
     );
   }
 
-  function renderPL(pl, exp) {
+  function renderPL(pl, exp, allProjects) {
     clear(body);
 
-    // Случай 1: нет производственных проектов.
+    // Случай 1: нет производственных проектов — показываем менеджер проектов
+    // прямо тут, чтобы можно было отметить нужные одним кликом.
     if (!pl.production_projects?.length) {
-      body.append(emptyState({
-        icon: '🏭',
-        title: 'Нет производственных проектов',
-        description: 'В разделе «Настройки → Проекты» отметьте нужный проект флажком «🏭 Производственный». Доход с его сделок/заказов/подрядов будет попадать сюда.',
-      }));
+      body.append(
+        el('div', { class: 'card', style: { marginBottom: '12px', background: '#fffbeb', borderLeft: '4px solid #f59e0b' } },
+          el('div', { style: { fontWeight: 600 } }, '🏭 Производственные проекты не выбраны'),
+          el('p', { style: { marginTop: '6px', fontSize: '13px' } },
+            'Отметьте ниже проекты, которые относятся к производству — и тут появятся доходы/расходы по ним.'),
+        ),
+        renderProjectsManager(allProjects),
+      );
       return;
     }
 
@@ -11129,19 +11223,24 @@ export async function renderProductionPL(main) {
         statTile('Расход за период', pl.expense.total, '#b91c1c'),
         statTile('Прибыль', pl.profit, pl.profit >= 0 ? '#15803d' : '#b91c1c'),
       ),
+      renderProjectsManager(allProjects),
     );
 
     // Доходы по источникам и по проектам.
     body.append(
       el('div', { class: 'card', style: { marginBottom: '12px' } },
         el('h3', { style: { marginTop: 0 } }, '📈 Доходы'),
-        el('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '12px' } },
+        el('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '12px', marginBottom: '12px' } },
           el('div', {},
-            el('div', { class: 'k' }, 'По заказам с проектом'),
+            el('div', { class: 'k' }, 'Выигранные сделки'),
+            el('div', { style: { fontWeight: 600 } }, fmtMoney(pl.income.by_source.deals || 0, 'RUB')),
+          ),
+          el('div', {},
+            el('div', { class: 'k' }, 'Заказы (платежи)'),
             el('div', { style: { fontWeight: 600 } }, fmtMoney(pl.income.by_source.orders, 'RUB')),
           ),
           el('div', {},
-            el('div', { class: 'k' }, 'По подрядам с проектом'),
+            el('div', { class: 'k' }, 'Подряды (paid)'),
             el('div', { style: { fontWeight: 600 } }, fmtMoney(pl.income.by_source.contracts, 'RUB')),
           ),
         ),
