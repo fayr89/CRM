@@ -41,7 +41,6 @@ import processingPlansRoutes from './routes/processingPlans.js';
 import productionOrdersRoutes from './routes/productionOrders.js';
 import contractsRoutes from './routes/contracts.js';
 import productionPLRoutes from './routes/productionPL.js';
-import diagDailyV14Routes from './routes/diagDailyV14.js'; // TEMP 2026-06-07-v14
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = path.resolve(__dirname, '..', 'public');
@@ -158,7 +157,6 @@ export function createApp({ serveStatic = true } = {}) {
   app.use('/api/production-orders', productionOrdersRoutes);
   app.use('/api/contracts', contractsRoutes);
   app.use('/api/production', productionPLRoutes);
-  app.use('/api/diag/daily-v14', diagDailyV14Routes); // TEMP 2026-06-07-v14
   app.use((req, res) => {
     res.status(404).json({ error: `Route not found: ${req.method} ${req.path}` });
   });
