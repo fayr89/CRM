@@ -1025,6 +1025,14 @@ export async function ensureInitialized() {
         END $$;`);
 
       // ===== Конец производственного модуля =====
+
+      // Комиссия площадки на заказе: при завершении заказа авто-создаётся расход в Кассе.
+      await pool.query('ALTER TABLE orders ADD COLUMN IF NOT EXISTS commission NUMERIC DEFAULT 0');
+      // Проект: связь заказа и платежа с проектом (для раздельной кассы по проектам).
+      await pool.query('ALTER TABLE orders ADD COLUMN IF NOT EXISTS project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL');
+      await pool.query('ALTER TABLE payments ADD COLUMN IF NOT EXISTS project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL');
+      await pool.query('CREATE INDEX IF NOT EXISTS idx_orders_project ON orders(project_id) WHERE project_id IS NOT NULL');
+      await pool.query('CREATE INDEX IF NOT EXISTS idx_payments_project ON payments(project_id) WHERE project_id IS NOT NULL');
       // Маркер успешно прогнанных миграций — следующие холодные старты пропустят DDL.
       await pool.query(
         `INSERT INTO app_settings (key, value, updated_at)

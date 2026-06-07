@@ -52,6 +52,10 @@ const createSchema = z.object({
   items: z.array(itemSchema).min(1, 'В заказе должна быть хотя бы одна позиция'),
   // Менеджер может создать заказ сразу в статусе «Ожидает товара» (товара ещё нет на складе).
   status: z.enum(['new', 'waiting_stock']).optional(),
+  // Комиссия площадки (сумма ₽): при завершении заказа авто-создаётся расход в Кассе.
+  commission: z.number().nonnegative().optional().nullable(),
+  // Проект: для раздельного учёта (например, 2 аккаунта Авито = 2 проекта).
+  project_id: z.number().int().positive().optional().nullable(),
   ...pricingMeta,
 });
 
@@ -64,6 +68,8 @@ const updateSchema = z.object({
   notes: z.string().optional().nullable(),
   manager_note: z.string().optional().nullable(),
   items: z.array(itemSchema).min(1).optional(),
+  commission: z.number().nonnegative().optional().nullable(),
+  project_id: z.number().int().positive().optional().nullable(),
   ...pricingMeta,
 });
 
@@ -132,20 +138,31 @@ router.use(authenticate);
 
 // Видимость заказов:
 //   admin / warehouse — все
-//   manager           — свои + подчинённых
-//   sales             — только свои (он сам как manager_id)
+//   manager           — свои + подчинённых + все waiting_stock (read-only для чужих)
+//   sales             — свои + все waiting_stock (read-only для чужих)
 async function orderScope(user) {
   if (user.role === 'admin' || user.role === 'warehouse') {
     return { sql: '', params: [] };
   }
   if (user.role === 'sales') {
-    return { sql: 'manager_id = ?', params: [user.id] };
+    return { sql: "(manager_id = ? OR status = 'waiting_stock')", params: [user.id] };
   }
   const ids = await getAccessibleUserIds(user);
-  return { sql: 'manager_id = ANY(?)', params: [ids] };
+  return { sql: "(manager_id = ANY(?) OR status = 'waiting_stock')", params: [ids] };
+}
+
+// Может ли пользователь РЕДАКТИРОВАТЬ заказ (не только просматривать).
+async function canEditOrder(user, order) {
+  if (user.role === 'admin' || user.role === 'warehouse') return true;
+  return canAccessUser(user, order.manager_id);
 }
 
 async function canAccessOrder(user, order) {
+  // waiting_stock orders visible to all managers (read-only for non-owners).
+  if (order.status === 'waiting_stock') {
+    if (user.role === 'admin' || user.role === 'warehouse') return true;
+    return true; // all managers can view; edit check happens separately
+  }
   if (user.role === 'admin' || user.role === 'warehouse') return true;
   return canAccessUser(user, order.manager_id);
 }
@@ -1003,6 +1020,8 @@ router.get(
     }
     // Заметка для менеджера — склад не видит.
     if (req.user.role === 'warehouse') order.manager_note = null;
+    // can_edit: waiting_stock заказы видны всем, но чужие — только для просмотра.
+    order.can_edit = await canEditOrder(req.user, order);
     res.json({ ...order, items });
   }),
 );
@@ -1028,8 +1047,9 @@ router.post(
       const r = await tx.run(
         `INSERT INTO orders
          (reference_number, marketplace, client_classification, client_name,
-          total_amount, currency, manager_id, notes, manager_note, status)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
+          total_amount, currency, manager_id, notes, manager_note, status,
+          commission, project_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
         data.reference_number ?? null,
         data.marketplace ?? null,
         data.client_classification ?? null,
@@ -1040,6 +1060,8 @@ router.post(
         data.notes ?? null,
         data.manager_note ?? null,
         data.status ?? 'new',
+        data.commission ?? null,
+        data.project_id ?? null,
       );
       const orderId = r.lastInsertRowid;
       for (const item of data.items) {
@@ -1118,7 +1140,8 @@ router.patch(
     const data = updateSchema.parse(req.body);
     const order = await db.get('SELECT * FROM orders WHERE id = ?', req.params.id);
     if (!order) throw NotFound('Заказ не найден');
-    if (!(await canAccessOrder(req.user, order))) throw Forbidden();
+    // Редактировать может только владелец/РОП/склад/админ.
+    if (!(await canEditOrder(req.user, order))) throw Forbidden('Вы можете только просматривать этот заказ');
     if (order.status !== 'new') {
       if (req.user.role !== 'admin') {
         throw BadRequest('Менять заказ можно только пока он в статусе «новый»');
@@ -1177,6 +1200,8 @@ router.patch(
         'currency',
         'notes',
         'manager_note',
+        'commission',
+        'project_id',
       ]) {
         if (data[key] !== undefined) {
           updates.push(`${key} = ?`);
@@ -1235,7 +1260,7 @@ router.post(
     const order = await db.get('SELECT * FROM orders WHERE id = ?', req.params.id);
     if (!order) throw NotFound('Заказ не найден');
     // Резервирует менеджер-владелец заказа (или РОП/админ/склад).
-    if (!(await canAccessOrder(req.user, order))) {
+    if (!(await canEditOrder(req.user, order))) {
       throw Forbidden('Нет прав на этот заказ');
     }
     if (order.status !== 'new') throw BadRequest('Зарезервировать можно только новый заказ');
@@ -1296,16 +1321,17 @@ router.post(
         req.user.id,
         order.id,
       );
-      const existing = await tx.get('SELECT id FROM payments WHERE order_id = ?', order.id);
+      const existing = await tx.get('SELECT id FROM payments WHERE order_id = ? AND kind = \'income\'', order.id);
       if (!existing && (order.total_amount || 0) > 0) {
         await tx.run(
-          `INSERT INTO payments (manager_id, order_id, amount, currency, kind, status, notes, created_at, updated_at)
-           VALUES (?, ?, ?, ?, 'income', 'pending', ?, NOW(), NOW())`,
+          `INSERT INTO payments (manager_id, order_id, amount, currency, kind, status, notes, project_id, created_at, updated_at)
+           VALUES (?, ?, ?, ?, 'income', 'pending', ?, ?, NOW(), NOW())`,
           order.manager_id,
           order.id,
           order.total_amount,
           order.currency || 'RUB',
           `Заказ #${order.id}${order.marketplace ? ' · ' + order.marketplace : ''}`,
+          order.project_id ?? null,
         );
       }
     });
@@ -1440,6 +1466,30 @@ router.post(
        updated_at = NOW() WHERE id = ?`,
       order.id,
     );
+    // Авто-расход в Кассу на сумму комиссии при завершении (идемпотентно — не дублируем).
+    if (order.commission && Number(order.commission) > 0) {
+      try {
+        const existingCommission = await db.get(
+          `SELECT id FROM payments WHERE order_id = ? AND kind = 'expense' AND notes LIKE 'Комиссия заказа%'`,
+          order.id,
+        );
+        if (!existingCommission) {
+          await db.run(
+            `INSERT INTO payments (manager_id, order_id, amount, currency, kind, status, notes, project_id, created_at, updated_at)
+             VALUES (?, ?, ?, ?, 'expense', 'confirmed', ?, ?, NOW(), NOW())`,
+            order.manager_id,
+            order.id,
+            Number(order.commission),
+            order.currency || 'RUB',
+            `Комиссия заказа #${order.id}`,
+            order.project_id ?? null,
+          );
+        }
+      } catch (e) {
+        // eslint-disable-next-line no-console
+        console.error('[complete] не удалось создать расход-комиссию:', e.message);
+      }
+    }
     const updated = await db.get('SELECT * FROM orders WHERE id = ?', order.id);
     emitEvent('order.completed', updated);
     await logAction(req, { action: 'order.completed', entity_type: 'order', entity_id: order.id });

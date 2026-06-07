@@ -1818,6 +1818,13 @@ async function openOrderForm(order, onSaved, opts = {}) {
   });
   const currencyI = el('input', { type: 'text', value: cur.currency || 'RUB', maxlength: '3', style: { width: '80px' } });
   const notesI = el('textarea', {}, cur.notes || '');
+  const commissionI = el('input', { type: 'number', min: '0', step: '0.01', value: cur.commission != null ? cur.commission : '', placeholder: '0' });
+  const projectI = el(
+    'select',
+    {},
+    el('option', { value: '' }, '— без проекта —'),
+    ...CACHE.projects.map((p) => el('option', { value: p.id, selected: String(p.id) === String(cur.project_id) }, p.name)),
+  );
   // Заметка для менеджера — склад не видит. На форме рендерим только не-складу
   // (склад заказы редко создаёт, но на всякий случай).
   const meRole = JSON.parse(localStorage.getItem('crm_user') || '{}').role;
@@ -2163,6 +2170,8 @@ async function openOrderForm(order, onSaved, opts = {}) {
       el('div', { class: 'form-row' }, el('label', {}, 'Заметки'), notesI),
       managerNoteI ? el('div', { class: 'form-row', style: { gridColumn: '1 / -1' } },
         el('label', {}, '🔒 Заметка для менеджеров'), managerNoteI) : null,
+      el('div', { class: 'form-row' }, el('label', {}, 'Комиссия площадки'), commissionI),
+      CACHE.projects.length ? el('div', { class: 'form-row' }, el('label', {}, 'Проект'), projectI) : null,
     ),
     recentItemsPanel,
     el('div', { class: 'form-row' },
@@ -2256,6 +2265,8 @@ async function openOrderForm(order, onSaved, opts = {}) {
         delivery_method: deliveryI.value || null,
         avito_dialog_url: isB2B ? null : (avitoDialogI.value.trim() || null),
         warehouse: warehouseI.value || null,
+        commission: commissionI.value !== '' ? Number(commissionI.value) : null,
+        project_id: projectI.value ? Number(projectI.value) : null,
         ...(statusI ? { status: statusI.value } : {}),
       };
       if (isEdit) {
@@ -3705,7 +3716,7 @@ export async function renderCashbox(main) {
   const isAdmin = me.role === 'admin';
   const canConfirm = ['admin', 'finance'].includes(me.role); // подтверждение транзакций
   const canFilterByManager = ['admin', 'finance'].includes(me.role);
-  const state = { managerId: '' };
+  const state = { managerId: '', projectId: '' };
   const tableArea = el('div');
   const summaryArea = el('div');
   const filterArea = el('div', { class: 'filter-bar', style: { marginBottom: '12px' } });
@@ -3717,8 +3728,9 @@ export async function renderCashbox(main) {
     try {
       const paymentsQuery = { limit: 50 };
       if (state.managerId) paymentsQuery.manager_id = state.managerId;
+      if (state.projectId) paymentsQuery.project_id = state.projectId;
       const [cashbox, payments] = await Promise.all([
-        api.cashbox(undefined, state.managerId || undefined),
+        api.cashbox(undefined, state.managerId || undefined, state.projectId || undefined),
         api.list('payments', paymentsQuery),
       ]);
       renderSummary(cashbox);
@@ -3731,18 +3743,30 @@ export async function renderCashbox(main) {
 
   function renderFilter() {
     clear(filterArea);
-    if (!canFilterByManager) return;
-    const sel = el('select', {},
-      el('option', { value: '' }, '— Все менеджеры —'),
-      ...CACHE.users
-        .filter((u) => ['admin', 'manager', 'sales', 'rop'].includes(u.role))
-        .map((u) => el('option', { value: u.id, selected: String(u.id) === String(state.managerId) }, `${u.name} (${tr('role', u.role)})`)),
-    );
-    sel.addEventListener('change', () => {
-      state.managerId = sel.value;
-      reload();
-    });
-    filterArea.append(el('label', {}, '👤 Менеджер: ', sel));
+    if (canFilterByManager) {
+      const sel = el('select', {},
+        el('option', { value: '' }, '— Все менеджеры —'),
+        ...CACHE.users
+          .filter((u) => ['admin', 'manager', 'sales', 'rop'].includes(u.role))
+          .map((u) => el('option', { value: u.id, selected: String(u.id) === String(state.managerId) }, `${u.name} (${tr('role', u.role)})`)),
+      );
+      sel.addEventListener('change', () => {
+        state.managerId = sel.value;
+        reload();
+      });
+      filterArea.append(el('label', {}, '👤 Менеджер: ', sel));
+    }
+    if (CACHE.projects.length) {
+      const psel = el('select', {},
+        el('option', { value: '' }, '— Все проекты —'),
+        ...CACHE.projects.map((p) => el('option', { value: p.id, selected: String(p.id) === String(state.projectId) }, p.name)),
+      );
+      psel.addEventListener('change', () => {
+        state.projectId = psel.value;
+        reload();
+      });
+      filterArea.append(el('label', { style: { marginLeft: '12px' } }, '📁 Проект: ', psel));
+    }
   }
 
   function renderSummary(cashbox) {
@@ -6599,6 +6623,9 @@ export async function renderProducts(main) {
       ? el('button', { class: 'btn', onClick: () => openPricingSettings() }, '⚙ Правила цен')
       : null,
     isAdmin
+      ? el('button', { class: 'btn', onClick: () => openImportNamesModal(reload) }, '✏️ Обновить названия')
+      : null,
+    isAdmin
       ? el('button', {
           class: 'btn',
           onClick: async () => {
@@ -7350,6 +7377,36 @@ async function openPriceUpload(onDone) {
         return new Promise((resolve) => setTimeout(() => resolve(true), 1800));
       } catch (e) {
         statusEl.innerHTML = `❌ ${e.message}`;
+        return false;
+      }
+    },
+  });
+}
+
+async function openImportNamesModal(onDone) {
+  const csvI = el('textarea', { rows: '10', placeholder: 'артикул;название\nарт2;название2\n...', style: { width: '100%', fontFamily: 'monospace', fontSize: '13px' } });
+  const resultDiv = el('div', { style: { marginTop: '8px', fontSize: '13px' } });
+  const body = el('div', {},
+    el('p', { style: { marginTop: 0 } }, 'CSV: одна строка — артикул и название через «;» или «,». Первый столбец — артикул или external_id.'),
+    csvI,
+    resultDiv,
+  );
+  await openModal('✏️ Обновить названия товаров', body, {
+    primaryLabel: 'Обновить',
+    onSubmit: async () => {
+      const csv = csvI.value.trim();
+      if (!csv) { toast('Вставьте CSV', 'error'); return false; }
+      try {
+        const r = await api.importProductNames(csv);
+        clear(resultDiv);
+        resultDiv.append(el('div', { style: { color: 'green' } }, `Обновлено: ${r.matched} из ${r.total}`));
+        if (r.notFound?.length) {
+          resultDiv.append(el('div', { style: { color: '#b45309', marginTop: '4px' } }, `Не найдены: ${r.notFound.join(', ')}`));
+        }
+        onDone?.();
+        return false;
+      } catch (e) {
+        toast(e.message, 'error');
         return false;
       }
     },
