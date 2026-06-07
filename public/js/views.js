@@ -10157,6 +10157,32 @@ export async function renderMyProfile(main) {
     pwStatus,
   ));
 
+  // Принудительный сброс PWA — выручает iOS-PWA когда сидит на старой версии и
+  // баннер «🔄 Доступна новая версия» не появился (бывает при первом запуске
+  // после долгого простоя, когда SW не успел обнаружить смену версии).
+  // Под капотом: unregister всех SW + чистка caches + reload с _pwa=ts.
+  const forceBtn = el(
+    'button',
+    { class: 'btn' },
+    '🔁 Принудительно обновить приложение',
+  );
+  forceBtn.addEventListener('click', async () => {
+    if (!(await confirm('Принудительно перезагрузить PWA? Это уберёт кеш SW и обновит до последней версии. Несохранённые формы потеряются.'))) return;
+    forceBtn.disabled = true;
+    forceBtn.textContent = '⏳ Чищу кеш…';
+    if (typeof window.forceRefreshPwa === 'function') {
+      await window.forceRefreshPwa();
+    } else {
+      location.reload();
+    }
+  });
+  main.append(el('div', { class: 'card', style: { marginBottom: '12px' } },
+    el('h3', { style: { marginTop: 0 } }, '🔁 Обновление приложения'),
+    el('p', { style: { fontSize: '13px', color: 'var(--text-muted)', margin: '0 0 12px' } },
+      'Если в PWA не появились последние изменения, а баннер «Обновить» не выскочил — нажмите, чтобы принудительно обновиться. Помогает на iOS, где PWA иногда залипает на старой версии.'),
+    forceBtn,
+  ));
+
   const maxStatus = el('div', { class: 'card', style: { marginBottom: '12px' } },
     el('h3', { style: { marginTop: 0 } }, '🔔 МАХ-уведомления'),
     el('div', { class: 'loading' }, 'Проверяю статус…'),

@@ -791,12 +791,19 @@ if ('serviceWorker' in navigator) {
       if (reg.waiting) showUpdateBanner(reg.waiting);
       reg.addEventListener('updatefound', () => handleUpdate(reg.installing));
 
-      // Проверяем обновления при возврате во вкладку и каждые 10 мин.
+      // Сразу при старте проверяем обновление SW (на случай, если в waiting
+      // что-то есть, но клиент его не получил из памяти прошлого запуска).
+      reg.update().catch(() => {});
+
+      // Проверяем при возврате во вкладку и каждые 10 мин.
       const checkForUpdates = () => reg.update().catch(() => {});
       document.addEventListener('visibilitychange', () => {
         if (document.visibilityState === 'visible') checkForUpdates();
       });
       setInterval(checkForUpdates, 10 * 60 * 1000);
+      // Сохраняем регистрацию в глобал — нужна кнопке «Принудительно обновить»
+      // из «Мой профиль» (см. forceRefreshPwa в views.js).
+      window.__crmSwReg = reg;
     })
     .catch((e) => { console.warn('[sw] не удалось зарегистрировать:', e.message); });
 
@@ -808,6 +815,31 @@ if ('serviceWorker' in navigator) {
     location.reload();
   });
 }
+
+// Принудительный сброс PWA: снимает регистрацию всех service-worker'ов,
+// чистит CacheStorage и перезагружает страницу с reload-флагом. Помогает,
+// когда iOS PWA застряла на старой версии и баннер «Обновить» не появился.
+// Вызывается из кнопки в «Мой профиль» (renderMyProfile в views.js).
+window.forceRefreshPwa = async function forceRefreshPwa() {
+  try {
+    if ('caches' in window) {
+      const keys = await caches.keys();
+      await Promise.all(keys.map((k) => caches.delete(k)));
+    }
+    if ('serviceWorker' in navigator) {
+      const regs = await navigator.serviceWorker.getRegistrations();
+      await Promise.all(regs.map((r) => r.unregister()));
+    }
+  } catch (e) {
+    console.warn('[force-refresh]', e);
+  } finally {
+    // Передаём параметр чтобы убедиться что URL отличается — некоторые браузеры
+    // иначе перезагружают из кеша.
+    const url = new URL(location.href);
+    url.searchParams.set('_pwa', String(Date.now()));
+    location.replace(url.toString());
+  }
+};
 
 function showUpdateBanner(waitingWorker) {
   if (document.querySelector('.sw-update-banner')) return;
