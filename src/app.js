@@ -42,6 +42,7 @@ import productionOrdersRoutes from './routes/productionOrders.js';
 import contractsRoutes from './routes/contracts.js';
 import productionPLRoutes from './routes/productionPL.js';
 import productionSettingsRoutes from './routes/productionSettings.js';
+import diagDailyRunRoutes from './routes/diagDailyRun.js';
 
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -160,6 +161,7 @@ export function createApp({ serveStatic = true } = {}) {
   app.use('/api/contracts', contractsRoutes);
   app.use('/api/production', productionPLRoutes);
   app.use('/api/production-settings', productionSettingsRoutes);
+  app.use('/api/diag/daily-run', diagDailyRunRoutes);
 
   app.use((req, res) => {
     res.status(404).json({ error: `Route not found: ${req.method} ${req.path}` });
