@@ -27,15 +27,16 @@ router.get('/', asyncHandler(async (req, res) => {
       );
     }
     const feedback = await db.all(
-      `SELECT f.id, f.subject, f.message, f.category, f.status, f.admin_reply,
+      `SELECT f.id, f.subject, LEFT(f.message, 600) AS message, f.category,
+              f.status, LEFT(f.admin_reply, 300) AS admin_reply,
               f.created_at, f.updated_at, u.name AS user_name, u.email AS user_email
        FROM feedback f LEFT JOIN users u ON u.id = f.user_id
        WHERE f.status IN ('open', 'awaiting_approval', 'in_progress')
-       ORDER BY f.created_at DESC LIMIT 100`,
+       ORDER BY f.created_at DESC LIMIT 50`,
     );
     for (const fb of feedback) {
       fb.messages = await db.all(
-        `SELECT id, user_name, role, text, created_at
+        `SELECT id, user_name, role, LEFT(text, 600) AS text, created_at
          FROM feedback_messages WHERE feedback_id = ?
          ORDER BY created_at ASC, id ASC`,
         fb.id,
