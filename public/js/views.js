@@ -2704,19 +2704,128 @@ export async function renderOrders(main, opts = {}) {
     clear(tableArea);
     const rows = result.data || [];
     const stages = ['waiting_stock', 'new', 'reserved', 'shipped', 'completed', 'cancelled'];
+    // На мобиле drag&drop пальцем неудобен — заменяем на bottom-sheet с
+    // кнопками действий. По клику показываем меню «куда перевести» +
+    // «открыть детали». Считаем мобильным touch-устройство.
+    const isTouch = window.matchMedia('(max-width: 900px)').matches || (('ontouchstart' in window) && !window.matchMedia('(min-width: 1024px)').matches);
 
     tableArea.append(
       el(
         'div',
         { class: 'help-banner', style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px' } },
         el('span', {},
-          isWarehouse
-            ? '💡 Перетаскивайте заказы: «Новый» → «Зарезервирован» → «Отгружен». Клик откроет детали.'
-            : '💡 Перетащите отгруженный заказ в «Завершён», чтобы закрыть. Менеджер может отменить новый заказ.',
+          isTouch
+            ? '💡 Тапните на карточку → выберите действие. Без перетаскивания.'
+            : (isWarehouse
+              ? '💡 Перетаскивайте заказы: «Новый» → «Зарезервирован» → «Отгружен». Клик откроет детали.'
+              : '💡 Перетащите отгруженный заказ в «Завершён», чтобы закрыть. Менеджер может отменить новый заказ.'),
         ),
         helpButton('kanban'),
       ),
     );
+
+    // Таблица возможных переходов из текущего статуса. Используем
+    // существующую transitionOrder — она знает все правила и confirm-диалоги.
+    function availableTransitions(currentStatus) {
+      const map = {
+        waiting_stock: [
+          { to: 'new', label: 'Товар поступил', icon: '✅' },
+          { to: 'cancelled', label: 'Отменить', icon: '✗', dangerous: true },
+        ],
+        new: [
+          { to: 'reserved', label: 'Зарезервировать', icon: '📦' },
+          { to: 'waiting_stock', label: 'Ждём товара', icon: '⏳' },
+          { to: 'cancelled', label: 'Отменить', icon: '✗', dangerous: true },
+        ],
+        reserved: [
+          { to: 'shipped', label: 'Отгрузить', icon: '🚚' },
+          { to: 'new', label: 'Снять резерв', icon: '↩️' },
+          { to: 'waiting_stock', label: 'Ждём товара', icon: '⏳' },
+          { to: 'cancelled', label: 'Отменить', icon: '✗', dangerous: true },
+        ],
+        shipped: [
+          { to: 'completed', label: 'Завершить', icon: '🎯' },
+          { to: 'reserved', label: 'Откатить отгрузку', icon: '↩️' },
+          { to: 'cancelled', label: 'Отменить', icon: '✗', dangerous: true },
+        ],
+        completed: [],
+        cancelled: [],
+      };
+      return map[currentStatus] || [];
+    }
+
+    async function showActionSheet(order) {
+      const transitions = availableTransitions(order.status);
+      const sheet = el('div', { class: 'action-sheet' });
+      const close = () => { backdrop.remove(); };
+      const backdrop = el('div', { class: 'action-sheet-backdrop', onClick: close });
+      sheet.append(
+        el('div', { class: 'action-sheet-handle' }),
+        el('div', { class: 'action-sheet-title' },
+          el('span', { class: 'action-sheet-id' }, `#${order.id}`),
+          el('span', {}, order.client_name || '—'),
+          el('span', { class: 'action-sheet-amount' }, fmtMoney(order.total_amount, order.currency)),
+        ),
+        el('div', { class: 'action-sheet-current' },
+          'Сейчас: ', badge(order.status, 'order_status'),
+        ),
+      );
+      const actions = el('div', { class: 'action-sheet-actions' });
+      // Кнопка «Открыть детали» — всегда первая.
+      actions.append(
+        el(
+          'button',
+          {
+            class: 'action-sheet-btn primary',
+            onClick: async () => {
+              close();
+              try {
+                const full = await api.get('orders', order.id);
+                await showOrderDetails(full, reload);
+              } catch (e) { toast(e.message || 'Не удалось открыть', 'error'); }
+            },
+          },
+          '📂 Открыть детали',
+        ),
+      );
+      // Кнопки переходов в другие статусы.
+      for (const t of transitions) {
+        actions.append(
+          el(
+            'button',
+            {
+              class: 'action-sheet-btn' + (t.dangerous ? ' danger' : ''),
+              onClick: async () => {
+                close();
+                try {
+                  const result = await transitionOrder(order.id, order.status, t.to);
+                  if (result === false) return;
+                  toast(`Заказ переведён в «${tr('order_status', t.to)}»`, 'success');
+                  reload();
+                } catch (e) { toast(e.message || 'Не удалось перевести', 'error'); }
+              },
+            },
+            `${t.icon} → ${t.label}`,
+          ),
+        );
+      }
+      if (!transitions.length) {
+        actions.append(el('div', { class: 'action-sheet-empty' }, `Статус «${tr('order_status', order.status)}» — финальный, переводов нет.`));
+      }
+      actions.append(
+        el(
+          'button',
+          { class: 'action-sheet-btn cancel', onClick: close },
+          'Отмена',
+        ),
+      );
+      sheet.append(actions);
+      backdrop.append(sheet);
+      document.body.append(backdrop);
+      // Esc — закрыть. Очищаем listener при close.
+      const onKey = (e) => { if (e.key === 'Escape') { close(); document.removeEventListener('keydown', onKey); } };
+      document.addEventListener('keydown', onKey);
+    }
 
     const grid = el('div', { class: 'pipeline orders-kanban' });
     for (const stage of stages) {
@@ -2761,10 +2870,14 @@ export async function renderOrders(main, opts = {}) {
         cardsWrap.append(el('div', { class: 'pipeline-empty' }, 'Пусто'));
       } else {
         for (const r of stageRows) {
-          cardsWrap.append(
-            el(
-              'div',
-              {
+          // На мобиле: клик → bottom-sheet с действиями. На десктопе: drag&drop + клик → детали.
+          const cardProps = isTouch
+            ? {
+                class: 'pipeline-card touch',
+                style: { position: 'relative' },
+                onClick: () => showActionSheet(r),
+              }
+            : {
                 class: 'pipeline-card',
                 style: { position: 'relative' },
                 draggable: 'true',
@@ -2791,7 +2904,11 @@ export async function renderOrders(main, opts = {}) {
                     card.style.pointerEvents = '';
                   }
                 },
-              },
+              };
+          cardsWrap.append(
+            el(
+              'div',
+              cardProps,
               el(
                 'div',
                 { class: 'order-card-head' },
