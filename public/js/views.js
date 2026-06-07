@@ -10377,3 +10377,659 @@ export async function renderMyProfile(main) {
     prefsArea.append(el('div', { class: 'error' }, e.message || 'Ошибка'));
   }
 }
+
+// ============================================================
+// 🏭 Производственный модуль — UI
+// ============================================================
+
+// Хелперы видимости. master не видит cost_price материалов; foreman/supply
+// видят. Везде где работаем с деньгами — ориентируемся на роль из storage.
+function prodRole() {
+  return JSON.parse(localStorage.getItem('crm_user') || '{}').role || '';
+}
+function canEditMaterials() { return ['admin', 'director_prod', 'supply'].includes(prodRole()); }
+function canEditPlans() { return ['admin', 'director_prod', 'foreman'].includes(prodRole()); }
+function canEditOrders() { return ['admin', 'director_prod', 'foreman'].includes(prodRole()); }
+function canEditContracts() { return ['admin', 'director_prod'].includes(prodRole()); }
+function canSeeProdCost() { return ['admin', 'director_prod', 'foreman', 'supply'].includes(prodRole()); }
+
+// --- Материалы ---------------------------------------------------------------
+
+export async function renderMaterials(main) {
+  main.innerHTML = '';
+  main.append(
+    el('h1', { class: 'page-title' }, '🧱 Материалы'),
+    el('div', { class: 'page-subtitle' }, 'Сырьё и комплектующие для производства. Закупочная цена видна снабжению, директору, начальнику цеха.'),
+  );
+
+  const state = { search: '', active: 'true' };
+  const tableArea = el('div');
+
+  async function reload() {
+    clear(tableArea);
+    tableArea.append(el('div', { class: 'loading' }, 'Загрузка…'));
+    try {
+      const r = await api.list('materials', state);
+      renderTable(r.data || []);
+    } catch (e) {
+      clear(tableArea);
+      tableArea.append(el('div', { class: 'card error' }, e.message));
+    }
+  }
+
+  function renderTable(rows) {
+    clear(tableArea);
+    if (!rows.length) {
+      tableArea.append(emptyState({ icon: '🧱', title: 'Материалов пока нет', description: 'Добавьте первый материал кнопкой «Новый материал».' }));
+      return;
+    }
+    const showCost = canSeeProdCost();
+    const head = el('tr', {},
+      el('th', {}, 'Артикул'),
+      el('th', {}, 'Наименование'),
+      el('th', {}, 'Ед.изм'),
+      showCost ? el('th', {}, 'Закуп. цена') : null,
+      el('th', {}, 'Поставщик'),
+      el('th', { style: { textAlign: 'right' } }, ''),
+    );
+    const body = rows.map((r) => el('tr', { onClick: () => openForm(r) },
+      el('td', { style: { fontFamily: 'monospace', fontSize: '12px' } }, r.sku || '—'),
+      el('td', {}, r.name),
+      el('td', {}, r.unit || 'шт'),
+      showCost ? el('td', {}, r.cost_price != null ? fmtMoney(r.cost_price, 'RUB') : '—') : null,
+      el('td', {}, r.supplier || '—'),
+      el('td', { style: { textAlign: 'right' }, onClick: (e) => e.stopPropagation() },
+        canEditMaterials() ? el('button', { class: 'btn btn-sm', onClick: () => openForm(r) }, 'Открыть') : null,
+      ),
+    ));
+    tableArea.append(el('div', { class: 'table-wrap' },
+      el('table', { class: 'data' }, el('thead', {}, head), el('tbody', {}, ...body))));
+  }
+
+  async function openForm(material) {
+    const isEdit = !!material;
+    const fields = [
+      { name: 'name', label: 'Наименование', required: true },
+      { name: 'sku', label: 'Артикул' },
+      { name: 'unit', label: 'Ед.изм (шт, м, кг, л)', default: 'шт' },
+      ...(canSeeProdCost() ? [{ name: 'cost_price', label: 'Закупочная цена ₽', type: 'number' }] : []),
+      { name: 'supplier', label: 'Поставщик' },
+      { name: 'warehouse', label: 'Склад хранения' },
+      { name: 'notes', label: 'Заметки', type: 'textarea' },
+      { name: 'active', label: 'Активный', type: 'checkbox', default: true },
+    ];
+    const { node, getValues } = buildForm(fields, material || {});
+    await openModal(isEdit ? `Материал: ${material.name}` : 'Новый материал', node, {
+      primaryLabel: isEdit ? 'Сохранить' : 'Создать',
+      onSubmit: async () => {
+        const data = getValues();
+        // cost_price может быть строкой — приводим к Number.
+        if (data.cost_price != null && data.cost_price !== '') data.cost_price = Number(data.cost_price);
+        else delete data.cost_price;
+        if (isEdit) await api.update('materials', material.id, data);
+        else await api.create('materials', data);
+        toast(isEdit ? 'Сохранено' : 'Создано', 'success');
+        await reload();
+      },
+    });
+  }
+
+  const searchInput = el('input', { type: 'search', placeholder: 'Поиск по названию/артикулу…', onInput: (e) => {
+    clearTimeout(searchInput._t);
+    searchInput._t = setTimeout(() => { state.search = e.target.value; reload(); }, 250);
+  }});
+  const activeFilter = el('select', { onChange: (e) => { state.active = e.target.value; reload(); } },
+    el('option', { value: 'true', selected: true }, 'Активные'),
+    el('option', { value: 'false' }, 'Архивные'),
+    el('option', { value: '' }, 'Все'),
+  );
+  main.append(el('div', { class: 'toolbar' },
+    searchInput, activeFilter,
+    el('div', { class: 'spacer' }),
+    canEditMaterials() ? el('button', { class: 'btn btn-primary', onClick: () => openForm(null) }, '+ Новый материал') : null,
+  ), tableArea);
+  reload();
+}
+
+// --- Техкарты ----------------------------------------------------------------
+
+export async function renderProcessingPlans(main) {
+  main.innerHTML = '';
+  main.append(
+    el('h1', { class: 'page-title' }, '🛠 Техкарты'),
+    el('div', { class: 'page-subtitle' }, 'Состав готового товара: список материалов и норма труда на 1 единицу.'),
+  );
+  const tableArea = el('div');
+
+  async function reload() {
+    clear(tableArea);
+    tableArea.append(el('div', { class: 'loading' }, 'Загрузка…'));
+    try {
+      const r = await api.list('processing-plans', {});
+      renderTable(r.data || [], r.labor_rate_per_minute);
+    } catch (e) {
+      clear(tableArea);
+      tableArea.append(el('div', { class: 'card error' }, e.message));
+    }
+  }
+
+  function renderTable(rows, rate) {
+    clear(tableArea);
+    if (!rows.length) {
+      tableArea.append(emptyState({ icon: '🛠', title: 'Техкарт пока нет', description: 'Добавьте техкарту для товара кнопкой выше.' }));
+      return;
+    }
+    const showCost = canSeeProdCost();
+    const head = el('tr', {},
+      el('th', {}, 'Товар'),
+      el('th', {}, 'Артикул'),
+      el('th', {}, 'Норма труда, мин'),
+      showCost ? el('th', {}, 'Себестоимость 1 ед') : null,
+      el('th', { style: { textAlign: 'right' } }, ''),
+    );
+    const body = rows.map((r) => el('tr', { onClick: () => openForm(r.id) },
+      el('td', {}, r.product_name),
+      el('td', { style: { fontFamily: 'monospace', fontSize: '12px' } }, r.product_sku || '—'),
+      el('td', {}, String(r.labor_minutes_per_unit ?? 0)),
+      showCost ? el('td', {}, r.cost_per_unit != null ? fmtMoney(r.cost_per_unit, 'RUB') : '—') : null,
+      el('td', { style: { textAlign: 'right' }, onClick: (e) => e.stopPropagation() },
+        canEditPlans() ? el('button', { class: 'btn btn-sm', onClick: () => openForm(r.id) }, 'Открыть') : null,
+      ),
+    ));
+    tableArea.append(
+      showCost && rate != null
+        ? el('div', { class: 'hint', style: { fontSize: '12px' } }, `Ставка труда: ${rate.toLocaleString('ru-RU')} ₽/мин (Настройки → Производство → labor_rate_per_minute).`)
+        : null,
+      el('div', { class: 'table-wrap' }, el('table', { class: 'data' }, el('thead', {}, head), el('tbody', {}, ...body))),
+    );
+  }
+
+  async function openForm(planId) {
+    let plan = { product_id: null, labor_minutes_per_unit: 0, items: [], active: true };
+    if (planId) plan = await api.get('processing-plans', planId);
+
+    // Грузим товары и материалы — для селектов.
+    const [productsR, materialsR] = await Promise.all([
+      api.list('products', { limit: 500, active: 'true' }),
+      api.list('materials', { active: 'true' }),
+    ]);
+    const products = productsR.data || [];
+    const materials = materialsR.data || [];
+
+    const productSel = el('select', { disabled: !!planId },
+      el('option', { value: '' }, '— выберите товар —'),
+      ...products.map((p) => el('option', { value: String(p.id), selected: p.id === plan.product_id }, `${p.name}${p.sku ? ' (' + p.sku + ')' : ''}`)),
+    );
+    const laborI = el('input', { type: 'number', min: '0', step: '0.1', value: String(plan.labor_minutes_per_unit ?? 0) });
+
+    const itemsArea = el('div', { class: 'plan-items', style: { display: 'flex', flexDirection: 'column', gap: '6px', marginTop: '8px' } });
+    function addItemRow(item) {
+      const matSel = el('select', {},
+        el('option', { value: '' }, '— материал —'),
+        ...materials.map((m) => el('option', { value: String(m.id), selected: item && m.id === item.material_id }, `${m.name}${m.sku ? ' (' + m.sku + ')' : ''}${m.unit ? ' — ' + m.unit : ''}`)),
+      );
+      const qtyI = el('input', { type: 'number', min: '0', step: '0.001', value: item ? String(item.qty_per_unit) : '', placeholder: 'Норма на 1 ед', style: { width: '120px' } });
+      const removeBtn = el('button', { class: 'btn btn-sm', onClick: () => row.remove() }, '×');
+      const row = el('div', { class: 'plan-item-row', style: { display: 'flex', gap: '6px', alignItems: 'center' } }, matSel, qtyI, removeBtn);
+      row._sel = matSel; row._qty = qtyI;
+      itemsArea.append(row);
+    }
+    for (const it of plan.items || []) addItemRow(it);
+    if (!plan.items?.length) addItemRow();
+
+    const body = el('div', {},
+      el('div', { class: 'form-row' }, el('label', {}, 'Товар *'), productSel),
+      el('div', { class: 'form-row' }, el('label', {}, 'Норма труда (минут на 1 ед)'), laborI),
+      el('div', { class: 'form-row' },
+        el('label', {}, 'Состав'),
+        el('div', {},
+          itemsArea,
+          el('button', { type: 'button', class: 'btn btn-sm', style: { marginTop: '6px' }, onClick: () => addItemRow() }, '+ Добавить материал'),
+        ),
+      ),
+      canSeeProdCost() && plan.cost_per_unit != null
+        ? el('div', { style: { marginTop: '12px', padding: '10px', background: '#f0fdf4', borderRadius: '6px', fontSize: '13px' } },
+            `💰 Себестоимость 1 ед: ${plan.cost_per_unit.toLocaleString('ru-RU')} ₽ (материалы ${(plan.materials_total_per_unit || 0).toLocaleString('ru-RU')} + труд ${(plan.labor_total_per_unit || 0).toLocaleString('ru-RU')})`)
+        : null,
+    );
+
+    await openModal(planId ? `Техкарта` : 'Новая техкарта', body, {
+      primaryLabel: planId ? 'Сохранить' : 'Создать',
+      onSubmit: async () => {
+        const productId = Number(productSel.value);
+        if (!productId) { toast('Выберите товар', 'error'); return false; }
+        const items = [];
+        for (const row of itemsArea.children) {
+          const mid = Number(row._sel.value);
+          const qty = Number(row._qty.value);
+          if (mid && qty > 0) items.push({ material_id: mid, qty_per_unit: qty });
+        }
+        const data = { labor_minutes_per_unit: Number(laborI.value) || 0, items };
+        if (!planId) data.product_id = productId;
+        if (planId) await api.update('processing-plans', planId, data);
+        else await api.create('processing-plans', data);
+        toast('Сохранено', 'success');
+        await reload();
+      },
+    });
+  }
+
+  main.append(el('div', { class: 'toolbar' },
+    el('div', { class: 'spacer' }),
+    canEditPlans() ? el('button', { class: 'btn btn-primary', onClick: () => openForm(null) }, '+ Новая техкарта') : null,
+  ), tableArea);
+  reload();
+}
+
+// --- Производственные заказы (план выпуска товаров) -------------------------
+
+export async function renderProductionOrders(main) {
+  main.innerHTML = '';
+  main.append(
+    el('h1', { class: 'page-title' }, '📅 План производства'),
+    el('div', { class: 'page-subtitle' }, 'Сколько и каких товаров делаем за период. Мастер видит свои заказы и вносит факт.'),
+  );
+  const state = { status: '' };
+  const tableArea = el('div');
+
+  async function reload() {
+    clear(tableArea);
+    tableArea.append(el('div', { class: 'loading' }, 'Загрузка…'));
+    try {
+      const r = await api.list('production-orders', state);
+      renderTable(r.data || []);
+    } catch (e) {
+      clear(tableArea);
+      tableArea.append(el('div', { class: 'card error' }, e.message));
+    }
+  }
+
+  function renderTable(rows) {
+    clear(tableArea);
+    if (!rows.length) {
+      tableArea.append(emptyState({ icon: '📅', title: 'Заказов нет', description: 'Создайте план выпуска товара кнопкой выше.' }));
+      return;
+    }
+    const head = el('tr', {},
+      el('th', {}, '№'),
+      el('th', {}, 'Товар'),
+      el('th', {}, 'План'),
+      el('th', {}, 'Факт'),
+      el('th', {}, 'Период'),
+      el('th', {}, 'Мастер'),
+      el('th', {}, 'Статус'),
+      el('th', { style: { textAlign: 'right' } }, ''),
+    );
+    const statusMap = {
+      draft: ['Черновик', '#e5e7eb', '#374151'],
+      approved: ['Утверждён', '#dbeafe', '#1e40af'],
+      in_progress: ['В работе', '#fef3c7', '#854d0e'],
+      done: ['Готов', '#dcfce7', '#166534'],
+      cancelled: ['Отменён', '#fee2e2', '#991b1b'],
+    };
+    const body = rows.map((r) => {
+      const [sl, sb, sf] = statusMap[r.status] || [r.status, '#eee', '#444'];
+      return el('tr', { onClick: () => openDetails(r.id) },
+        el('td', {}, `#${r.id}`),
+        el('td', {}, r.product_name + (r.product_sku ? ` (${r.product_sku})` : '')),
+        el('td', {}, String(r.plan_qty)),
+        el('td', {}, String(r.fact_qty || 0)),
+        el('td', {}, `${fmtDate(r.period_from)} — ${fmtDate(r.period_to)}`),
+        el('td', {}, r.foreman_name || '—'),
+        el('td', {}, el('span', { style: { background: sb, color: sf, padding: '2px 8px', borderRadius: '4px', fontSize: '12px', fontWeight: 600 } }, sl)),
+        el('td', { style: { textAlign: 'right' }, onClick: (e) => e.stopPropagation() },
+          el('button', { class: 'btn btn-sm', onClick: () => openDetails(r.id) }, 'Открыть'),
+        ),
+      );
+    });
+    tableArea.append(el('div', { class: 'table-wrap' }, el('table', { class: 'data' }, el('thead', {}, head), el('tbody', {}, ...body))));
+  }
+
+  async function openDetails(id) {
+    const order = await api.get('production-orders', id);
+    const body = el('div', {},
+      el('div', { class: 'detail-grid' },
+        el('div', { class: 'k' }, 'Товар'), el('div', {}, order.product_name),
+        el('div', { class: 'k' }, 'План / Факт'), el('div', {}, `${order.plan_qty} / ${order.fact_qty}`),
+        el('div', { class: 'k' }, 'Период'), el('div', {}, `${fmtDate(order.period_from)} — ${fmtDate(order.period_to)}`),
+        el('div', { class: 'k' }, 'Мастер'), el('div', {}, order.foreman_name || '—'),
+        el('div', { class: 'k' }, 'Статус'), el('div', {}, order.status),
+      ),
+      el('h4', { style: { marginTop: '16px' } }, 'Дневная разбивка'),
+      el('div', { class: 'table-wrap' },
+        el('table', { class: 'data' },
+          el('thead', {}, el('tr', {}, el('th', {}, 'Дата'), el('th', {}, 'План'), el('th', {}, 'Факт'), el('th', {}, ''))),
+          el('tbody', {},
+            ...(order.days || []).map((d) => {
+              const factI = el('input', { type: 'number', min: '0', step: '1', value: String(d.fact_qty || 0), style: { width: '80px' } });
+              const saveBtn = el('button', { class: 'btn btn-sm btn-primary' }, 'Записать');
+              saveBtn.addEventListener('click', async () => {
+                saveBtn.disabled = true;
+                try {
+                  await api.postProductionFact(order.id, d.day, Number(factI.value) || 0);
+                  toast('Факт записан', 'success');
+                  // Перечитываем модал.
+                  document.querySelector('.modal-backdrop')?.remove();
+                  openDetails(order.id);
+                } catch (e) { toast(e.message, 'error'); } finally { saveBtn.disabled = false; }
+              });
+              return el('tr', {},
+                el('td', {}, fmtDate(d.day)),
+                el('td', {}, String(d.plan_qty)),
+                el('td', {}, factI),
+                el('td', {}, ['approved', 'in_progress'].includes(order.status) ? saveBtn : el('span', { class: 'muted' }, '—')),
+              );
+            }),
+          ),
+        ),
+      ),
+      order.status === 'draft' && canEditOrders()
+        ? el('div', { style: { marginTop: '12px' } },
+            el('button', { class: 'btn btn-primary', onClick: async () => {
+              await api.approveProductionOrder(order.id);
+              toast('План утверждён', 'success');
+              document.querySelector('.modal-backdrop')?.remove();
+              reload();
+            }}, '✅ Утвердить план'))
+        : null,
+    );
+    await openModal(`Производственный заказ #${order.id}`, body, { primaryLabel: null });
+  }
+
+  async function openCreate() {
+    const productsR = await api.list('products', { limit: 500, active: 'true' });
+    const products = productsR.data || [];
+    const usersR = await api.list('users', { limit: 200 });
+    const users = (usersR.data || []).filter((u) => ['foreman', 'master'].includes(u.role));
+
+    const productSel = el('select', {}, el('option', { value: '' }, '— товар —'),
+      ...products.map((p) => el('option', { value: String(p.id) }, p.name + (p.sku ? ` (${p.sku})` : ''))));
+    const qtyI = el('input', { type: 'number', min: '1', step: '1' });
+    const fromI = el('input', { type: 'date' });
+    const toI = el('input', { type: 'date' });
+    const foremanSel = el('select', {}, el('option', { value: '' }, '— не назначен —'),
+      ...users.map((u) => el('option', { value: String(u.id) }, `${u.name} (${tr('role', u.role)})`)));
+    const notesI = el('textarea', { rows: '2' });
+
+    const body = el('div', {},
+      el('div', { class: 'form-row' }, el('label', {}, 'Товар *'), productSel),
+      el('div', { class: 'form-row' }, el('label', {}, 'План, шт *'), qtyI),
+      el('div', { class: 'form-row' }, el('label', {}, 'Период с *'), fromI),
+      el('div', { class: 'form-row' }, el('label', {}, 'Период по *'), toI),
+      el('div', { class: 'form-row' }, el('label', {}, 'Мастер / начальник цеха'), foremanSel),
+      el('div', { class: 'form-row' }, el('label', {}, 'Заметки'), notesI),
+    );
+    await openModal('Новый производственный заказ', body, {
+      primaryLabel: 'Создать',
+      onSubmit: async () => {
+        if (!productSel.value || !qtyI.value || !fromI.value || !toI.value) {
+          toast('Заполните товар, план, даты', 'error');
+          return false;
+        }
+        await api.create('production-orders', {
+          product_id: Number(productSel.value),
+          plan_qty: Number(qtyI.value),
+          period_from: fromI.value,
+          period_to: toI.value,
+          foreman_id: foremanSel.value ? Number(foremanSel.value) : null,
+          notes: notesI.value || null,
+        });
+        toast('Создан', 'success');
+        await reload();
+      },
+    });
+  }
+
+  main.append(el('div', { class: 'toolbar' },
+    el('div', { class: 'spacer' }),
+    canEditOrders() ? el('button', { class: 'btn btn-primary', onClick: openCreate }, '+ Новый план') : null,
+  ), tableArea);
+  reload();
+}
+
+// --- Подряды ------------------------------------------------------------------
+
+const CONTRACT_STAGES = [
+  { code: 'measure', label: 'Замер', icon: '📐' },
+  { code: 'cut', label: 'Раскрой', icon: '✂' },
+  { code: 'weld', label: 'Сварка', icon: '🔥' },
+  { code: 'paint', label: 'Покраска', icon: '🎨' },
+  { code: 'ship', label: 'Отгрузка', icon: '🚚' },
+];
+
+export async function renderContracts(main) {
+  main.innerHTML = '';
+  main.append(
+    el('h1', { class: 'page-title' }, '📋 Подряды'),
+    el('div', { class: 'page-subtitle' }, 'Клиентские заказы на изготовление: замер → раскрой → сварка → покраска → отгрузка. Маржа = оплата − (материалы + труд + прочие).'),
+  );
+  const state = { status: '' };
+  const tableArea = el('div');
+
+  async function reload() {
+    clear(tableArea);
+    tableArea.append(el('div', { class: 'loading' }, 'Загрузка…'));
+    try {
+      const r = await api.list('contracts', state);
+      renderList(r.data || []);
+    } catch (e) {
+      clear(tableArea);
+      tableArea.append(el('div', { class: 'card error' }, e.message));
+    }
+  }
+
+  function renderList(rows) {
+    clear(tableArea);
+    if (!rows.length) {
+      tableArea.append(emptyState({ icon: '📋', title: 'Подрядов пока нет', description: 'Создайте первый подряд кнопкой выше.' }));
+      return;
+    }
+    const showMoney = ['admin', 'director_prod'].includes(prodRole());
+    const head = el('tr', {},
+      el('th', {}, '№'),
+      el('th', {}, 'Клиент'),
+      showMoney ? el('th', {}, 'Сумма') : null,
+      showMoney ? el('th', {}, 'Оплачено') : null,
+      el('th', {}, 'Менеджер'),
+      el('th', {}, 'Статус'),
+      el('th', {}, 'Этапы'),
+      el('th', { style: { textAlign: 'right' } }, ''),
+    );
+    const body = rows.map((c) => el('tr', { onClick: () => openContract(c.id) },
+      el('td', {}, `#${c.id}`),
+      el('td', {}, `${c.client_name}${c.client_company ? ' / ' + c.client_company : ''}`),
+      showMoney ? el('td', {}, fmtMoney(c.total_amount, c.currency || 'RUB')) : null,
+      showMoney ? el('td', {}, fmtMoney(c.paid_amount, c.currency || 'RUB')) : null,
+      el('td', {}, c.manager_name || '—'),
+      el('td', {}, c.status),
+      el('td', { style: { fontSize: '12px' } }, ''), // плашки этапов покажем в детали
+      el('td', { style: { textAlign: 'right' }, onClick: (e) => e.stopPropagation() },
+        el('button', { class: 'btn btn-sm', onClick: () => openContract(c.id) }, 'Открыть'),
+      ),
+    ));
+    tableArea.append(el('div', { class: 'table-wrap' }, el('table', { class: 'data' }, el('thead', {}, head), el('tbody', {}, ...body))));
+  }
+
+  async function openContract(id) {
+    const c = await api.get('contracts', id);
+    const showMoney = c.cost_total != null;
+    const stagesRow = el('div', { style: { display: 'flex', gap: '6px', flexWrap: 'wrap', marginTop: '8px' } });
+    for (const def of CONTRACT_STAGES) {
+      const stg = (c.stages || []).find((s) => s.stage === def.code) || { stage: def.code };
+      const closed = !!stg.fact_date;
+      const chip = el('div', {
+        class: 'contract-stage-chip',
+        style: { padding: '6px 10px', borderRadius: '20px', fontSize: '12px', cursor: 'pointer',
+          background: closed ? '#dcfce7' : '#f3f4f6', color: closed ? '#166534' : '#374151',
+          border: '1px solid ' + (closed ? '#86efac' : '#d1d5db') },
+        onClick: async () => {
+          if (closed) return;
+          if (!(await confirm(`Закрыть этап «${def.label}»?`))) return;
+          try {
+            await api.updateContractStage(c.id, def.code, { close: true });
+            toast('Этап закрыт', 'success');
+            document.querySelector('.modal-backdrop')?.remove();
+            openContract(c.id);
+          } catch (e) { toast(e.message, 'error'); }
+        },
+      },
+        `${def.icon} ${def.label}${closed ? ' ✓ ' + fmtDate(stg.fact_date) : ''}`,
+        stg.plan_date && !closed ? el('div', { style: { fontSize: '10px', color: 'var(--text-muted)' } }, 'план: ' + fmtDate(stg.plan_date)) : null,
+      );
+      stagesRow.append(chip);
+    }
+    const body = el('div', {},
+      el('div', { class: 'detail-grid' },
+        el('div', { class: 'k' }, 'Клиент'), el('div', {}, c.client_name),
+        c.client_company ? el('div', { class: 'k' }, 'Компания') : null, c.client_company ? el('div', {}, c.client_company) : null,
+        c.client_phone ? el('div', { class: 'k' }, 'Телефон') : null, c.client_phone ? el('div', {}, c.client_phone) : null,
+        el('div', { class: 'k' }, 'Менеджер'), el('div', {}, c.manager_name || '—'),
+        showMoney ? el('div', { class: 'k' }, 'Сумма / Оплачено') : null,
+        showMoney ? el('div', {}, `${fmtMoney(c.total_amount, c.currency)} / ${fmtMoney(c.paid_amount, c.currency)}`) : null,
+        showMoney ? el('div', { class: 'k' }, 'Себестоимость') : null,
+        showMoney ? el('div', {}, fmtMoney(c.cost_total || 0, c.currency)) : null,
+        showMoney ? el('div', { class: 'k' }, 'Маржа') : null,
+        showMoney ? el('div', { style: { color: c.margin >= 0 ? '#15803d' : '#b91c1c', fontWeight: 600 } }, fmtMoney(c.margin || 0, c.currency)) : null,
+      ),
+      c.description ? el('p', { style: { marginTop: '10px' } }, c.description) : null,
+      el('h4', { style: { marginTop: '16px' } }, 'Этапы'),
+      el('div', { class: 'hint', style: { fontSize: '12px' } }, 'Тапните на этап чтобы закрыть. Закрытые отмечены ✓.'),
+      stagesRow,
+      showMoney ? renderContractMoneyBlock(c) : null,
+    );
+    await openModal(`Подряд #${c.id}: ${c.client_name}`, body, { primaryLabel: null, size: 'lg' });
+  }
+
+  function renderContractMoneyBlock(c) {
+    const wrap = el('div', { style: { marginTop: '16px' } });
+    wrap.append(el('h4', {}, 'Затраты'));
+    const grid = el('div', { class: 'detail-grid' });
+    grid.append(
+      el('div', { class: 'k' }, 'Материалы'),
+      el('div', {}, (c.materials || []).length ? `${c.materials.length} списаний` : '—'),
+      el('div', { class: 'k' }, 'Труд'),
+      el('div', {}, (c.labor || []).length ? `${c.labor.length} записей` : '—'),
+      el('div', { class: 'k' }, 'Прочее'),
+      el('div', {}, (c.other_expenses || []).length ? `${c.other_expenses.length} расходов` : '—'),
+    );
+    wrap.append(grid);
+    // Кнопки добавления — для admin/director_prod/foreman.
+    if (['admin', 'director_prod', 'foreman'].includes(prodRole())) {
+      wrap.append(el('div', { style: { marginTop: '10px', display: 'flex', gap: '6px', flexWrap: 'wrap' } },
+        el('button', { class: 'btn btn-sm', onClick: () => addMaterialDialog(c.id) }, '+ Списать материал'),
+        el('button', { class: 'btn btn-sm', onClick: () => addLaborDialog(c.id) }, '+ Записать труд'),
+        ['admin', 'director_prod'].includes(prodRole())
+          ? el('button', { class: 'btn btn-sm', onClick: () => addOtherDialog(c.id) }, '+ Прочий расход')
+          : null,
+      ));
+    }
+    return wrap;
+  }
+
+  async function addMaterialDialog(contractId) {
+    const matsR = await api.list('materials', { active: 'true' });
+    const mats = matsR.data || [];
+    const matSel = el('select', {}, el('option', { value: '' }, '— материал —'),
+      ...mats.map((m) => el('option', { value: String(m.id), 'data-cost': String(m.cost_price || 0) }, `${m.name}${m.sku ? ' (' + m.sku + ')' : ''}`)));
+    const qtyI = el('input', { type: 'number', min: '0.001', step: '0.001' });
+    const priceI = el('input', { type: 'number', min: '0', step: '0.01' });
+    matSel.addEventListener('change', () => {
+      const opt = matSel.options[matSel.selectedIndex];
+      priceI.value = opt?.dataset?.cost || '';
+    });
+    const noteI = el('input', { type: 'text' });
+    await openModal('Списать материал', el('div', {},
+      el('div', { class: 'form-row' }, el('label', {}, 'Материал'), matSel),
+      el('div', { class: 'form-row' }, el('label', {}, 'Количество'), qtyI),
+      el('div', { class: 'form-row' }, el('label', {}, 'Цена за ед'), priceI),
+      el('div', { class: 'form-row' }, el('label', {}, 'Заметка'), noteI),
+    ), {
+      primaryLabel: 'Списать',
+      onSubmit: async () => {
+        if (!matSel.value || !qtyI.value) { toast('Заполните материал и количество', 'error'); return false; }
+        await api.consumeContractMaterial(contractId, {
+          material_id: Number(matSel.value), qty: Number(qtyI.value),
+          unit_price: Number(priceI.value) || 0, note: noteI.value || null,
+        });
+        toast('Списано', 'success');
+        document.querySelector('.modal-backdrop')?.remove();
+        openContract(contractId);
+      },
+    });
+  }
+  async function addLaborDialog(contractId) {
+    const minutesI = el('input', { type: 'number', min: '1', step: '1' });
+    const rateI = el('input', { type: 'number', min: '0', step: '0.01', placeholder: 'оставьте пусто — возьмём из настроек' });
+    const noteI = el('input', { type: 'text' });
+    await openModal('Записать труд', el('div', {},
+      el('div', { class: 'form-row' }, el('label', {}, 'Минут'), minutesI),
+      el('div', { class: 'form-row' }, el('label', {}, 'Ставка ₽/мин'), rateI),
+      el('div', { class: 'form-row' }, el('label', {}, 'Заметка'), noteI),
+    ), {
+      primaryLabel: 'Записать',
+      onSubmit: async () => {
+        if (!minutesI.value) { toast('Введите минуты', 'error'); return false; }
+        const body = { minutes: Number(minutesI.value), note: noteI.value || null };
+        if (rateI.value) body.rate_per_minute = Number(rateI.value);
+        await api.logContractLabor(contractId, body);
+        toast('Записано', 'success');
+        document.querySelector('.modal-backdrop')?.remove();
+        openContract(contractId);
+      },
+    });
+  }
+  async function addOtherDialog(contractId) {
+    const amountI = el('input', { type: 'number', min: '0', step: '0.01' });
+    const kindI = el('input', { type: 'text', placeholder: 'доставка, услуги, …' });
+    const noteI = el('input', { type: 'text' });
+    await openModal('Прочий расход', el('div', {},
+      el('div', { class: 'form-row' }, el('label', {}, 'Сумма ₽'), amountI),
+      el('div', { class: 'form-row' }, el('label', {}, 'Тип'), kindI),
+      el('div', { class: 'form-row' }, el('label', {}, 'Заметка'), noteI),
+    ), {
+      primaryLabel: 'Добавить',
+      onSubmit: async () => {
+        if (!amountI.value) { toast('Введите сумму', 'error'); return false; }
+        await api.addContractOtherExpense(contractId, { amount: Number(amountI.value), kind: kindI.value || null, note: noteI.value || null });
+        toast('Добавлено', 'success');
+        document.querySelector('.modal-backdrop')?.remove();
+        openContract(contractId);
+      },
+    });
+  }
+
+  async function openCreate() {
+    const usersR = await api.list('users', { limit: 200 });
+    const users = (usersR.data || []).filter((u) => ['foreman', 'master', 'manager', 'sales'].includes(u.role));
+    const fields = [
+      { name: 'client_name', label: 'Клиент *', required: true },
+      { name: 'client_company', label: 'Компания' },
+      { name: 'client_phone', label: 'Телефон' },
+      { name: 'total_amount', label: 'Сумма ₽', type: 'number' },
+      { name: 'description', label: 'Что делаем', type: 'textarea' },
+    ];
+    const { node, getValues } = buildForm(fields, {});
+    const mgrSel = el('select', {}, el('option', { value: '' }, '— не выбран —'),
+      ...users.map((u) => el('option', { value: String(u.id) }, `${u.name} (${tr('role', u.role)})`)));
+    node.append(el('div', { class: 'form-row' }, el('label', {}, 'Ответственный'), mgrSel));
+
+    await openModal('Новый подряд', node, {
+      primaryLabel: 'Создать',
+      onSubmit: async () => {
+        const data = getValues();
+        if (!data.client_name) { toast('Имя клиента обязательно', 'error'); return false; }
+        if (data.total_amount) data.total_amount = Number(data.total_amount);
+        if (mgrSel.value) data.manager_id = Number(mgrSel.value);
+        await api.create('contracts', data);
+        toast('Подряд создан', 'success');
+        await reload();
+      },
+    });
+  }
+
+  main.append(el('div', { class: 'toolbar' },
+    el('div', { class: 'spacer' }),
+    canEditContracts() ? el('button', { class: 'btn btn-primary', onClick: openCreate }, '+ Новый подряд') : null,
+  ), tableArea);
+  reload();
+}

@@ -25,6 +25,10 @@ import {
   renderResource,
   renderReturns,
   renderShipping,
+  renderMaterials,
+  renderProcessingPlans,
+  renderProductionOrders,
+  renderContracts,
 } from './views.js';
 
 const root = document.getElementById('app');
@@ -72,6 +76,18 @@ const NAV_GROUPS = [
       { hash: '#/shipping', label: 'Отгрузки', roles: ['admin', 'warehouse'] },
       { hash: '#/returns', label: 'Возвраты', roles: ['admin', 'warehouse', 'aus'] },
       { hash: '#/lost-goods', label: 'Потерянные товары', roles: ['admin', 'warehouse', 'aus'] },
+    ],
+  },
+  {
+    title: '🏭 Производство',
+    items: [
+      // Видимость пунктов отличается по ролям: материалы могут править админ/
+      // снабжение, техкарты — админ/начальник цеха, план — все производственные,
+      // подряды — все производственные.
+      { hash: '#/materials', label: 'Материалы', roles: ['admin', 'director_prod', 'supply', 'foreman'] },
+      { hash: '#/processing-plans', label: 'Техкарты', roles: ['admin', 'director_prod', 'foreman', 'supply'] },
+      { hash: '#/production-orders', label: 'План производства', roles: ['admin', 'director_prod', 'foreman', 'master'] },
+      { hash: '#/contracts', label: 'Подряды', roles: ['admin', 'director_prod', 'foreman', 'master'] },
     ],
   },
   {
@@ -722,6 +738,10 @@ const ROUTES = {
   '#/my-feedback': renderMyFeedback,
   '#/my-profile': renderMyProfile,
   '#/audit': renderAudit,
+  '#/materials': renderMaterials,
+  '#/processing-plans': renderProcessingPlans,
+  '#/production-orders': renderProductionOrders,
+  '#/contracts': renderContracts,
   '#/ai-inbox': renderAiInbox,
 };
 

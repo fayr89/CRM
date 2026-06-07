@@ -188,6 +188,14 @@ export const api = {
   deleteAiProposal: (id) => request('DELETE', `/api/ai-proposals/${id}`),
   aiProposalMessages: (id) => request('GET', `/api/ai-proposals/${id}/messages`),
   postAiProposalMessage: (id, text, userName) => request('POST', `/api/ai-proposals/${id}/messages`, { body: { text, user_name: userName || undefined } }),
+
+  // Производственный модуль (PROD)
+  postProductionFact: (orderId, day, fact_qty, note) => request('POST', `/api/production-orders/${orderId}/fact`, { body: { day, fact_qty, note } }),
+  approveProductionOrder: (orderId) => request('POST', `/api/production-orders/${orderId}/approve`),
+  updateContractStage: (contractId, stage, body) => request('PATCH', `/api/contracts/${contractId}/stages/${stage}`, { body }),
+  consumeContractMaterial: (contractId, body) => request('POST', `/api/contracts/${contractId}/materials`, { body }),
+  logContractLabor: (contractId, body) => request('POST', `/api/contracts/${contractId}/labor`, { body }),
+  addContractOtherExpense: (contractId, body) => request('POST', `/api/contracts/${contractId}/other-expenses`, { body }),
   wipeOperational: () => request('POST', '/api/admin/wipe-operational', { body: { confirm: 'УДАЛИТЬ' } }),
 
   // МАХ-бот

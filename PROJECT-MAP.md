@@ -176,6 +176,10 @@
 | `renderAiInbox` | `#/ai-inbox` | inbox AI-предложений |
 | `renderAcceptInvite` | `#/accept?token=…` | приём приглашения без авторизации |
 | `renderMaxBotSection` | внутри `renderIntegrations` | MAX-бот: токен, вебхук, диагностика |
+| `renderMaterials` | `#/materials` | **PROD** — список материалов + создание/правка |
+| `renderProcessingPlans` | `#/processing-plans` | **PROD** — техкарты, инлайн-список материалов с qty, показ себестоимости 1 ед |
+| `renderProductionOrders` | `#/production-orders` | **PROD** — план выпуска, утверждение, ввод факта по дням |
+| `renderContracts` | `#/contracts` | **PROD** — подряды, чипы этапов (тап = закрыть), материалы/труд/прочие расходы, маржа |
 
 **Внутренние helper-функции в `views.js`** (не экспортируются, но важные):
 - `openOrderForm(order, onSaved, opts)` — модал создания/редактирования заказа.
