@@ -41,7 +41,6 @@ import processingPlansRoutes from './routes/processingPlans.js';
 import productionOrdersRoutes from './routes/productionOrders.js';
 import contractsRoutes from './routes/contracts.js';
 import productionPLRoutes from './routes/productionPL.js';
-import diagDailyRunRoutes from './routes/diagDailyRun.js'; // TEMP
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = path.resolve(__dirname, '..', 'public');
@@ -158,7 +157,6 @@ export function createApp({ serveStatic = true } = {}) {
   app.use('/api/production-orders', productionOrdersRoutes);
   app.use('/api/contracts', contractsRoutes);
   app.use('/api/production', productionPLRoutes);
-  app.use('/api/diag/daily-run', diagDailyRunRoutes); // TEMP
   app.use((req, res) => {
     res.status(404).json({ error: `Route not found: ${req.method} ${req.path}` });
   });
