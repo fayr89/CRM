@@ -11,7 +11,8 @@ const router = Router();
 
 // При создании от admin можно любую роль и любого менеджера.
 // При создании от manager: роль принудительно 'sales', manager_id = self.
-const ROLE_ENUM = z.enum(['admin', 'manager', 'sales', 'warehouse', 'rop', 'aus', 'finance']);
+// Производственные роли (PROD-модуль): director_prod, foreman, master, supply.
+const ROLE_ENUM = z.enum(['admin', 'manager', 'sales', 'warehouse', 'rop', 'aus', 'finance', 'director_prod', 'foreman', 'master', 'supply']);
 
 const createSchema = z.object({
   email: z.string().email(),

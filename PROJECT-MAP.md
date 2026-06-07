@@ -89,6 +89,10 @@
 | `aiProposals.js` | `/api/ai-proposals` | inbox админа для предложений AI + тред заметок (`/messages`) |
 | `noticeBanners.js` | `/api/notice-banners` | админ-управляемые плашки сверху |
 | `projects.js` | `/api/projects` | проекты (стикеры на лидах/сделках/заказах/контактах/компаниях) |
+| `materials.js` | `/api/materials` | **PROD-модуль** — материалы (сырьё/комплектующие). НЕ путать с products |
+| `processingPlans.js` | `/api/processing-plans` | техкарты (продукт + норма труда + список материалов с qty_per_unit) |
+| `productionOrders.js` | `/api/production-orders` | планы выпуска товаров штуками за период с разбивкой по дням |
+| `contracts.js` | `/api/contracts` | подряды (клиентские заказы на изготовление) + этапы + материалы + труд + прочие расходы |
 
 > **TEMP diag-роуты.** Авто-claude иногда заводит файлы вроде
 > `routes/diagDaily.js` под `/api/diag/...` для разовой диагностики
@@ -334,6 +338,72 @@ if (payload.act && user.role === 'admin' && payload.act !== 'admin') {
 - **Важно для AI-обхода:** правило чтения треда прописано в `AI-DAILY.md`
   (раздел «Цикл работы с ai_proposals»). Без этого замечания админа
   между обходами не учитываются.
+
+### Производственный модуль (PROD)
+
+Добавлен в SCHEMA_VERSION 21 по сводному ТЗ. Цель — сырьё, техкарты, выпуск
+товаров штуками, подряды клиентов с этапами и P&L.
+
+**Сущности (БД-таблицы):**
+- `materials` — материалы (sku, name, unit, cost_price, supplier, warehouse,
+  ms_id, active, notes). Отдельная сущность от `products`.
+- `processing_plans` — техкарта (один-к-одному с product_id, `labor_minutes_per_unit`, `ms_id`).
+- `processing_plan_items` — позиции техкарты (material_id, qty_per_unit).
+- `production_orders` — план выпуска: product_id, plan_qty, period_from/to,
+  foreman_id, status `draft|approved|in_progress|done|cancelled`.
+- `production_order_days` — дневная разбивка (plan_qty + fact_qty + backdated + over_plan).
+- `production_plan_changes` — журнал значимых правок плана после утверждения.
+- `contracts` — подряд (client_*, total_amount, paid_amount, manager_id,
+  status `draft|in_progress|done|cancelled`).
+- `contract_stages` — 5 фиксированных этапов: `measure|cut|weld|paint|ship`
+  (plan_date, fact_date, closed_by, closed_at). При создании подряда
+  автоматически заводятся 5 строк.
+- `contract_materials` — материалы, списанные на подряд (qty, unit_price на
+  момент списания).
+- `contract_labor_logs` — труд по подряду (minutes × rate_per_minute = amount).
+  rate берётся из `app_settings.production.labor_rate_per_minute`.
+- `contract_other_expenses` — прочие прямые расходы.
+
+**Роли (RBAC):**
+- `director_prod` (директор производства) — всё в PROD-модуле.
+- `foreman` (начальник цеха) — техкарты, свои production_orders (foreman_id), материалы (просмотр), факт.
+- `master` (мастер) — только свои production_orders (foreman_id) и factsubmit.
+  **НЕ видит** цен материалов, себестоимости, маржи. Бэк фильтрует поля.
+- `supply` (снабжение) — материалы (создание/правка с cost_price, поставщики).
+
+В `routes/auth.js IMPERSONATE_ROLES`, `routes/users.js ROLE_ENUM`,
+`routes/invitations.js`, `ui.js T.role`, БД `users_role_check` /
+`invitations_role_check` — все four новых ролей добавлены.
+
+**P&L подрядов:**
+- В `GET /api/contracts/:id` для admin/director_prod считается `cost_total`
+  и `margin` (paid − cost) на лету. Для остальных эти поля + amounts
+  скрываются (`stripMoney`).
+
+**Себестоимость техкарты:**
+- В `GET /api/processing-plans/:id` для admin/director_prod/foreman/supply
+  считается `cost_per_unit = materials_total + labor_total`, где
+  `labor_total = labor_minutes × labor_rate`.
+
+**Что ещё НЕ сделано (следующие итерации):**
+- UI (страницы материалов, техкарт, подрядов, мобильный экран мастера).
+- Операция «Выполнили заказ» → создание `entity/processing` в МойСклад
+  через `ms_jobs` (новый job-тип `processing.create`). Соответственно
+  списание материалов и оприходование готовых товаров на внутренний склад.
+- Синхронизация материалов в МС (`entity/product`) и техкарт (`entity/processingplan`)
+  через `ms_jobs` — новые job-типы `material.upsert`, `processing_plan.upsert`.
+- Внутренний склад производства — отдельная настройка
+  `app_settings.production.internal_warehouse` (создать в админке/Интеграциях).
+- Подзаказы / связь подряда с production_orders (если изготовление под подряд).
+- P&L дашборд директора производства (агрегат по подрядам + центр затрат
+  по товарам).
+
+**Решения, принятые без согласования (можно пересмотреть):**
+- Внутренний склад производства — настройка в `app_settings`, дефолт по имени `'Производство'`.
+- Норма труда — minutes × `production.labor_rate_per_minute` (одна ставка на цех).
+- Готовые товары производства живут в общем `products` (без отдельной таблицы).
+- 5 этапов подряда — фиксированный enum (на старте). Если нужна гибкость, отдельная задача.
+- Подрядам автоматически создаются все 5 этапов как заготовка.
 
 ### Уведомления админу о заказах
 

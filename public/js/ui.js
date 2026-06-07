@@ -95,6 +95,10 @@ export const T = {
     rop: 'РОП',
     aus: 'АУС',
     finance: 'Фин. управляющий',
+    director_prod: 'Директор производства',
+    foreman: 'Начальник цеха',
+    master: 'Мастер',
+    supply: 'Снабжение',
   },
   related: {
     contact: 'контакт',

@@ -453,7 +453,7 @@ export const db = {
 // БАМПАЙ ПРИ КАЖДОМ ДОБАВЛЕНИИ МИГРАЦИИ. Текущие миграции прогоняются
 // только если запись в app_settings.schema_version отличается. Это экономит
 // ~500-2000мс на каждом холодном старте serverless-лямбды.
-const SCHEMA_VERSION = 20;
+const SCHEMA_VERSION = 21;
 
 export async function ensureInitialized() {
   if (globalThis.__crmInitialized) return;
@@ -805,6 +805,226 @@ export async function ensureInitialized() {
       await pool.query(
         `UPDATE product_prices SET marketplace = 'Общий прайс' WHERE marketplace = 'Avito'`,
       );
+
+      // ===== Производственный модуль (SCHEMA_VERSION 21) =====
+      // Материалы — отдельная сущность, не путать с products (готовые товары).
+      // ms_id — id номенклатуры в МойСклад, заполняется после синхронизации.
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS materials (
+          id BIGSERIAL PRIMARY KEY,
+          sku TEXT,
+          name TEXT NOT NULL,
+          unit TEXT NOT NULL DEFAULT 'шт',
+          cost_price REAL NOT NULL DEFAULT 0,
+          supplier TEXT,
+          warehouse TEXT,
+          ms_id TEXT,
+          active BOOLEAN NOT NULL DEFAULT TRUE,
+          notes TEXT,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+      `);
+      await pool.query('CREATE INDEX IF NOT EXISTS idx_materials_sku ON materials(sku)');
+      await pool.query('CREATE INDEX IF NOT EXISTS idx_materials_active ON materials(active)');
+
+      // Техкарта: товар + норма труда + список (материал, норма на 1 ед).
+      // labor_minutes_per_unit × app_settings.production.labor_rate_per_minute = стоимость труда.
+      // ms_id — id processingplan в МойСклад.
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS processing_plans (
+          id BIGSERIAL PRIMARY KEY,
+          product_id INTEGER NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+          labor_minutes_per_unit REAL NOT NULL DEFAULT 0,
+          ms_id TEXT,
+          active BOOLEAN NOT NULL DEFAULT TRUE,
+          notes TEXT,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          UNIQUE (product_id)
+        )
+      `);
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS processing_plan_items (
+          id BIGSERIAL PRIMARY KEY,
+          plan_id BIGINT NOT NULL REFERENCES processing_plans(id) ON DELETE CASCADE,
+          material_id BIGINT NOT NULL REFERENCES materials(id) ON DELETE RESTRICT,
+          qty_per_unit REAL NOT NULL CHECK (qty_per_unit > 0)
+        )
+      `);
+      await pool.query('CREATE INDEX IF NOT EXISTS idx_plan_items_plan ON processing_plan_items(plan_id)');
+
+      // Производственный заказ: план выпуска товара штуками за период.
+      // status: draft|approved|in_progress|done|cancelled.
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS production_orders (
+          id BIGSERIAL PRIMARY KEY,
+          product_id INTEGER NOT NULL REFERENCES products(id) ON DELETE RESTRICT,
+          plan_qty INTEGER NOT NULL CHECK (plan_qty > 0),
+          fact_qty INTEGER NOT NULL DEFAULT 0,
+          period_from DATE NOT NULL,
+          period_to DATE NOT NULL,
+          status TEXT NOT NULL DEFAULT 'draft'
+            CHECK (status IN ('draft','approved','in_progress','done','cancelled')),
+          foreman_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+          notes TEXT,
+          created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+          approved_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+          approved_at TIMESTAMPTZ,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+      `);
+      await pool.query('CREATE INDEX IF NOT EXISTS idx_prod_orders_status ON production_orders(status)');
+      await pool.query('CREATE INDEX IF NOT EXISTS idx_prod_orders_foreman ON production_orders(foreman_id)');
+
+      // Дневная разбивка плана: на каждый день период — plan_qty и fact_qty.
+      // backdated=true ставится автоматически если факт ввели не в тот же день.
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS production_order_days (
+          id BIGSERIAL PRIMARY KEY,
+          production_order_id BIGINT NOT NULL REFERENCES production_orders(id) ON DELETE CASCADE,
+          day DATE NOT NULL,
+          plan_qty INTEGER NOT NULL DEFAULT 0,
+          fact_qty INTEGER NOT NULL DEFAULT 0,
+          backdated BOOLEAN NOT NULL DEFAULT FALSE,
+          over_plan BOOLEAN NOT NULL DEFAULT FALSE,
+          note TEXT,
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          UNIQUE (production_order_id, day)
+        )
+      `);
+
+      // Журнал изменений плана: что/кто/когда/причина. Только для значимых правок
+      // (изменение plan_qty, периода, переутверждение).
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS production_plan_changes (
+          id BIGSERIAL PRIMARY KEY,
+          production_order_id BIGINT NOT NULL REFERENCES production_orders(id) ON DELETE CASCADE,
+          field TEXT NOT NULL,
+          old_value JSONB,
+          new_value JSONB,
+          reason TEXT,
+          changed_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+          changed_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+      `);
+
+      // Подряды: клиентский заказ на изготовление с фиксированными этапами.
+      // status: draft|in_progress|done|cancelled. paid_amount — что клиент уже оплатил.
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS contracts (
+          id BIGSERIAL PRIMARY KEY,
+          client_name TEXT NOT NULL,
+          client_phone TEXT,
+          client_company TEXT,
+          total_amount REAL NOT NULL DEFAULT 0,
+          paid_amount REAL NOT NULL DEFAULT 0,
+          currency TEXT NOT NULL DEFAULT 'RUB',
+          status TEXT NOT NULL DEFAULT 'draft'
+            CHECK (status IN ('draft','in_progress','done','cancelled')),
+          manager_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+          description TEXT,
+          notes TEXT,
+          started_at TIMESTAMPTZ,
+          finished_at TIMESTAMPTZ,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+      `);
+      await pool.query('CREATE INDEX IF NOT EXISTS idx_contracts_status ON contracts(status)');
+      await pool.query('CREATE INDEX IF NOT EXISTS idx_contracts_manager ON contracts(manager_id)');
+
+      // Этапы подряда — фиксированный enum по ТЗ. По мере прохождения этапа
+      // мастер закрывает (fact_date, closed_by). plan_date — целевая дата.
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS contract_stages (
+          id BIGSERIAL PRIMARY KEY,
+          contract_id BIGINT NOT NULL REFERENCES contracts(id) ON DELETE CASCADE,
+          stage TEXT NOT NULL
+            CHECK (stage IN ('measure','cut','weld','paint','ship')),
+          plan_date DATE,
+          fact_date DATE,
+          closed_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+          closed_at TIMESTAMPTZ,
+          note TEXT,
+          UNIQUE (contract_id, stage)
+        )
+      `);
+
+      // Материалы списываются на подряд по факту использования.
+      // unit_price фиксируется в момент списания (cost_price материала может меняться).
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS contract_materials (
+          id BIGSERIAL PRIMARY KEY,
+          contract_id BIGINT NOT NULL REFERENCES contracts(id) ON DELETE CASCADE,
+          material_id BIGINT NOT NULL REFERENCES materials(id) ON DELETE RESTRICT,
+          qty REAL NOT NULL CHECK (qty > 0),
+          unit_price REAL NOT NULL CHECK (unit_price >= 0),
+          consumed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          consumed_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+          note TEXT
+        )
+      `);
+      await pool.query('CREATE INDEX IF NOT EXISTS idx_contract_materials_contract ON contract_materials(contract_id)');
+
+      // Журнал труда по подряду: минуты × ставка → стоимость труда.
+      // rate берётся из app_settings.production.labor_rate_per_minute на момент записи.
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS contract_labor_logs (
+          id BIGSERIAL PRIMARY KEY,
+          contract_id BIGINT NOT NULL REFERENCES contracts(id) ON DELETE CASCADE,
+          minutes REAL NOT NULL CHECK (minutes > 0),
+          rate_per_minute REAL NOT NULL CHECK (rate_per_minute >= 0),
+          amount REAL NOT NULL,
+          performed_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+          performed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          note TEXT
+        )
+      `);
+      await pool.query('CREATE INDEX IF NOT EXISTS idx_contract_labor_contract ON contract_labor_logs(contract_id)');
+
+      // Прочие прямые расходы по подряду (доставка, разовые услуги и т.п.).
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS contract_other_expenses (
+          id BIGSERIAL PRIMARY KEY,
+          contract_id BIGINT NOT NULL REFERENCES contracts(id) ON DELETE CASCADE,
+          amount REAL NOT NULL CHECK (amount >= 0),
+          kind TEXT,
+          note TEXT,
+          spent_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          recorded_by INTEGER REFERENCES users(id) ON DELETE SET NULL
+        )
+      `);
+
+      // Расширение CHECK-роли: добавлены 4 производственных роли + finance
+      // (исторически в IMPERSONATE_ROLES был, но в БД-чеке не значился).
+      await pool.query(`DO $$
+        BEGIN
+          IF EXISTS (
+            SELECT 1 FROM information_schema.table_constraints
+            WHERE constraint_name = 'users_role_check' AND table_name = 'users'
+          ) THEN
+            ALTER TABLE users DROP CONSTRAINT users_role_check;
+          END IF;
+          ALTER TABLE users ADD CONSTRAINT users_role_check
+            CHECK (role IN ('admin','manager','sales','warehouse','rop','aus','finance','director_prod','foreman','master','supply'));
+        EXCEPTION WHEN duplicate_object THEN NULL;
+        END $$;`);
+      await pool.query(`DO $$
+        BEGIN
+          IF EXISTS (
+            SELECT 1 FROM information_schema.table_constraints
+            WHERE constraint_name = 'invitations_role_check' AND table_name = 'invitations'
+          ) THEN
+            ALTER TABLE invitations DROP CONSTRAINT invitations_role_check;
+          END IF;
+          ALTER TABLE invitations ADD CONSTRAINT invitations_role_check
+            CHECK (role IN ('admin','manager','sales','warehouse','rop','aus','finance','director_prod','foreman','master','supply'));
+        EXCEPTION WHEN duplicate_object THEN NULL;
+        END $$;`);
+
+      // ===== Конец производственного модуля =====
       // Маркер успешно прогнанных миграций — следующие холодные старты пропустят DDL.
       await pool.query(
         `INSERT INTO app_settings (key, value, updated_at)

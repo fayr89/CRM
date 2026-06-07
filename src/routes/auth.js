@@ -97,7 +97,10 @@ router.post(
 );
 
 // Быстрый вход админа под любой ролью (имперсонация). role='admin' — вернуться к себе.
-const IMPERSONATE_ROLES = ['manager', 'rop', 'warehouse', 'aus', 'sales', 'finance', 'admin'];
+// Производственные роли (PROD-модуль): director_prod (директор производства),
+// foreman (начальник цеха), master (мастер), supply (снабжение). См. PROJECT-MAP
+// раздел «Производственный модуль».
+const IMPERSONATE_ROLES = ['manager', 'rop', 'warehouse', 'aus', 'sales', 'finance', 'director_prod', 'foreman', 'master', 'supply', 'admin'];
 router.post(
   '/impersonate',
   authenticate,
