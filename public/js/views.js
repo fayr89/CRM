@@ -5112,14 +5112,16 @@ export async function renderIntegrations(main) {
   const tokensArea = el('div', { class: 'integration-section' });
   const webhooksArea = el('div', { class: 'integration-section' });
   const docsArea = el('div', { class: 'integration-section' });
+  const productionArea = el('div', { class: 'integration-section' });
 
-  main.append(msTokenArea, msSyncArea, maxBotArea, bannersArea, projectsArea, marketplacesArea, deliveryArea, cancelReasonsArea, warehousesArea, tokensArea, webhooksArea, docsArea);
+  main.append(msTokenArea, msSyncArea, maxBotArea, bannersArea, projectsArea, marketplacesArea, deliveryArea, cancelReasonsArea, warehousesArea, productionArea, tokensArea, webhooksArea, docsArea);
 
   await renderMoyskladTokenSection(msTokenArea);
   await renderMoyskladSyncSection(msSyncArea);
   await renderMaxBotSection(maxBotArea);
   await renderNoticeBannersSection(bannersArea);
   await renderProjectsSection(projectsArea);
+  await renderProductionSettingsSection(productionArea);
   await renderMarketplacesSection(marketplacesArea);
   await renderDeliveryMethodsSection(deliveryArea);
   await renderListSettingSection(cancelReasonsArea, {
@@ -10462,6 +10464,46 @@ export async function renderMaterials(main) {
       { name: 'active', label: 'Активный', type: 'checkbox', default: true },
     ];
     const { node, getValues } = buildForm(fields, material || {});
+
+    // Блок «Синхронизация с МойСклад» — только для существующего материала.
+    if (isEdit) {
+      const msInfo = el('div', { style: { marginTop: '12px', padding: '10px', background: '#f9fafb', borderRadius: '6px', fontSize: '13px' } });
+      function updateMsInfo(mat) {
+        clear(msInfo);
+        if (mat.ms_id) {
+          msInfo.append(
+            el('div', { style: { color: '#15803d' } }, '✅ Синхронизирован с МС'),
+            el('div', { style: { fontSize: '11px', color: 'var(--text-muted)', fontFamily: 'monospace' } }, 'ms_id: ' + mat.ms_id),
+            mat.ms_synced_at ? el('div', { style: { fontSize: '11px', color: 'var(--text-muted)' } }, 'Последний синк: ' + fmtDateTime(mat.ms_synced_at)) : null,
+          );
+        } else if (mat.ms_sync_error) {
+          msInfo.append(
+            el('div', { style: { color: '#b91c1c' } }, '⚠️ Не синхронизирован: ' + mat.ms_sync_error),
+          );
+        } else {
+          msInfo.append(el('div', { class: 'muted' }, 'Не синхронизирован с МС'));
+        }
+        const syncBtn = el('button', { class: 'btn btn-sm', style: { marginTop: '8px' } }, '🔄 Синхронизировать с МС');
+        syncBtn.addEventListener('click', async () => {
+          syncBtn.disabled = true;
+          syncBtn.textContent = '⏳ Синхронизируем…';
+          try {
+            const updated = await api.syncMaterialMs(mat.id);
+            material.ms_id = updated.ms_id;
+            material.ms_sync_error = updated.ms_sync_error;
+            material.ms_synced_at = updated.ms_synced_at;
+            updateMsInfo(updated);
+            if (updated.ms_id) toast('Синхронизирован', 'success');
+            else toast('Не удалось: ' + (updated.ms_sync_error || 'неизвестно'), 'error');
+          } catch (e) { toast(e.message, 'error'); }
+          finally { syncBtn.disabled = false; syncBtn.textContent = '🔄 Синхронизировать с МС'; }
+        });
+        msInfo.append(syncBtn);
+      }
+      updateMsInfo(material);
+      node.append(msInfo);
+    }
+
     await openModal(isEdit ? `Материал: ${material.name}` : 'Новый материал', node, {
       primaryLabel: isEdit ? 'Сохранить' : 'Создать',
       onSubmit: async () => {
@@ -10783,6 +10825,55 @@ export async function renderProductionOrders(main) {
               document.querySelector('.modal-backdrop')?.remove();
               reload();
             }}, '✅ Утвердить план'))
+        : null,
+      // Блок «Выполнили N штук» — главная операция мастера/начальника цеха.
+      // По нажатию вызывает /execute → списывает материалы по техкарте × N в МС,
+      // приходует готовый товар на внутренний склад производства, обновляет fact_qty.
+      ['approved', 'in_progress'].includes(order.status)
+        ? (() => {
+            const qtyI = el('input', { type: 'number', min: '1', step: '1', value: '1', style: { width: '90px' } });
+            const btn = el('button', { class: 'btn btn-primary', style: { background: '#15803d' } }, '🏭 Выполнили');
+            const statusEl = el('span', { style: { fontSize: '13px', marginLeft: '10px' } });
+            btn.addEventListener('click', async () => {
+              const qty = Number(qtyI.value);
+              if (!qty || qty < 1) { toast('Введите количество', 'error'); return; }
+              if (!(await confirm(`Выполнили ${qty} шт «${order.product_name}»? Материалы по техкарте × ${qty} будут списаны со склада в МС, готовый товар оприходован.`))) return;
+              btn.disabled = true;
+              const orig = btn.textContent;
+              btn.textContent = '⏳ Выполняем…';
+              try {
+                const r = await api.executeProductionOrder(order.id, qty);
+                if (r.ms_processing_id) {
+                  toast(`✅ Выполнено ${qty} шт. Документ МС создан.`, 'success');
+                } else if (r.ms_sync_error) {
+                  toast(`✅ Выполнено ${qty} шт. ⚠️ МС: ${r.ms_sync_error}`, 'success');
+                } else {
+                  toast(`✅ Выполнено ${qty} шт.`, 'success');
+                }
+                document.querySelector('.modal-backdrop')?.remove();
+                reload();
+              } catch (e) {
+                toast(e.message, 'error');
+              } finally {
+                btn.disabled = false;
+                btn.textContent = orig;
+              }
+            });
+            return el('div', { style: { marginTop: '16px', padding: '12px', background: '#f0fdf4', border: '1px solid #86efac', borderRadius: '8px' } },
+              el('div', { style: { fontWeight: 600, marginBottom: '8px' } }, '🏭 Зафиксировать выпуск'),
+              el('div', { style: { display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' } },
+                el('label', {}, 'Сколько произвели: '),
+                qtyI,
+                el('span', {}, ' шт'),
+                btn,
+                statusEl,
+              ),
+              el('div', { class: 'hint', style: { fontSize: '12px', marginTop: '8px' } },
+                'Списывает материалы (по техкарте × кол-во) и приходует готовый товар в МойСклад. ',
+                'Если МС не настроен — фиксируется только в нашей БД.',
+              ),
+            );
+          })()
         : null,
     );
     await openModal(`Производственный заказ #${order.id}`, body, { primaryLabel: null });
@@ -11358,4 +11449,82 @@ export async function renderProductionPL(main) {
     body,
   );
   reload();
+}
+
+// Секция «Производство» в Настройках → Интеграции: внутренний склад
+// производства (из МС) и ставка труда ₽/мин. Видна admin и director_prod.
+async function renderProductionSettingsSection(area) {
+  const me = JSON.parse(localStorage.getItem('crm_user') || '{}');
+  if (!['admin', 'director_prod'].includes(me.role)) return;
+  area.innerHTML = '';
+  area.append(
+    el('div', { class: 'section-header' }, el('h2', {}, '🏭 Производство')),
+    el('p', { class: 'help-banner' },
+      'Внутренний склад — куда оприходовать готовые изделия и где хранить материалы в МойСклад. ',
+      'Ставка труда — стоимость минуты работы для расчёта себестоимости (минуты × ставка).'),
+  );
+  const loadingEl = el('div', { class: 'loading' }, 'Загрузка…');
+  area.append(loadingEl);
+  try {
+    const [settings, stores] = await Promise.all([
+      api.productionSettings(),
+      api.msStores(false).catch(() => ({ stores: [] })),
+    ]);
+    loadingEl.remove();
+
+    const whSel = el('select', { style: { minWidth: '260px' } },
+      el('option', { value: '' }, '— не выбран —'),
+      ...((stores.stores || []).map((s) => el('option', {
+        value: s.id, selected: settings.internal_warehouse?.id === s.id, 'data-name': s.name,
+      }, s.name))),
+    );
+    const refreshBtn = el('button', { class: 'btn btn-sm', title: 'Обновить список из МС' }, '↻');
+    refreshBtn.addEventListener('click', async () => {
+      refreshBtn.disabled = true;
+      try {
+        const r = await api.msStores(true);
+        whSel.innerHTML = '';
+        whSel.append(el('option', { value: '' }, '— не выбран —'));
+        for (const s of r.stores || []) {
+          whSel.append(el('option', { value: s.id, 'data-name': s.name, selected: settings.internal_warehouse?.id === s.id }, s.name));
+        }
+        toast('Список складов обновлён', 'success');
+      } catch (e) { toast(e.message, 'error'); } finally { refreshBtn.disabled = false; }
+    });
+
+    const rateI = el('input', { type: 'number', min: '0', step: '0.01', value: settings.labor_rate_per_minute != null ? String(settings.labor_rate_per_minute) : '', style: { width: '130px' } });
+    const saveBtn = el('button', { class: 'btn btn-primary' }, '💾 Сохранить настройки');
+    const status = el('span', { style: { marginLeft: '8px' } });
+    saveBtn.addEventListener('click', async () => {
+      saveBtn.disabled = true; status.textContent = '';
+      try {
+        const opt = whSel.options[whSel.selectedIndex];
+        const internal_warehouse = whSel.value ? { id: whSel.value, name: opt?.dataset?.name || whSel.value } : null;
+        const rateVal = rateI.value ? Number(rateI.value) : null;
+        await api.updateProductionSettings({ internal_warehouse, labor_rate_per_minute: rateVal });
+        status.style.color = '#15803d'; status.textContent = '✅ Сохранено';
+        toast('Настройки производства сохранены', 'success');
+      } catch (e) { status.style.color = '#b91c1c'; status.textContent = '❌ ' + e.message; }
+      finally { saveBtn.disabled = false; }
+    });
+
+    area.append(
+      el('div', { class: 'card' },
+        el('div', { class: 'form-row' },
+          el('label', {}, 'Внутренний склад производства'),
+          el('div', { style: { display: 'flex', gap: '6px', alignItems: 'center', flexWrap: 'wrap' } },
+            whSel, refreshBtn,
+          ),
+        ),
+        el('div', { class: 'form-row' },
+          el('label', {}, 'Ставка труда (₽/мин)'),
+          el('div', {}, rateI, el('span', { style: { marginLeft: '8px', fontSize: '12px', color: 'var(--text-muted)' } }, 'Например: 5 ₽/мин = 300 ₽/час')),
+        ),
+        el('div', { style: { marginTop: '12px' } }, saveBtn, status),
+      ),
+    );
+  } catch (e) {
+    loadingEl.remove();
+    area.append(el('div', { class: 'card error' }, 'Ошибка: ' + (e.message || 'не удалось загрузить')));
+  }
 }

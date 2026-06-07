@@ -453,7 +453,7 @@ export const db = {
 // БАМПАЙ ПРИ КАЖДОМ ДОБАВЛЕНИИ МИГРАЦИИ. Текущие миграции прогоняются
 // только если запись в app_settings.schema_version отличается. Это экономит
 // ~500-2000мс на каждом холодном старте serverless-лямбды.
-const SCHEMA_VERSION = 24;
+const SCHEMA_VERSION = 25;
 
 export async function ensureInitialized() {
   if (globalThis.__crmInitialized) return;
@@ -1074,6 +1074,14 @@ export async function ensureInitialized() {
         )
       `);
       await pool.query('CREATE INDEX IF NOT EXISTS idx_plan_stages_plan ON processing_plan_stages(plan_id, sort_order)');
+
+      // ===== Поля синхронизации с МС (SCHEMA_VERSION 25) =====
+      await pool.query('ALTER TABLE materials ADD COLUMN IF NOT EXISTS ms_synced_at TIMESTAMPTZ');
+      await pool.query('ALTER TABLE materials ADD COLUMN IF NOT EXISTS ms_sync_error TEXT');
+      // Себестоимость операции в производственном заказе (исторический snapshot
+      // на момент «выполнили заказ»): материалы + труд × ставка.
+      await pool.query('ALTER TABLE production_orders ADD COLUMN IF NOT EXISTS cost_total REAL NOT NULL DEFAULT 0');
+      await pool.query('ALTER TABLE production_orders ADD COLUMN IF NOT EXISTS ms_processing_id TEXT');
 
       // Маркер успешно прогнанных миграций — следующие холодные старты пропустят DDL.
       await pool.query(

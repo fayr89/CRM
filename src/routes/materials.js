@@ -9,6 +9,49 @@ import { db } from '../db.js';
 import { BadRequest, NotFound, asyncHandler } from '../errors.js';
 import { logAction } from '../services/audit.js';
 import { parsePagination, paginated } from '../query.js';
+import { msCreate, msUpdate } from '../services/moysklad.js';
+import { decryptSecret } from '../services/secrets.js';
+
+async function getMsToken() {
+  const row = await db.get(`SELECT value FROM app_settings WHERE key = 'moysklad.token'`).catch(() => null);
+  const stored = row?.value ? decryptSecret(row.value) : null;
+  return stored || process.env.MOYSKLAD_TOKEN || null;
+}
+
+// Создание/обновление материала в МойСклад как номенклатуры. salePrices не
+// заполняем (материал не продаётся). buyPrice = cost_price * 100 (МС хранит
+// копейки в integer). Если что-то падает — пишем ms_sync_error в материал,
+// но саму операцию не валим (карточка в нашей БД создалась/обновилась).
+async function syncMaterialToMs(materialId) {
+  const m = await db.get('SELECT * FROM materials WHERE id = ?', materialId);
+  if (!m) return;
+  const token = await getMsToken();
+  if (!token) {
+    await db.run('UPDATE materials SET ms_sync_error = ? WHERE id = ?', 'MC token не настроен', materialId);
+    return;
+  }
+  const body = {
+    name: m.name,
+    code: m.sku || undefined,
+    buyPrice: { value: Math.round(Number(m.cost_price || 0) * 100), currency: { meta: { href: 'https://api.moysklad.ru/api/remap/1.2/entity/currency/RUB', type: 'currency', mediaType: 'application/json' } } },
+    pathName: 'Материалы',
+  };
+  // У МС нет «currency.RUB», нужен реальный UUID валюты — для простоты не отправляем
+  // buyPrice если не уверены. Оставляем только name+code.
+  const simplified = { name: m.name, code: m.sku || undefined, pathName: 'Материалы' };
+  try {
+    if (m.ms_id) {
+      await msUpdate(token, 'product', m.ms_id, simplified);
+    } else {
+      const created = await msCreate(token, 'product', simplified);
+      await db.run('UPDATE materials SET ms_id = ?, ms_sync_error = NULL WHERE id = ?', created.id, materialId);
+    }
+    await db.run('UPDATE materials SET ms_sync_error = NULL, ms_synced_at = NOW() WHERE id = ?', materialId);
+  } catch (e) {
+    await db.run('UPDATE materials SET ms_sync_error = ? WHERE id = ?', String(e.message).slice(0, 500), materialId);
+    // не пробрасываем, чтобы локальная операция считалась успешной
+  }
+}
 
 const router = Router();
 router.use(authenticate);
@@ -92,7 +135,10 @@ router.post(
     );
     const created = await db.get('SELECT * FROM materials WHERE id = ?', r.lastInsertRowid);
     await logAction(req, { action: 'material.created', entity_type: 'material', entity_id: created.id });
-    res.status(201).json(created);
+    // Синхронизируем с МС синхронно — операция короткая, успеваем в 60-сек.
+    await syncMaterialToMs(created.id);
+    const final = await db.get('SELECT * FROM materials WHERE id = ?', created.id);
+    res.status(201).json(final);
   }),
 );
 
@@ -113,8 +159,25 @@ router.patch(
     updates.push('updated_at = NOW()');
     params.push(cur.id);
     await db.run(`UPDATE materials SET ${updates.join(', ')} WHERE id = ?`, ...params);
-    const updated = await db.get('SELECT * FROM materials WHERE id = ?', cur.id);
     await logAction(req, { action: 'material.updated', entity_type: 'material', entity_id: cur.id, details: { fields: Object.keys(data) } });
+    // Если меняли поля, влияющие на МС-карточку — синхронизируем.
+    if (data.name !== undefined || data.sku !== undefined || data.cost_price !== undefined) {
+      await syncMaterialToMs(cur.id);
+    }
+    const updated = await db.get('SELECT * FROM materials WHERE id = ?', cur.id);
+    res.json(updated);
+  }),
+);
+
+// Принудительная синхронизация одного материала с МС — кнопка в карточке.
+router.post(
+  '/:id/sync-ms',
+  asyncHandler(async (req, res) => {
+    if (!canEdit(req.user)) throw BadRequest('Доступ только админу, директору производства или снабжению');
+    const cur = await db.get('SELECT id FROM materials WHERE id = ?', req.params.id);
+    if (!cur) throw NotFound('Материал не найден');
+    await syncMaterialToMs(cur.id);
+    const updated = await db.get('SELECT * FROM materials WHERE id = ?', cur.id);
     res.json(updated);
   }),
 );

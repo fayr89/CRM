@@ -203,6 +203,15 @@ export const api = {
   createProductionExpense: (body) => request('POST', '/api/production/expenses', { body }),
   updateProductionExpense: (id, body) => request('PATCH', `/api/production/expenses/${id}`, { body }),
   deleteProductionExpense: (id) => request('DELETE', `/api/production/expenses/${id}`),
+
+  // Настройки производства + МС-склады
+  productionSettings: () => request('GET', '/api/production-settings'),
+  updateProductionSettings: (body) => request('PUT', '/api/production-settings', { body }),
+  msStores: (refresh) => request('GET', '/api/production-settings/ms-stores', { query: refresh ? { refresh: '1' } : {} }),
+
+  // Производственный заказ: выполнить N штук + синхронизация материала с МС
+  executeProductionOrder: (id, qty, day) => request('POST', `/api/production-orders/${id}/execute`, { body: { qty, day } }),
+  syncMaterialMs: (id) => request('POST', `/api/materials/${id}/sync-ms`),
   wipeOperational: () => request('POST', '/api/admin/wipe-operational', { body: { confirm: 'УДАЛИТЬ' } }),
 
   // МАХ-бот

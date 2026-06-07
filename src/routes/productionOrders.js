@@ -10,6 +10,14 @@ import { db } from '../db.js';
 import { BadRequest, NotFound, asyncHandler } from '../errors.js';
 import { logAction } from '../services/audit.js';
 import { parsePagination, paginated } from '../query.js';
+import { msCreate, msHref } from '../services/moysklad.js';
+import { decryptSecret } from '../services/secrets.js';
+
+async function getMsToken() {
+  const row = await db.get(`SELECT value FROM app_settings WHERE key = 'moysklad.token'`).catch(() => null);
+  const stored = row?.value ? decryptSecret(row.value) : null;
+  return stored || process.env.MOYSKLAD_TOKEN || null;
+}
 
 const router = Router();
 router.use(authenticate);
@@ -257,6 +265,132 @@ router.post(
       details: { day: data.day, fact_qty: data.fact_qty, backdated, over_plan: overPlan },
     });
     res.json({ ok: true, backdated, over_plan: overPlan });
+  }),
+);
+
+// «Выполнили заказ N штук»: списать материалы по техкарте × N в МС, оприходовать
+// готовый товар на внутренний склад производства, увеличить fact_qty. Если МС
+// настроен (есть токен и внутренний склад) — создаёт processing-документ.
+// Если нет МС — просто увеличивает fact_qty в нашей БД.
+const executeSchema = z.object({
+  qty: z.number().int().positive(),
+  day: z.string().optional(), // YYYY-MM-DD для production_order_days; default today
+});
+router.post(
+  '/:id/execute',
+  asyncHandler(async (req, res) => {
+    const data = executeSchema.parse(req.body || {});
+    const order = await db.get(
+      `SELECT po.*, p.id AS product_id, p.name AS product_name, p.ms_id AS product_ms_id
+       FROM production_orders po JOIN products p ON p.id = po.product_id WHERE po.id = ?`,
+      req.params.id,
+    );
+    if (!order) throw NotFound('Производственный заказ не найден');
+    if (!['admin', 'director_prod', 'foreman', 'master'].includes(req.user.role)) {
+      throw BadRequest('Доступ только производственным ролям');
+    }
+    if (isMaster(req.user) && order.foreman_id !== req.user.id) throw NotFound('Не найден');
+    if (!['approved', 'in_progress'].includes(order.status)) {
+      throw BadRequest('Выполнять можно только утверждённый или в работе заказ');
+    }
+    // Берём техкарту товара.
+    const plan = await db.get('SELECT * FROM processing_plans WHERE product_id = ?', order.product_id);
+    if (!plan) throw BadRequest('Для этого товара нет техкарты — добавьте её сначала');
+    const planItems = await db.all(
+      `SELECT pi.material_id, pi.qty_per_unit, m.cost_price, m.ms_id, m.name AS material_name
+       FROM processing_plan_items pi JOIN materials m ON m.id = pi.material_id
+       WHERE pi.plan_id = ?`,
+      plan.id,
+    );
+    const stages = await db.all('SELECT minutes FROM processing_plan_stages WHERE plan_id = ?', plan.id);
+    const laborMin = stages.length ? stages.reduce((s, x) => s + Number(x.minutes || 0), 0) : Number(plan.labor_minutes_per_unit || 0);
+    const rateRow = await db.get(`SELECT value FROM app_settings WHERE key = 'production.labor_rate_per_minute'`).catch(() => null);
+    const rate = Number(rateRow?.value) || 0;
+    const materialsCost = planItems.reduce((s, i) => s + Number(i.cost_price || 0) * Number(i.qty_per_unit || 0) * data.qty, 0);
+    const laborCost = laborMin * rate * data.qty;
+    const operationCost = Math.round((materialsCost + laborCost) * 100) / 100;
+
+    // Пытаемся создать processing в МС (если есть токен, внутренний склад, ms_id товара).
+    const token = await getMsToken();
+    const intWh = await db.get(`SELECT value FROM app_settings WHERE key = 'production.internal_warehouse'`).catch(() => null);
+    const internalWarehouse = intWh?.value;
+    let msProcessingId = null;
+    let msSyncError = null;
+    if (token && internalWarehouse?.id && order.product_ms_id) {
+      const missingMats = planItems.filter((i) => !i.ms_id);
+      if (missingMats.length) {
+        msSyncError = `Не синхронизированы материалы в МС: ${missingMats.map((m) => m.material_name).join(', ')}`;
+      } else {
+        try {
+          const body = {
+            materials: planItems.map((i) => ({
+              assortment: { meta: { href: msHref('product', i.ms_id), type: 'product', mediaType: 'application/json' } },
+              quantity: Number(i.qty_per_unit) * data.qty,
+            })),
+            products: [{
+              assortment: { meta: { href: msHref('product', order.product_ms_id), type: 'product', mediaType: 'application/json' } },
+              quantity: data.qty,
+            }],
+            materialsStore: { meta: { href: msHref('store', internalWarehouse.id), type: 'store', mediaType: 'application/json' } },
+            store: { meta: { href: msHref('store', internalWarehouse.id), type: 'store', mediaType: 'application/json' } },
+            moment: new Date().toISOString().slice(0, 19).replace('T', ' '),
+          };
+          const created = await msCreate(token, 'processing', body);
+          msProcessingId = created.id;
+        } catch (e) {
+          msSyncError = String(e.message).slice(0, 500);
+        }
+      }
+    } else if (!token) {
+      msSyncError = 'Токен МС не настроен';
+    } else if (!internalWarehouse?.id) {
+      msSyncError = 'Внутренний склад производства не задан';
+    } else if (!order.product_ms_id) {
+      msSyncError = 'У готового товара нет ms_id (нужно импортировать из МС)';
+    }
+
+    // Обновляем нашу БД (в любом случае фиксируем выполнение).
+    const day = data.day || new Date().toISOString().slice(0, 10);
+    await db.withTransaction(async (tx) => {
+      // production_order_days: ищем строку для этого дня, добавляем qty.
+      const dayRow = await tx.get(
+        'SELECT * FROM production_order_days WHERE production_order_id = ? AND day = ?::date',
+        order.id, day,
+      );
+      if (dayRow) {
+        const today = new Date().toISOString().slice(0, 10);
+        await tx.run(
+          `UPDATE production_order_days SET fact_qty = fact_qty + ?, backdated = ?, over_plan = (fact_qty + ?) > plan_qty, updated_at = NOW() WHERE id = ?`,
+          data.qty, day !== today || dayRow.backdated, data.qty, dayRow.id,
+        );
+      } else {
+        await tx.run(
+          `INSERT INTO production_order_days (production_order_id, day, plan_qty, fact_qty, backdated, over_plan)
+           VALUES (?, ?::date, 0, ?, ?, TRUE)`,
+          order.id, day, data.qty, day !== new Date().toISOString().slice(0, 10),
+        );
+      }
+      const { sum } = await tx.get(
+        'SELECT COALESCE(SUM(fact_qty), 0)::int AS sum FROM production_order_days WHERE production_order_id = ?',
+        order.id,
+      );
+      const completed = sum >= order.plan_qty;
+      await tx.run(
+        `UPDATE production_orders SET fact_qty = ?, status = CASE WHEN status = 'approved' THEN 'in_progress' ELSE status END,
+         cost_total = cost_total + ?, ms_processing_id = COALESCE(?, ms_processing_id), updated_at = NOW() WHERE id = ?`,
+        sum, operationCost, msProcessingId, order.id,
+      );
+      if (completed) {
+        await tx.run(`UPDATE production_orders SET status = 'done' WHERE id = ?`, order.id);
+      }
+    });
+    await logAction(req, {
+      action: 'production_order.executed',
+      entity_type: 'production_order',
+      entity_id: order.id,
+      details: { qty: data.qty, ms_processing_id: msProcessingId, ms_sync_error: msSyncError, operation_cost: operationCost },
+    });
+    res.json({ ok: true, qty: data.qty, operation_cost: operationCost, ms_processing_id: msProcessingId, ms_sync_error: msSyncError });
   }),
 );
 
