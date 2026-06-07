@@ -31,13 +31,37 @@ console.log(`[minify] ${files.length} файлов: ${kb(beforeTotal)} КБ → 
 // Стампуем service-worker уникальной версией: при каждом деплое контент sw.js
 // отличается → браузер видит обновление и шлёт клиенту 'updatefound'.
 // Версия = timestamp деплоя (читабельно при отладке, гарантированно уникально).
+const buildVersion = new Date().toISOString();
+
 const SW_PATH = 'public/sw.js';
 try {
   const sw = readFileSync(SW_PATH, 'utf8');
-  const version = new Date().toISOString();
-  const stamped = sw.replace('__BUILD_VERSION__', version);
+  const stamped = sw.replace('__BUILD_VERSION__', buildVersion);
   writeFileSync(SW_PATH, stamped);
-  console.log(`[sw] stamped version ${version}`);
+  console.log(`[sw] stamped version ${buildVersion}`);
 } catch (e) {
   console.warn('[sw] не удалось стамп-нуть версию:', e.message);
+}
+
+// Кэш-бастер для index.html: к ссылке на /js/app.js (entry-точка ES-модулей)
+// добавляем ?v=<buildVersion>. Браузер видит новый URL → не отдаёт старый
+// бандл из кеша. Раньше при `<script src="/js/app.js">` Chrome/Safari могли
+// сидеть на закэшированном app.js даже после деплоя, и пользователь не
+// видел свежий код в браузере.
+const HTML_PATH = 'public/index.html';
+try {
+  const html = readFileSync(HTML_PATH, 'utf8');
+  const tag = encodeURIComponent(buildVersion);
+  // Только entry-точка — модули, которые она импортирует, дёрнутся свежими
+  // потому что относительные импорты резолвятся относительно URL родителя
+  // (а у родителя сменился запрос → кеш проиграл).
+  const stamped = html.replace('src="/js/app.js"', `src="/js/app.js?v=${tag}"`);
+  if (stamped !== html) {
+    writeFileSync(HTML_PATH, stamped);
+    console.log(`[html] cache-buster v=${buildVersion}`);
+  } else {
+    console.warn('[html] не нашёл <script src="/js/app.js"> для стэмпа');
+  }
+} catch (e) {
+  console.warn('[html] не удалось стамп-нуть:', e.message);
 }
