@@ -196,6 +196,13 @@ export const api = {
   consumeContractMaterial: (contractId, body) => request('POST', `/api/contracts/${contractId}/materials`, { body }),
   logContractLabor: (contractId, body) => request('POST', `/api/contracts/${contractId}/labor`, { body }),
   addContractOtherExpense: (contractId, body) => request('POST', `/api/contracts/${contractId}/other-expenses`, { body }),
+
+  // P&L производства
+  productionPL: (from, to) => request('GET', '/api/production/p-and-l', { query: { from, to } }),
+  productionExpenses: (from, to) => request('GET', '/api/production/expenses', { query: { from, to } }),
+  createProductionExpense: (body) => request('POST', '/api/production/expenses', { body }),
+  updateProductionExpense: (id, body) => request('PATCH', `/api/production/expenses/${id}`, { body }),
+  deleteProductionExpense: (id) => request('DELETE', `/api/production/expenses/${id}`),
   wipeOperational: () => request('POST', '/api/admin/wipe-operational', { body: { confirm: 'УДАЛИТЬ' } }),
 
   // МАХ-бот

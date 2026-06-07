@@ -119,6 +119,9 @@ const createSchema = z.object({
   total_amount: z.number().nonnegative().optional().default(0),
   currency: z.string().length(3).optional().default('RUB'),
   manager_id: z.number().int().positive().optional().nullable(),
+  // Привязка к проекту — для попадания доходов/расходов в P&L производства,
+  // когда у проекта is_production=true (например ЧПБ — полимерная краска).
+  project_id: z.number().int().positive().optional().nullable(),
   description: z.string().max(2000).optional().nullable(),
   notes: z.string().max(2000).optional().nullable(),
   // На старте автоматически создаём 5 пустых этапов; даты можно задать сразу.
@@ -136,11 +139,12 @@ router.post(
     const created = await db.withTransaction(async (tx) => {
       const r = await tx.run(
         `INSERT INTO contracts (client_name, client_phone, client_company, total_amount, currency,
-          manager_id, description, notes, status)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'draft') RETURNING id`,
+          manager_id, project_id, description, notes, status)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft') RETURNING id`,
         data.client_name, data.client_phone ?? null, data.client_company ?? null,
         data.total_amount || 0, data.currency || 'RUB',
-        data.manager_id ?? null, data.description ?? null, data.notes ?? null,
+        data.manager_id ?? null, data.project_id ?? null,
+        data.description ?? null, data.notes ?? null,
       );
       const id = r.lastInsertRowid;
       // Заводим 5 этапов сразу — пустыми. Даты можно потом обновить.

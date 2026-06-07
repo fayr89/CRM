@@ -29,6 +29,7 @@ import {
   renderProcessingPlans,
   renderProductionOrders,
   renderContracts,
+  renderProductionPL,
 } from './views.js';
 
 const root = document.getElementById('app');
@@ -88,6 +89,7 @@ const NAV_GROUPS = [
       { hash: '#/processing-plans', label: 'Техкарты', roles: ['admin', 'director_prod', 'foreman', 'supply'] },
       { hash: '#/production-orders', label: 'План производства', roles: ['admin', 'director_prod', 'foreman', 'master'] },
       { hash: '#/contracts', label: 'Подряды', roles: ['admin', 'director_prod', 'foreman', 'master'] },
+      { hash: '#/production-pl', label: '💰 Доходность', roles: ['admin', 'director_prod'] },
     ],
   },
   {
@@ -742,6 +744,7 @@ const ROUTES = {
   '#/processing-plans': renderProcessingPlans,
   '#/production-orders': renderProductionOrders,
   '#/contracts': renderContracts,
+  '#/production-pl': renderProductionPL,
   '#/ai-inbox': renderAiInbox,
 };
 

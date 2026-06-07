@@ -40,6 +40,7 @@ import materialsRoutes from './routes/materials.js';
 import processingPlansRoutes from './routes/processingPlans.js';
 import productionOrdersRoutes from './routes/productionOrders.js';
 import contractsRoutes from './routes/contracts.js';
+import productionPLRoutes from './routes/productionPL.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = path.resolve(__dirname, '..', 'public');
@@ -155,6 +156,7 @@ export function createApp({ serveStatic = true } = {}) {
   app.use('/api/processing-plans', processingPlansRoutes);
   app.use('/api/production-orders', productionOrdersRoutes);
   app.use('/api/contracts', contractsRoutes);
+  app.use('/api/production', productionPLRoutes);
   app.use((req, res) => {
     res.status(404).json({ error: `Route not found: ${req.method} ${req.path}` });
   });

@@ -453,7 +453,7 @@ export const db = {
 // БАМПАЙ ПРИ КАЖДОМ ДОБАВЛЕНИИ МИГРАЦИИ. Текущие миграции прогоняются
 // только если запись в app_settings.schema_version отличается. Это экономит
 // ~500-2000мс на каждом холодном старте serverless-лямбды.
-const SCHEMA_VERSION = 22;
+const SCHEMA_VERSION = 23;
 
 export async function ensureInitialized() {
   if (globalThis.__crmInitialized) return;
@@ -1033,6 +1033,32 @@ export async function ensureInitialized() {
       await pool.query('ALTER TABLE payments ADD COLUMN IF NOT EXISTS project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL');
       await pool.query('CREATE INDEX IF NOT EXISTS idx_orders_project ON orders(project_id) WHERE project_id IS NOT NULL');
       await pool.query('CREATE INDEX IF NOT EXISTS idx_payments_project ON payments(project_id) WHERE project_id IS NOT NULL');
+
+      // ===== Доходность производства (SCHEMA_VERSION 23) =====
+      // Помечаем проекты как «производственные»: доход с их сделок/заказов/
+      // подрядов попадает в P&L производства. Например ЧПБ — полимерная краска.
+      await pool.query('ALTER TABLE projects ADD COLUMN IF NOT EXISTS is_production BOOLEAN NOT NULL DEFAULT FALSE');
+      // Подряду тоже нужен project_id — раньше связи не было (auto-claude добавил
+      // только для orders/payments). Без этого подряды нельзя приписать к
+      // производственному проекту.
+      await pool.query('ALTER TABLE contracts ADD COLUMN IF NOT EXISTS project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL');
+      await pool.query('CREATE INDEX IF NOT EXISTS idx_contracts_project ON contracts(project_id) WHERE project_id IS NOT NULL');
+      // Ручные расходы производства: зарплаты, аренда, оборудование, налоги
+      // и т.п. — то, что не привязано к конкретному подряду. Записывает
+      // директор производства/админ. category — свободный текст («ФОТ»,
+      // «аренда», «оборудование», ...).
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS production_expenses (
+          id BIGSERIAL PRIMARY KEY,
+          amount REAL NOT NULL CHECK (amount >= 0),
+          category TEXT,
+          description TEXT,
+          spent_at DATE NOT NULL DEFAULT CURRENT_DATE,
+          recorded_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+      `);
+      await pool.query('CREATE INDEX IF NOT EXISTS idx_production_expenses_spent ON production_expenses(spent_at DESC)');
       // Маркер успешно прогнанных миграций — следующие холодные старты пропустят DDL.
       await pool.query(
         `INSERT INTO app_settings (key, value, updated_at)

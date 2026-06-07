@@ -20,6 +20,9 @@ const createSchema = z.object({
   description: z.string().max(500).optional().nullable(),
   active: z.boolean().optional().default(true),
   sort_order: z.number().int().optional().default(0),
+  // Помечает проект как «производственный» — его выручка попадает в P&L
+  // производства (см. /api/production/p-and-l). Например ЧПБ — полимерная краска.
+  is_production: z.boolean().optional().default(false),
 });
 const updateSchema = createSchema.partial();
 
@@ -30,7 +33,7 @@ router.get(
     const onlyActive = req.query.active === 'true';
     const where = onlyActive ? 'WHERE active = TRUE' : '';
     const rows = await db.all(
-      `SELECT id, name, color, description, active, sort_order, created_at, updated_at
+      `SELECT id, name, color, description, active, sort_order, is_production, created_at, updated_at
        FROM projects ${where}
        ORDER BY sort_order ASC, name ASC`,
     );
@@ -55,9 +58,9 @@ router.post(
     const existing = await db.get('SELECT id FROM projects WHERE LOWER(name) = LOWER(?)', data.name);
     if (existing) throw BadRequest('Проект с таким именем уже существует');
     const r = await db.run(
-      `INSERT INTO projects (name, color, description, active, sort_order)
-       VALUES (?, ?, ?, ?, ?) RETURNING id`,
-      data.name, data.color, data.description ?? null, data.active, data.sort_order,
+      `INSERT INTO projects (name, color, description, active, sort_order, is_production)
+       VALUES (?, ?, ?, ?, ?, ?) RETURNING id`,
+      data.name, data.color, data.description ?? null, data.active, data.sort_order, data.is_production || false,
     );
     const created = await db.get('SELECT * FROM projects WHERE id = ?', r.lastInsertRowid);
     await logAction(req, { action: 'project.created', entity_type: 'project', entity_id: created.id, details: { name: created.name } });

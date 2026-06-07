@@ -10150,6 +10150,7 @@ async function renderProjectsSection(area) {
       const nameI = el('input', { type: 'text', value: p.name, style: { width: '220px' } });
       const colorI = el('input', { type: 'color', value: p.color || '#6366f1', style: { width: '50px', padding: '0' } });
       const activeI = el('input', { type: 'checkbox', checked: !!p.active });
+      const prodI = el('input', { type: 'checkbox', checked: !!p.is_production });
       const sticker = el('span', {
         class: 'project-sticker',
         style: { background: p.color || '#6366f1' },
@@ -10159,6 +10160,7 @@ async function renderProjectsSection(area) {
         el('label', { style: { display: 'flex', gap: '6px', alignItems: 'center' } }, 'Имя:', nameI),
         el('label', { style: { display: 'flex', gap: '6px', alignItems: 'center' } }, 'Цвет:', colorI),
         el('label', { style: { display: 'flex', gap: '6px', alignItems: 'center' } }, activeI, 'Активен'),
+        el('label', { style: { display: 'flex', gap: '6px', alignItems: 'center' }, title: 'Доход с этого проекта попадёт в P&L производства (раздел «💰 Доходность»).' }, prodI, '🏭 Производственный'),
         el('button', {
           class: 'btn btn-sm btn-primary',
           onClick: async () => {
@@ -10167,6 +10169,7 @@ async function renderProjectsSection(area) {
                 name: nameI.value.trim(),
                 color: colorI.value,
                 active: activeI.checked,
+                is_production: prodI.checked,
               });
               toast('Сохранено', 'success');
               reload();
@@ -10999,8 +11002,12 @@ export async function renderContracts(main) {
   }
 
   async function openCreate() {
-    const usersR = await api.list('users', { limit: 200 });
+    const [usersR, projectsR] = await Promise.all([
+      api.list('users', { limit: 200 }),
+      api.projectsList(true),
+    ]);
     const users = (usersR.data || []).filter((u) => ['foreman', 'master', 'manager', 'sales'].includes(u.role));
+    const projects = projectsR.data || [];
     const fields = [
       { name: 'client_name', label: 'Клиент *', required: true },
       { name: 'client_company', label: 'Компания' },
@@ -11011,7 +11018,14 @@ export async function renderContracts(main) {
     const { node, getValues } = buildForm(fields, {});
     const mgrSel = el('select', {}, el('option', { value: '' }, '— не выбран —'),
       ...users.map((u) => el('option', { value: String(u.id) }, `${u.name} (${tr('role', u.role)})`)));
-    node.append(el('div', { class: 'form-row' }, el('label', {}, 'Ответственный'), mgrSel));
+    // Привязка к проекту — если проект помечен как производственный, доход
+    // этого подряда попадёт в P&L производства.
+    const projSel = el('select', {}, el('option', { value: '' }, '— без проекта —'),
+      ...projects.map((p) => el('option', { value: String(p.id) }, `${p.name}${p.is_production ? ' 🏭' : ''}`)));
+    node.append(
+      el('div', { class: 'form-row' }, el('label', {}, 'Ответственный'), mgrSel),
+      el('div', { class: 'form-row' }, el('label', {}, 'Проект'), projSel),
+    );
 
     await openModal('Новый подряд', node, {
       primaryLabel: 'Создать',
@@ -11020,6 +11034,7 @@ export async function renderContracts(main) {
         if (!data.client_name) { toast('Имя клиента обязательно', 'error'); return false; }
         if (data.total_amount) data.total_amount = Number(data.total_amount);
         if (mgrSel.value) data.manager_id = Number(mgrSel.value);
+        if (projSel.value) data.project_id = Number(projSel.value);
         await api.create('contracts', data);
         toast('Подряд создан', 'success');
         await reload();
@@ -11031,5 +11046,217 @@ export async function renderContracts(main) {
     el('div', { class: 'spacer' }),
     canEditContracts() ? el('button', { class: 'btn btn-primary', onClick: openCreate }, '+ Новый подряд') : null,
   ), tableArea);
+  reload();
+}
+
+// --- 💰 Доходность производства (P&L) ---------------------------------------
+
+export async function renderProductionPL(main) {
+  main.innerHTML = '';
+  main.append(
+    el('h1', { class: 'page-title' }, '💰 Доходность производства'),
+    el('div', { class: 'page-subtitle' },
+      'Доход = подтверждённые платежи по заказам и оплаты подрядов с производственным проектом. ',
+      'Расход = материалы/труд/прочее по подрядам производства + ручные расходы за период.',
+    ),
+  );
+
+  // Период по умолчанию — текущий месяц.
+  const today = new Date();
+  const monthFirst = new Date(today.getFullYear(), today.getMonth(), 1).toISOString().slice(0, 10);
+  const todayStr = today.toISOString().slice(0, 10);
+  const state = { from: monthFirst, to: todayStr };
+
+  const fromI = el('input', { type: 'date', value: state.from });
+  const toI = el('input', { type: 'date', value: state.to });
+  const reloadBtn = el('button', { class: 'btn btn-primary' }, '↻ Пересчитать');
+
+  const body = el('div');
+  function setBusy(v) {
+    reloadBtn.disabled = v;
+    reloadBtn.textContent = v ? '⏳ Считаю…' : '↻ Пересчитать';
+  }
+
+  async function reload() {
+    state.from = fromI.value || monthFirst;
+    state.to = toI.value || todayStr;
+    setBusy(true);
+    clear(body);
+    body.append(el('div', { class: 'loading' }, 'Загрузка…'));
+    try {
+      const [pl, exp] = await Promise.all([
+        api.productionPL(state.from, state.to),
+        api.productionExpenses(state.from, state.to),
+      ]);
+      renderPL(pl, exp);
+    } catch (e) {
+      clear(body);
+      body.append(el('div', { class: 'card error' }, e.message || 'Ошибка'));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function statTile(title, value, color) {
+    return el('div', {
+      style: {
+        flex: 1, minWidth: '180px', padding: '16px',
+        background: '#fff', border: '1px solid var(--border)', borderRadius: '8px',
+      },
+    },
+      el('div', { style: { fontSize: '12px', color: 'var(--text-muted)' } }, title),
+      el('div', { style: { fontSize: '22px', fontWeight: 700, marginTop: '4px', color } }, fmtMoney(value, 'RUB')),
+    );
+  }
+
+  function renderPL(pl, exp) {
+    clear(body);
+
+    // Случай 1: нет производственных проектов.
+    if (!pl.production_projects?.length) {
+      body.append(emptyState({
+        icon: '🏭',
+        title: 'Нет производственных проектов',
+        description: 'В разделе «Настройки → Проекты» отметьте нужный проект флажком «🏭 Производственный». Доход с его сделок/заказов/подрядов будет попадать сюда.',
+      }));
+      return;
+    }
+
+    // KPI сверху: доход, расход, прибыль.
+    body.append(
+      el('div', { style: { display: 'flex', gap: '12px', flexWrap: 'wrap', marginBottom: '16px' } },
+        statTile('Доход за период', pl.income.total, '#15803d'),
+        statTile('Расход за период', pl.expense.total, '#b91c1c'),
+        statTile('Прибыль', pl.profit, pl.profit >= 0 ? '#15803d' : '#b91c1c'),
+      ),
+    );
+
+    // Доходы по источникам и по проектам.
+    body.append(
+      el('div', { class: 'card', style: { marginBottom: '12px' } },
+        el('h3', { style: { marginTop: 0 } }, '📈 Доходы'),
+        el('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '12px' } },
+          el('div', {},
+            el('div', { class: 'k' }, 'По заказам с проектом'),
+            el('div', { style: { fontWeight: 600 } }, fmtMoney(pl.income.by_source.orders, 'RUB')),
+          ),
+          el('div', {},
+            el('div', { class: 'k' }, 'По подрядам с проектом'),
+            el('div', { style: { fontWeight: 600 } }, fmtMoney(pl.income.by_source.contracts, 'RUB')),
+          ),
+        ),
+        el('table', { class: 'data' },
+          el('thead', {}, el('tr', {}, el('th', {}, 'Проект'), el('th', { style: { textAlign: 'right' } }, 'Доход'))),
+          el('tbody', {},
+            ...pl.income.by_project.map((p) => el('tr', {},
+              el('td', {}, el('span', { class: 'project-sticker', style: { background: p.color } }, p.name)),
+              el('td', { style: { textAlign: 'right', fontWeight: 600 } }, fmtMoney(p.income, 'RUB')),
+            )),
+          ),
+        ),
+      ),
+    );
+
+    // Расходы.
+    body.append(
+      el('div', { class: 'card', style: { marginBottom: '12px' } },
+        el('h3', { style: { marginTop: 0 } }, '📉 Расходы'),
+        el('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '12px' } },
+          el('div', {},
+            el('div', { class: 'k' }, 'По подрядам (материалы/труд/прочее)'),
+            el('div', { style: { fontWeight: 600 } }, fmtMoney(pl.expense.by_source.contract_costs, 'RUB')),
+          ),
+          el('div', {},
+            el('div', { class: 'k' }, 'Ручные расходы'),
+            el('div', { style: { fontWeight: 600 } }, fmtMoney(pl.expense.by_source.manual, 'RUB')),
+          ),
+        ),
+      ),
+    );
+
+    // Ручные расходы — список + форма добавления.
+    const expBlock = el('div', { class: 'card' },
+      el('h3', { style: { marginTop: 0 } }, '🧾 Ручные расходы'),
+      el('div', { class: 'page-subtitle' }, 'ФОТ, аренда, оборудование, налоги, прочее — то, что не списывается через подряд.'),
+    );
+
+    const addAmountI = el('input', { type: 'number', min: '0', step: '0.01', placeholder: 'Сумма ₽' });
+    const addCategoryI = el('input', { type: 'text', placeholder: 'Категория (ФОТ, аренда, …)' });
+    const addDescI = el('input', { type: 'text', placeholder: 'Описание (опц.)' });
+    const addDateI = el('input', { type: 'date', value: todayStr });
+    const addBtn = el('button', { class: 'btn btn-primary' }, '+ Добавить расход');
+    addBtn.addEventListener('click', async () => {
+      const amount = Number(addAmountI.value);
+      if (!amount) { toast('Введите сумму', 'error'); return; }
+      addBtn.disabled = true;
+      try {
+        await api.createProductionExpense({
+          amount,
+          category: addCategoryI.value || null,
+          description: addDescI.value || null,
+          spent_at: addDateI.value || null,
+        });
+        toast('Добавлено', 'success');
+        addAmountI.value = ''; addCategoryI.value = ''; addDescI.value = '';
+        reload();
+      } catch (e) { toast(e.message, 'error'); } finally { addBtn.disabled = false; }
+    });
+    expBlock.append(
+      el('div', { style: { display: 'flex', gap: '6px', flexWrap: 'wrap', alignItems: 'center', marginTop: '8px', marginBottom: '12px' } },
+        addDateI, addAmountI, addCategoryI, addDescI, addBtn,
+      ),
+    );
+
+    if (!exp.data?.length) {
+      expBlock.append(el('div', { class: 'muted', style: { padding: '12px' } }, 'За период расходов не было.'));
+    } else {
+      expBlock.append(
+        el('table', { class: 'data' },
+          el('thead', {}, el('tr', {},
+            el('th', {}, 'Дата'),
+            el('th', {}, 'Сумма'),
+            el('th', {}, 'Категория'),
+            el('th', {}, 'Описание'),
+            el('th', {}, 'Кто внёс'),
+            el('th', {}, ''),
+          )),
+          el('tbody', {},
+            ...exp.data.map((r) => el('tr', {},
+              el('td', {}, fmtDate(r.spent_at)),
+              el('td', { style: { fontWeight: 600 } }, fmtMoney(r.amount, 'RUB')),
+              el('td', {}, r.category || '—'),
+              el('td', {}, r.description || '—'),
+              el('td', {}, r.recorded_by_name || '—'),
+              el('td', { style: { textAlign: 'right' } },
+                el('button', { class: 'btn btn-sm btn-danger', onClick: async () => {
+                  if (!(await confirm('Удалить запись расхода?'))) return;
+                  try { await api.deleteProductionExpense(r.id); toast('Удалено', 'success'); reload(); }
+                  catch (e) { toast(e.message, 'error'); }
+                }}, '🗑'),
+              ),
+            )),
+          ),
+        ),
+        el('div', { style: { marginTop: '8px', textAlign: 'right', fontSize: '13px' } },
+          'Итого за период: ', el('b', {}, fmtMoney(exp.total || 0, 'RUB')),
+        ),
+      );
+    }
+
+    body.append(expBlock);
+  }
+
+  reloadBtn.addEventListener('click', reload);
+  fromI.addEventListener('change', reload);
+  toI.addEventListener('change', reload);
+
+  main.append(
+    el('div', { class: 'toolbar', style: { gap: '8px' } },
+      el('label', {}, 'С '), fromI,
+      el('label', {}, 'по '), toI,
+      reloadBtn,
+    ),
+    body,
+  );
   reload();
 }

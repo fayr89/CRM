@@ -180,6 +180,7 @@
 | `renderProcessingPlans` | `#/processing-plans` | **PROD** — техкарты, инлайн-список материалов с qty, показ себестоимости 1 ед |
 | `renderProductionOrders` | `#/production-orders` | **PROD** — план выпуска, утверждение, ввод факта по дням |
 | `renderContracts` | `#/contracts` | **PROD** — подряды, чипы этапов (тап = закрыть), материалы/труд/прочие расходы, маржа |
+| `renderProductionPL` | `#/production-pl` | **PROD** — P&L: доход (платежи по orders + paid_amount подрядов с production-проектом) − расход (контрактные затраты + ручные `production_expenses`) |
 
 **Внутренние helper-функции в `views.js`** (не экспортируются, но важные):
 - `openOrderForm(order, onSaved, opts)` — модал создания/редактирования заказа.
@@ -390,7 +391,6 @@ if (payload.act && user.role === 'admin' && payload.act !== 'admin') {
   `labor_total = labor_minutes × labor_rate`.
 
 **Что ещё НЕ сделано (следующие итерации):**
-- UI (страницы материалов, техкарт, подрядов, мобильный экран мастера).
 - Операция «Выполнили заказ» → создание `entity/processing` в МойСклад
   через `ms_jobs` (новый job-тип `processing.create`). Соответственно
   списание материалов и оприходование готовых товаров на внутренний склад.
@@ -399,8 +399,21 @@ if (payload.act && user.role === 'admin' && payload.act !== 'admin') {
 - Внутренний склад производства — отдельная настройка
   `app_settings.production.internal_warehouse` (создать в админке/Интеграциях).
 - Подзаказы / связь подряда с production_orders (если изготовление под подряд).
-- P&L дашборд директора производства (агрегат по подрядам + центр затрат
-  по товарам).
+- Мобильный экран мастера (упрощённый, без списков).
+
+**Доходность производства (P&L):**
+- `projects.is_production` (BOOL) — флаг «производственный проект». Ставится
+  в Настройки → Проекты. Доход с его сделок/заказов/подрядов попадает в P&L.
+- `contracts.project_id` — привязка подряда к проекту (форма создания подряда).
+- `production_expenses` (id, amount, category, description, spent_at,
+  recorded_by) — ручные расходы (ФОТ, аренда, оборудование, налоги).
+- `GET /api/production/p-and-l?from=&to=` — агрегат: доход (payments с
+  `status='confirmed'` по orders с production-project + paid_amount
+  contracts с production-project), расход (`contract_materials/labor/other`
+  + `production_expenses`), прибыль = доход − расход.
+- `GET/POST/PATCH/DELETE /api/production/expenses` — управление ручными расходами.
+- UI: `renderProductionPL` (`#/production-pl`) — KPI-плитки, разбивка по проектам
+  и источникам, форма добавления ручного расхода, список с возможностью удалить.
 
 **Решения, принятые без согласования (можно пересмотреть):**
 - Внутренний склад производства — настройка в `app_settings`, дефолт по имени `'Производство'`.
