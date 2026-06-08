@@ -149,4 +149,80 @@ router.post('/feedback/:id/messages', asyncHandler(async (req, res) => {
   res.json({ ok: true });
 }));
 
+// GET-based write routes (Vercel MCP tool is GET-only)
+// GET /api/diag/daily-run/w/fb-msg?s=SECRET&id=N&text=...
+router.get('/w/fb-msg', asyncHandler(async (req, res) => {
+  const id = Number(req.query.id);
+  const text = String(req.query.text || '');
+  if (!id || !text) { res.status(400).json({ error: 'id and text required' }); return; }
+  await db.run(
+    `INSERT INTO feedback_messages (feedback_id, user_id, user_name, role, text)
+     VALUES ($1, NULL, 'AI ассистент', 'admin', $2)`,
+    id, text,
+  );
+  res.json({ ok: true });
+}));
+
+// GET /api/diag/daily-run/w/fb-status?s=SECRET&id=N&status=...&admin_reply=...
+router.get('/w/fb-status', asyncHandler(async (req, res) => {
+  const id = Number(req.query.id);
+  const newStatus = String(req.query.status || '');
+  const adminReply = req.query.admin_reply ? String(req.query.admin_reply) : null;
+  if (!id || !newStatus) { res.status(400).json({ error: 'id and status required' }); return; }
+  const cur = await db.get('SELECT * FROM feedback WHERE id = $1', id);
+  if (!cur) { res.status(404).json({ error: 'not found' }); return; }
+  const justResolved = (newStatus === 'awaiting_approval' || newStatus === 'closed')
+    && cur.status !== 'awaiting_approval' && cur.status !== 'closed';
+  await db.run(
+    `UPDATE feedback SET
+       status = $1,
+       admin_reply = COALESCE($2, admin_reply),
+       resolved_at = ${justResolved ? 'NOW()' : 'resolved_at'},
+       updated_at = NOW()
+     WHERE id = $3`,
+    newStatus, adminReply, id,
+  );
+  res.json(await db.get('SELECT id, status, admin_reply FROM feedback WHERE id = $1', id));
+}));
+
+// GET /api/diag/daily-run/w/proposal-msg?s=SECRET&id=N&text=...
+router.get('/w/proposal-msg', asyncHandler(async (req, res) => {
+  const id = Number(req.query.id);
+  const text = String(req.query.text || '');
+  if (!id || !text) { res.status(400).json({ error: 'id and text required' }); return; }
+  await db.run(
+    `INSERT INTO ai_proposal_messages (proposal_id, user_name, role, text, created_at)
+     VALUES ($1, 'AI ассистент', 'ai', $2, NOW())`,
+    id, text,
+  );
+  res.json({ ok: true });
+}));
+
+// GET /api/diag/daily-run/w/proposal-status?s=SECRET&id=N&decision=done
+router.get('/w/proposal-status', asyncHandler(async (req, res) => {
+  const id = Number(req.query.id);
+  const decision = String(req.query.decision || '');
+  if (!id || !decision) { res.status(400).json({ error: 'id and decision required' }); return; }
+  await db.run(`UPDATE ai_proposals SET status = $1, updated_at = NOW() WHERE id = $2`, decision, id);
+  res.json(await db.get('SELECT id, status FROM ai_proposals WHERE id = $1', id));
+}));
+
+// GET /api/diag/daily-run/w/new-proposal?s=SECRET&title=...&summary=...&category=...&risk=...&feedback_id=...
+router.get('/w/new-proposal', asyncHandler(async (req, res) => {
+  const q = req.query;
+  const row = await db.get(
+    `INSERT INTO ai_proposals (title, summary, category, risk, source, feedback_id, proposed_changes, status, created_at, updated_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, 'pending', NOW(), NOW()) RETURNING id, title, status`,
+    String(q.title || ''),
+    String(q.summary || ''),
+    q.category || 'feature',
+    q.risk || 'medium',
+    'daily-run-2026-06-08-v7',
+    q.feedback_id ? Number(q.feedback_id) : null,
+    JSON.stringify(q.proposed_changes ? JSON.parse(q.proposed_changes) : []),
+  );
+  res.status(201).json(row);
+}));
+
 export default router;
+
