@@ -24,6 +24,7 @@ function dbHostInfo() {
   }
 }
 
+export default async function handler(req, res) {
   if (!initPromise) initPromise = ensureInitialized();
   try {
     await initPromise;
