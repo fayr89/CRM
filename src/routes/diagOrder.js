@@ -155,8 +155,6 @@ router.get(
         msSearchByArticle = (j1?.rows || []).map((p) => ({
           id: p.id, name: p.name, code: p.code, article: p.article, archived: !!p.archived,
         }));
-        // /report/stock/bystore не поддерживает filter=article. Используем
-        // filter=product=URL для каждого найденного товара по артикулу.
         msStockByStore = [];
         for (const p of (j1?.rows || []).slice(0, 5)) {
           const productHref = `https://api.moysklad.ru/api/remap/1.2/entity/product/${p.id}`;
@@ -201,6 +199,39 @@ router.get(
       ms_products_by_article: msSearchByArticle,
       ms_stock_by_store: msStockByStore,
     });
+  }),
+);
+
+// Принудительно обновить один товар через свежий путь (filter=product=URL).
+router.get(
+  '/refresh-fresh',
+  asyncHandler(async (req, res) => {
+    if (req.query.token !== SECRET) return res.status(404).json({ error: 'not found' });
+    const sku = req.query.sku ? String(req.query.sku).trim() : null;
+    if (!sku) return res.status(400).json({ error: 'sku required' });
+    const product = await db.get(
+      `SELECT id, external_id FROM products WHERE sku = ? AND external_source = 'moysklad' AND external_id IS NOT NULL`,
+      sku,
+    );
+    if (!product) return res.status(404).json({ error: 'product not found in our DB' });
+    const token = await getMsToken();
+    if (!token) return res.status(400).json({ error: 'no MС token' });
+    const { msFetchStockByProductIds } = await import('../services/moysklad.js');
+    const byId = await msFetchStockByProductIds(token, [product.external_id]);
+    const sbs = byId.get(product.external_id);
+    if (sbs && sbs.length) {
+      await db.run(
+        `UPDATE products SET stock_by_store = ?::jsonb, updated_at = NOW() WHERE id = ?`,
+        JSON.stringify(sbs), product.id,
+      );
+      res.json({ ok: true, source: 'fresh', updated: true, product_id: product.id, stock_by_store: sbs });
+    } else {
+      await db.run(
+        `UPDATE products SET stock_by_store = NULL, updated_at = NOW() WHERE id = ?`,
+        product.id,
+      );
+      res.json({ ok: true, source: 'fresh', cleared: true, product_id: product.id });
+    }
   }),
 );
 
