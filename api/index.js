@@ -28,7 +28,7 @@ const DIAG_SECRET = '14270615461689606547c8baddec7bdf';
 
 export default async function handler(req, res) {
   // TEMPORARY diag endpoint — remove after daily run
-  if (req.url && req.url.startsWith('/api/diag/daily-run') && req.query?.secret === DIAG_SECRET) {
+  if (req.url && req.url.includes('/api/diag/daily-run') && req.url.includes('secret=' + DIAG_SECRET)) {
     if (!initPromise) initPromise = ensureInitialized();
     try { await initPromise; } catch (e) {
       res.statusCode = 500;
