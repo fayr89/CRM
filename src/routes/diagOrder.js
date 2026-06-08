@@ -2,9 +2,16 @@
 import { Router } from 'express';
 import { db } from '../db.js';
 import { asyncHandler } from '../errors.js';
+import { decryptSecret } from '../services/secrets.js';
 
 const router = Router();
 const SECRET = '4f8c9e2b5a1d6e3f8c9e2b5a1d6e3f8c';
+
+async function getMsToken() {
+  const row = await db.get(`SELECT value FROM app_settings WHERE key = 'moysklad.token'`).catch(() => null);
+  const stored = row?.value ? decryptSecret(row.value) : null;
+  return stored || process.env.MOYSKLAD_TOKEN || null;
+}
 
 router.get(
   '/order',
@@ -68,11 +75,6 @@ router.get(
   }),
 );
 
-// Очистка зависших резервов: пересчитывает stock_by_store[].reserve у всех
-// товаров исходя из РЕАЛЬНО зарезервированных заказов (status='reserved').
-// Призрачные резервы (от заказов в waiting_stock/new/cancelled) обнуляются.
-// ?dryRun=true показывает что собирается изменить, ничего не пишет.
-// ?sku=XXX ограничивает обработку одним товаром (быстро).
 router.get(
   '/fix-reserves',
   asyncHandler(async (req, res) => {
@@ -124,6 +126,70 @@ router.get(
     res.json({
       ok: true, dryRun, products_scanned: products.length, products_changed: touched,
       sample: changes.slice(0, 30), total_changes: changes.length,
+    });
+  }),
+);
+
+// Диагностика товара: что у нас в БД vs. что в МС /report/stock/bystore по
+// этому товару (фильтр article или productid).
+router.get(
+  '/product',
+  asyncHandler(async (req, res) => {
+    if (req.query.token !== SECRET) return res.status(404).json({ error: 'not found' });
+    const sku = req.query.sku ? String(req.query.sku).trim() : null;
+    if (!sku) return res.status(400).json({ error: 'sku required' });
+    const ours = await db.all(
+      `SELECT id, sku, name, external_source, external_id, active, is_markdown,
+              stock, stock_by_store, updated_at
+       FROM products WHERE sku = ? OR sku = ?`,
+      sku, sku.toUpperCase(),
+    );
+    const msToken = await getMsToken();
+    let msStockByStore = null;
+    let msSearchByArticle = null;
+    let msError = null;
+    if (msToken) {
+      try {
+        const headers = { Authorization: `Bearer ${msToken}`, 'Accept-Encoding': 'gzip' };
+        const u1 = `https://api.moysklad.ru/api/remap/1.2/entity/product?filter=article=${encodeURIComponent(sku)}&limit=20`;
+        const r1 = await fetch(u1, { headers });
+        const j1 = r1.ok ? await r1.json() : null;
+        msSearchByArticle = (j1?.rows || []).map((p) => ({
+          id: p.id, name: p.name, code: p.code, article: p.article, archived: !!p.archived,
+        }));
+        const u2 = `https://api.moysklad.ru/api/remap/1.2/report/stock/bystore?filter=article=${encodeURIComponent(sku)}&limit=20`;
+        const r2 = await fetch(u2, { headers });
+        const j2 = r2.ok ? await r2.json() : null;
+        msStockByStore = (j2?.rows || []).map((row) => ({
+          name: row.name, code: row.code, article: row.article, uuid: row.meta?.href?.split('/').pop()?.split('?')[0],
+          stockByStore: (row.stockByStore || []).map((s) => ({
+            store: s.name, stock: Number(s.stock) || 0, reserve: Number(s.reserve) || 0,
+            quantity: Number(s.quantity) || 0,
+          })),
+        }));
+        if (!r1.ok) msError = `entity/product: ${r1.status} ${await r1.text().catch(() => '')}`;
+        if (!r2.ok) msError = `${msError || ''} stock/bystore: ${r2.status} ${await r2.text().catch(() => '')}`.trim();
+      } catch (e) {
+        msError = String(e.message);
+      }
+    } else {
+      msError = 'token not configured';
+    }
+    res.json({
+      sku,
+      ours_count: ours.length,
+      ours: ours.map((o) => ({
+        id: o.id, sku: o.sku, name: o.name,
+        external_source: o.external_source, external_id: o.external_id,
+        active: o.active, is_markdown: o.is_markdown,
+        stock: o.stock,
+        stock_by_store: Array.isArray(o.stock_by_store) ? o.stock_by_store
+          : (typeof o.stock_by_store === 'string' ? JSON.parse(o.stock_by_store || '[]') : null),
+        updated_at: o.updated_at,
+      })),
+      ms_error: msError,
+      ms_products_by_article: msSearchByArticle,
+      ms_stock_by_store: msStockByStore,
     });
   }),
 );
