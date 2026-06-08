@@ -130,8 +130,6 @@ router.get(
   }),
 );
 
-// Диагностика товара: что у нас в БД vs. что в МС /report/stock/bystore по
-// этому товару (фильтр article или productid).
 router.get(
   '/product',
   asyncHandler(async (req, res) => {
@@ -157,18 +155,30 @@ router.get(
         msSearchByArticle = (j1?.rows || []).map((p) => ({
           id: p.id, name: p.name, code: p.code, article: p.article, archived: !!p.archived,
         }));
-        const u2 = `https://api.moysklad.ru/api/remap/1.2/report/stock/bystore?filter=article=${encodeURIComponent(sku)}&limit=20`;
-        const r2 = await fetch(u2, { headers });
-        const j2 = r2.ok ? await r2.json() : null;
-        msStockByStore = (j2?.rows || []).map((row) => ({
-          name: row.name, code: row.code, article: row.article, uuid: row.meta?.href?.split('/').pop()?.split('?')[0],
-          stockByStore: (row.stockByStore || []).map((s) => ({
-            store: s.name, stock: Number(s.stock) || 0, reserve: Number(s.reserve) || 0,
-            quantity: Number(s.quantity) || 0,
-          })),
-        }));
+        // /report/stock/bystore не поддерживает filter=article. Используем
+        // filter=product=URL для каждого найденного товара по артикулу.
+        msStockByStore = [];
+        for (const p of (j1?.rows || []).slice(0, 5)) {
+          const productHref = `https://api.moysklad.ru/api/remap/1.2/entity/product/${p.id}`;
+          const u2 = `https://api.moysklad.ru/api/remap/1.2/report/stock/bystore?filter=product=${encodeURIComponent(productHref)}&limit=10`;
+          const r2 = await fetch(u2, { headers });
+          if (!r2.ok) {
+            msError = `${msError || ''} stock/bystore for ${p.id}: ${r2.status} ${await r2.text().catch(() => '')}`.trim();
+            continue;
+          }
+          const j2 = await r2.json();
+          for (const row of (j2?.rows || [])) {
+            msStockByStore.push({
+              name: row.name, code: row.code, article: row.article,
+              uuid: row.meta?.href?.split('/').pop()?.split('?')[0],
+              stockByStore: (row.stockByStore || []).map((s) => ({
+                store: s.name, stock: Number(s.stock) || 0, reserve: Number(s.reserve) || 0,
+                quantity: Number(s.quantity) || 0,
+              })),
+            });
+          }
+        }
         if (!r1.ok) msError = `entity/product: ${r1.status} ${await r1.text().catch(() => '')}`;
-        if (!r2.ok) msError = `${msError || ''} stock/bystore: ${r2.status} ${await r2.text().catch(() => '')}`.trim();
       } catch (e) {
         msError = String(e.message);
       }
