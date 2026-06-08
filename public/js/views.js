@@ -8629,6 +8629,20 @@ function renderContent(container, schedule, readyList, canEdit, reload) {
 
     function makeGroupTable(list) {
       const clonedHead = headRow.cloneNode(true);
+      // cloneNode не копирует event listeners — навешиваем заново на скопированный чекбокс
+      if (canEdit) {
+        const sa = clonedHead.querySelector('input[type="checkbox"]');
+        if (sa) {
+          sa.addEventListener('change', () => {
+            sa.closest('table').querySelectorAll('.ship-row-cb').forEach((cb) => {
+              cb.checked = sa.checked;
+              const id = Number(cb.dataset.id);
+              if (sa.checked) selected.add(id);
+              else selected.delete(id);
+            });
+          });
+        }
+      }
       return el('div', { class: 'table-wrap' },
         el('table', { class: 'data' }, el('thead', {}, clonedHead), el('tbody', {}, ...makeRows(list))),
       );
