@@ -43,6 +43,8 @@ import contractsRoutes from './routes/contracts.js';
 import productionPLRoutes from './routes/productionPL.js';
 import productionSettingsRoutes from './routes/productionSettings.js';
 import diagOrderRoutes from './routes/diagOrder.js'; // TEMP
+import { authenticate as authMw } from './auth.js';
+import { importMoyskladStoresFresh } from './routes/stockSyncFresh.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = path.resolve(__dirname, '..', 'public');
@@ -163,6 +165,11 @@ export function createApp({ serveStatic = true } = {}) {
   app.use('/api/webhooks', webhooksRoutes);
   app.use('/api/notifications', notificationsRoutes);
   app.use('/api/search', searchRoutes);
+  // Перехват «Обновить остатки»: основной хендлер тянет общий отчёт МС, который
+  // кешируется до нескольких часов → данные не успевают за реальностью. Наша
+  // версия дёргает /report/stock/bystore?filter=product=URL партиями по 50 — МС
+  // не кеширует адресный запрос, остатки всегда актуальные. Фронт не меняется.
+  app.post('/api/products/import/moysklad-stores', authMw, importMoyskladStoresFresh);
   app.use('/api/products', productsRoutes);
   app.use('/api/pricing', pricingRoutes);
   app.use('/api/warehouse', warehouseRoutes);
