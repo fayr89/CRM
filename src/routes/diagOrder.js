@@ -1,4 +1,4 @@
-// TEMP: разовая диагностика заказа #199 (зависший резерв). Удалить после.
+// TEMP: разовая диагностика заказа #199 + очистка зависших резервов. Удалить после.
 import { Router } from 'express';
 import { db } from '../db.js';
 import { asyncHandler } from '../errors.js';
@@ -37,7 +37,6 @@ router.get(
        FROM payments WHERE order_id=? ORDER BY created_at ASC`,
       id,
     );
-    // Сколько резерва висит на товарах заказа в указанном складе.
     const wh = (order.warehouse || '').trim();
     const stockBreakdown = items.filter((i) => i.product_id).map((it) => {
       const sbs = Array.isArray(it.stock_by_store) ? it.stock_by_store
@@ -65,6 +64,63 @@ router.get(
       })),
       ms_jobs: msJobs,
       payments,
+    });
+  }),
+);
+
+// Очистка зависших резервов: пересчитывает stock_by_store[].reserve у всех
+// товаров исходя из РЕАЛЬНО зарезервированных заказов (status='reserved').
+// Призрачные резервы (от заказов в waiting_stock/new/cancelled) обнуляются.
+// ?dryRun=true показывает что собирается изменить, ничего не пишет.
+router.get(
+  '/fix-reserves',
+  asyncHandler(async (req, res) => {
+    if (req.query.token !== SECRET) return res.status(404).json({ error: 'not found' });
+    const dryRun = req.query.dryRun === 'true' || req.query.dryRun === '1';
+    const products = await db.all(
+      `SELECT id, name, sku, stock_by_store FROM products
+       WHERE stock_by_store IS NOT NULL AND active = TRUE`,
+    );
+    const changes = [];
+    let touched = 0;
+    for (const p of products) {
+      const sbs = Array.isArray(p.stock_by_store) ? p.stock_by_store
+        : (typeof p.stock_by_store === 'string' ? JSON.parse(p.stock_by_store || '[]') : []);
+      if (!sbs.length) continue;
+      const reservedRows = await db.all(
+        `SELECT o.warehouse AS wh, SUM(oi.quantity)::int AS qty
+         FROM order_items oi JOIN orders o ON o.id = oi.order_id
+         WHERE oi.product_id = ? AND o.status = 'reserved'
+           AND o.warehouse IS NOT NULL AND o.warehouse <> ''
+         GROUP BY o.warehouse`,
+        p.id,
+      );
+      const realByWh = Object.fromEntries(reservedRows.map((r) => [String(r.wh).trim(), Number(r.qty) || 0]));
+      const diffs = [];
+      const newSbs = sbs.map((row) => {
+        const wh = String(row.store || '').trim();
+        const real = realByWh[wh] || 0;
+        const cur = Number(row.reserve || 0);
+        if (cur !== real) {
+          diffs.push({ store: wh, was: cur, now: real });
+          return { ...row, reserve: real };
+        }
+        return row;
+      });
+      if (diffs.length) {
+        if (!dryRun) {
+          await db.run(
+            `UPDATE products SET stock_by_store = ?::jsonb, updated_at = NOW() WHERE id = ?`,
+            JSON.stringify(newSbs), p.id,
+          );
+        }
+        touched += 1;
+        changes.push({ product_id: p.id, name: p.name, sku: p.sku, diffs });
+      }
+    }
+    res.json({
+      ok: true, dryRun, products_scanned: products.length, products_changed: touched,
+      sample: changes.slice(0, 30), total_changes: changes.length,
     });
   }),
 );

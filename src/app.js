@@ -134,6 +134,27 @@ export function createApp({ serveStatic = true } = {}) {
   app.use('/api/notes', notesRoutes);
   app.use('/api/dashboard', dashboardRoutes);
   app.use('/api/invitations', invitationsRoutes);
+  // Патч на mark-waiting: основной хендлер забывал снять локальный резерв на
+  // товаре при переходе из reserved → waiting_stock. Перехватываем ДО маршрута:
+  // если статус был reserved, снимаем локальный резерв здесь и пускаем дальше.
+  // Основной хендлер потом сменит статус (и больше с резервом ничего не делает).
+  app.post('/api/orders/:id/mark-waiting', async (req, res, next) => {
+    try {
+      const { db } = await import('./db.js');
+      const { applyLocalStockReserveDelta } = await import('./services/ms-orders.js');
+      const row = await db.get('SELECT status FROM orders WHERE id = ?', req.params.id);
+      if (row?.status === 'reserved') {
+        await applyLocalStockReserveDelta(req.params.id, 0, -1).catch((e) => {
+          // eslint-disable-next-line no-console
+          console.warn('[mark-waiting patch] applyLocalStockReserveDelta failed:', e?.message);
+        });
+      }
+    } catch (e) {
+      // eslint-disable-next-line no-console
+      console.warn('[mark-waiting patch] guard failed:', e?.message);
+    }
+    next();
+  });
   app.use('/api/orders', ordersRoutes);
   app.use('/api/payments', paymentsRoutes);
   app.use('/api/cashbox', cashboxRoutes);
