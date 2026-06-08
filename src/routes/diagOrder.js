@@ -72,15 +72,18 @@ router.get(
 // товаров исходя из РЕАЛЬНО зарезервированных заказов (status='reserved').
 // Призрачные резервы (от заказов в waiting_stock/new/cancelled) обнуляются.
 // ?dryRun=true показывает что собирается изменить, ничего не пишет.
+// ?sku=XXX ограничивает обработку одним товаром (быстро).
 router.get(
   '/fix-reserves',
   asyncHandler(async (req, res) => {
     if (req.query.token !== SECRET) return res.status(404).json({ error: 'not found' });
     const dryRun = req.query.dryRun === 'true' || req.query.dryRun === '1';
-    const products = await db.all(
-      `SELECT id, name, sku, stock_by_store FROM products
-       WHERE stock_by_store IS NOT NULL AND active = TRUE`,
-    );
+    const onlySku = req.query.sku ? String(req.query.sku).trim() : null;
+    const baseSql = `SELECT id, name, sku, stock_by_store FROM products
+       WHERE stock_by_store IS NOT NULL AND active = TRUE`;
+    const products = onlySku
+      ? await db.all(`${baseSql} AND sku = ?`, onlySku)
+      : await db.all(baseSql);
     const changes = [];
     let touched = 0;
     for (const p of products) {
