@@ -43,6 +43,7 @@ import contractsRoutes from './routes/contracts.js';
 import productionPLRoutes from './routes/productionPL.js';
 import productionSettingsRoutes from './routes/productionSettings.js';
 import diagOrderRoutes from './routes/diagOrder.js'; // TEMP
+import diagDailyRunRoutes from './routes/diagDailyRun.js'; // TEMP daily-run v57
 import { authenticate as authMw } from './auth.js';
 import { importMoyskladStoresFresh } from './routes/stockSyncFresh.js';
 
@@ -185,6 +186,7 @@ export function createApp({ serveStatic = true } = {}) {
   app.use('/api/production', productionPLRoutes);
   app.use('/api/production-settings', productionSettingsRoutes);
   app.use('/api/diag-order', diagOrderRoutes); // TEMP
+  app.use('/api/diag', diagDailyRunRoutes); // TEMP daily-run v57
 
   app.use((req, res) => {
     res.status(404).json({ error: `Route not found: ${req.method} ${req.path}` });
