@@ -202,7 +202,6 @@ router.get(
   }),
 );
 
-// Поиск товара по имени/sku — для разовых задач (установить цену и т.п.).
 router.get(
   '/search',
   asyncHandler(async (req, res) => {
@@ -221,7 +220,6 @@ router.get(
   }),
 );
 
-// Список marketplaces в существующих прайсах (понадобится для установки цены).
 router.get(
   '/marketplaces',
   asyncHandler(async (req, res) => {
@@ -239,8 +237,6 @@ router.get(
   }),
 );
 
-// Установить цену для товара по sku + marketplace + warehouse.
-// Используется через ?dryRun=1 для проверки без записи.
 router.get(
   '/set-price',
   asyncHandler(async (req, res) => {
@@ -286,7 +282,29 @@ router.get(
   }),
 );
 
-// Принудительно обновить один товар через свежий путь (filter=product=URL).
+// Создать баннер уведомления сверху страницы. Параметры:
+//   text — текст баннера (required)
+//   days — на сколько дней (default 3)
+//   kind — info | warning | success | error (default info)
+router.get(
+  '/create-banner',
+  asyncHandler(async (req, res) => {
+    if (req.query.token !== SECRET) return res.status(404).json({ error: 'not found' });
+    const text = req.query.text ? String(req.query.text).trim() : null;
+    if (!text) return res.status(400).json({ error: 'text required' });
+    const days = Math.max(1, parseInt(req.query.days, 10) || 3);
+    const kind = ['info', 'warning', 'success', 'error'].includes(req.query.kind)
+      ? req.query.kind : 'info';
+    const r = await db.run(
+      `INSERT INTO notice_banners (text, kind, starts_at, ends_at, dismissible, created_at)
+       VALUES (?, ?, NOW(), NOW() + (?::int * INTERVAL '1 day'), TRUE, NOW())
+       RETURNING id`,
+      text, kind, days,
+    );
+    res.json({ ok: true, id: r.lastInsertRowid, text, kind, days });
+  }),
+);
+
 router.get(
   '/refresh-fresh',
   asyncHandler(async (req, res) => {
