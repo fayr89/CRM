@@ -48,7 +48,7 @@ router.get(
 
     // Feedback: open + awaiting_approval
     const feedback = await db.all(
-      `SELECT f.id, f.subject, f.description, f.status, f.user_id,
+      `SELECT f.id, f.subject, f.message, f.category, f.status, f.user_id,
               u.name AS user_name, u.email AS user_email,
               f.admin_reply, f.created_at, f.updated_at
        FROM feedback f
