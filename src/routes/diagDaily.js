@@ -81,9 +81,11 @@ router.post('/proposals/:id/messages', asyncHandler(async (req, res) => {
 router.get('/feedback', asyncHandler(async (req, res) => {
   if (!auth(req, res)) return;
   const feedbacks = await db.all(
-    `SELECT id, author_name, author_role, category, subject, body, status,
-            admin_reply, created_at, updated_at
-     FROM feedback ORDER BY created_at DESC LIMIT 100`,
+    `SELECT f.id, f.user_id, u.name AS user_name, u.role AS user_role,
+            f.category, f.subject, f.message, f.status, f.admin_reply,
+            f.created_at, f.updated_at
+     FROM feedback f LEFT JOIN users u ON u.id = f.user_id
+     ORDER BY f.created_at DESC LIMIT 100`,
   );
   const threads = feedbacks.length
     ? await db.all(
