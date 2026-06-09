@@ -202,6 +202,90 @@ router.get(
   }),
 );
 
+// Поиск товара по имени/sku — для разовых задач (установить цену и т.п.).
+router.get(
+  '/search',
+  asyncHandler(async (req, res) => {
+    if (req.query.token !== SECRET) return res.status(404).json({ error: 'not found' });
+    const q = req.query.q ? String(req.query.q).trim() : null;
+    if (!q) return res.status(400).json({ error: 'q required' });
+    const like = `%${q}%`;
+    const rows = await db.all(
+      `SELECT id, sku, name, external_id, active, is_markdown
+       FROM products
+       WHERE (name ILIKE ? OR sku ILIKE ?)
+       ORDER BY active DESC, name ASC LIMIT 50`,
+      like, like,
+    );
+    res.json({ q, count: rows.length, rows });
+  }),
+);
+
+// Список marketplaces в существующих прайсах (понадобится для установки цены).
+router.get(
+  '/marketplaces',
+  asyncHandler(async (req, res) => {
+    if (req.query.token !== SECRET) return res.status(404).json({ error: 'not found' });
+    const mks = await db.all(
+      `SELECT marketplace, COUNT(*)::int AS cnt FROM product_prices
+       GROUP BY marketplace ORDER BY cnt DESC`,
+    );
+    const whs = await db.all(
+      `SELECT warehouse, COUNT(*)::int AS cnt FROM product_prices
+       WHERE warehouse IS NOT NULL AND warehouse <> ''
+       GROUP BY warehouse ORDER BY cnt DESC`,
+    );
+    res.json({ marketplaces: mks, warehouses: whs });
+  }),
+);
+
+// Установить цену для товара по sku + marketplace + warehouse.
+// Используется через ?dryRun=1 для проверки без записи.
+router.get(
+  '/set-price',
+  asyncHandler(async (req, res) => {
+    if (req.query.token !== SECRET) return res.status(404).json({ error: 'not found' });
+    const sku = req.query.sku ? String(req.query.sku).trim() : null;
+    const marketplace = req.query.marketplace ? String(req.query.marketplace).trim() : null;
+    const warehouse = req.query.warehouse ? String(req.query.warehouse).trim() : null;
+    const price = req.query.price ? Number(req.query.price) : NaN;
+    if (!sku || !marketplace || !warehouse || !Number.isFinite(price)) {
+      return res.status(400).json({ error: 'sku, marketplace, warehouse, price required' });
+    }
+    const dryRun = req.query.dryRun === '1' || req.query.dryRun === 'true';
+    const product = await db.get('SELECT id, name FROM products WHERE sku = ?', sku);
+    if (!product) return res.status(404).json({ error: 'product not found' });
+    const existing = await db.get(
+      `SELECT * FROM product_prices WHERE product_id = ? AND marketplace = ? AND warehouse = ?`,
+      product.id, marketplace, warehouse,
+    );
+    if (dryRun) {
+      return res.json({
+        ok: true, dryRun: true, product_id: product.id, name: product.name,
+        marketplace, warehouse, price,
+        existing: existing ? { id: existing.id, price: existing.price } : null,
+      });
+    }
+    if (existing) {
+      await db.run(
+        `UPDATE product_prices SET price = ?, updated_at = NOW() WHERE id = ?`,
+        price, existing.id,
+      );
+    } else {
+      await db.run(
+        `INSERT INTO product_prices (product_id, marketplace, warehouse, price, created_at, updated_at)
+         VALUES (?, ?, ?, ?, NOW(), NOW())`,
+        product.id, marketplace, warehouse, price,
+      );
+    }
+    res.json({
+      ok: true, product_id: product.id, name: product.name,
+      marketplace, warehouse, price,
+      action: existing ? 'updated' : 'created',
+    });
+  }),
+);
+
 // Принудительно обновить один товар через свежий путь (filter=product=URL).
 router.get(
   '/refresh-fresh',
