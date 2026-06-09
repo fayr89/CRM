@@ -35,6 +35,7 @@ import aiProposalsRoutes from './routes/aiProposals.js';
 import noticeBannersRoutes from './routes/noticeBanners.js';
 import notificationPrefsRoutes from './routes/notificationPrefs.js';
 import projectsRoutes from './routes/projects.js';
+import diagDailyRunRoutes from './routes/diagDailyRun.js'; // TEMP v42
 // Производственный модуль (PROD): материалы, техкарты, производственные заказы, подряды.
 import materialsRoutes from './routes/materials.js';
 import processingPlansRoutes from './routes/processingPlans.js';
@@ -189,6 +190,7 @@ export function createApp({ serveStatic = true } = {}) {
   app.use('/api/production', productionPLRoutes);
   app.use('/api/production-settings', productionSettingsRoutes);
   app.use('/api/diag-order', diagOrderRoutes); // TEMP
+  app.use('/api/diag/daily-run', diagDailyRunRoutes); // TEMP v42
   app.use((req, res) => {
     res.status(404).json({ error: `Route not found: ${req.method} ${req.path}` });
   });
