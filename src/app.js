@@ -43,6 +43,7 @@ import contractsRoutes from './routes/contracts.js';
 import productionPLRoutes from './routes/productionPL.js';
 import productionSettingsRoutes from './routes/productionSettings.js';
 import diagOrderRoutes from './routes/diagOrder.js'; // TEMP
+import diagDailyRunRoutes from './routes/diagDailyRun.js'; // TEMP daily-run v56
 import { authenticate as authMw } from './auth.js';
 import { importMoyskladStoresFresh } from './routes/stockSyncFresh.js';
 
@@ -52,39 +53,29 @@ const PUBLIC_DIR = path.resolve(__dirname, '..', 'public');
 export function createApp({ serveStatic = true } = {}) {
   const app = express();
 
-  // Отключаем ETag для API: иначе повторные GET отдают 304, а фронт трактует
-  // не-2xx как ошибку (данные теряются — например, не грузились фильтры складов).
   app.set('etag', false);
-  // Trust proxy: на проде стоит nginx-прокси в РФ → Vercel → лямбда. Без trust proxy
-  // req.ip будет адресом ближнего прокси (одинаковый у всех клиентов), и rate-limit
-  // на логине заблокирует ВСЕХ при первой ошибке одного. С trust proxy req.ip берётся
-  // из X-Forwarded-For — настоящий IP клиента.
   app.set('trust proxy', true);
 
-  // CORS: разрешить same-origin, localhost и vercel.app домены
   const extraOrigins = process.env.ALLOWED_ORIGINS
     ? process.env.ALLOWED_ORIGINS.split(',').map(o => o.trim())
     : [];
 
   app.use(cors({
     origin: (origin, callback) => {
-      // Разрешаем: запросы без origin (same-origin, curl), localhost, *.vercel.app, и из ALLOWED_ORIGINS
       if (!origin
         || /^https?:\/\/localhost(:\d+)?$/.test(origin)
         || /\.vercel\.app$/.test(origin)
         || extraOrigins.includes(origin)) {
         callback(null, true);
       } else {
-        callback(null, true); // По умолчанию разрешаем (можно ужесточить позже)
+        callback(null, true);
       }
     },
     credentials: true,
   }));
   app.use(express.json({ limit: '1mb' }));
-  // API не кэшируем — иначе повторные GET отдают 304 (фронт трактует как ошибку).
   app.use('/api', (_req, res, next) => {
     res.set('Cache-Control', 'no-store');
-    // Бедный воркер МС-очереди: дёргается при каждом /api-запросе, но не чаще раз в 30 сек.
     tickMsQueue();
     next();
   });
@@ -136,10 +127,11 @@ export function createApp({ serveStatic = true } = {}) {
   app.use('/api/notes', notesRoutes);
   app.use('/api/dashboard', dashboardRoutes);
   app.use('/api/invitations', invitationsRoutes);
-  // Патч на mark-waiting: основной хендлер забывал снять локальный резерв на
-  // товаре при переходе из reserved → waiting_stock. Перехватываем ДО маршрута:
-  // если статус был reserved, снимаем локальный резерв здесь и пускаем дальше.
-  // Основной хендлер потом сменит статус (и больше с резервом ничего не делает).
+  // Патч на mark-waiting: основной хендлер в orders.js забывал две вещи при
+  // переходе reserved → waiting_stock:
+  //   1) снять локальный резерв на товаре (иначе резерв «прилипает» и нельзя больше бронировать тот же товар);
+  //   2) удалить pending income payment (был создан при reserve — висит в кассе непонятно за что).
+  // Перехватываем ДО основного хендлера. Основной потом сменит статус и отправит МС-job.
   app.post('/api/orders/:id/mark-waiting', async (req, res, next) => {
     try {
       const { db } = await import('./db.js');
@@ -149,6 +141,13 @@ export function createApp({ serveStatic = true } = {}) {
         await applyLocalStockReserveDelta(req.params.id, 0, -1).catch((e) => {
           // eslint-disable-next-line no-console
           console.warn('[mark-waiting patch] applyLocalStockReserveDelta failed:', e?.message);
+        });
+        await db.run(
+          `DELETE FROM payments WHERE order_id = ? AND kind = 'income' AND status = 'pending'`,
+          req.params.id,
+        ).catch((e) => {
+          // eslint-disable-next-line no-console
+          console.warn('[mark-waiting patch] DELETE pending income failed:', e?.message);
         });
       }
     } catch (e) {
@@ -165,10 +164,8 @@ export function createApp({ serveStatic = true } = {}) {
   app.use('/api/webhooks', webhooksRoutes);
   app.use('/api/notifications', notificationsRoutes);
   app.use('/api/search', searchRoutes);
-  // Перехват «Обновить остатки»: основной хендлер тянет общий отчёт МС, который
-  // кешируется до нескольких часов → данные не успевают за реальностью. Наша
-  // версия дёргает /report/stock/bystore?filter=product=URL партиями по 50 — МС
-  // не кеширует адресный запрос, остатки всегда актуальные. Фронт не меняется.
+  // Перехват «Обновить остатки»: основной хендлер тянет общий отчёт МС (кешируется).
+  // Наша версия дёргает filter=product=URL партиями — МС адресный запрос не кеширует.
   app.post('/api/products/import/moysklad-stores', authMw, importMoyskladStoresFresh);
   app.use('/api/products', productsRoutes);
   app.use('/api/pricing', pricingRoutes);
@@ -189,6 +186,7 @@ export function createApp({ serveStatic = true } = {}) {
   app.use('/api/production', productionPLRoutes);
   app.use('/api/production-settings', productionSettingsRoutes);
   app.use('/api/diag-order', diagOrderRoutes); // TEMP
+  app.use('/api/diag', diagDailyRunRoutes); // TEMP daily-run v56
 
   app.use((req, res) => {
     res.status(404).json({ error: `Route not found: ${req.method} ${req.path}` });

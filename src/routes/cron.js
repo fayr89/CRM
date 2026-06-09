@@ -1,7 +1,7 @@
 // Cron-эндпоинты, дёргаются автоматически Vercel Cron (см. vercel.json crons).
 // Авторизация: Vercel при наличии env CRON_SECRET сам добавит заголовок
-// Authorization: Bearer ${CRON_SECRET}. Если env не задана — endpoint открытый
-// (только лишние МС-запросы при злоупотреблении).
+// Authorization: Bearer ${CRON_SECRET}. В production это обязательно — иначе
+// 503 (иначе любой может дёргать резервы/импорты МС).
 import { Router } from 'express';
 import { db } from '../db.js';
 import { asyncHandler } from '../errors.js';
@@ -14,9 +14,15 @@ const router = Router();
 
 function verifyCron(req) {
   const expected = process.env.CRON_SECRET;
+  const isProd = process.env.NODE_ENV === 'production';
   if (!expected) {
+    if (isProd) {
+      // eslint-disable-next-line no-console
+      console.error('[cron] CRON_SECRET не задан в production env — отклоняем запрос.');
+      return false;
+    }
     // eslint-disable-next-line no-console
-    console.warn('[cron] CRON_SECRET не задан в env — endpoint /api/cron/* открыт.');
+    console.warn('[cron] CRON_SECRET не задан в env (dev) — endpoint /api/cron/* открыт.');
     return true;
   }
   const auth = req.headers.authorization || '';
@@ -204,6 +210,18 @@ router.get(
       });
       try { await applyLocalStockReserveDelta(order.id, 0, +1); } catch { /* ignore */ }
       await enqueueMsJob(order.id, 'customer_order.upsert', { reserve_mode: 'full' });
+      // Audit-лог: в #199 было видно что cron auto-reserve не писал в лог → в расследовании
+      // истории резерва видно было только ручные действия. Добавляем запись без user_id
+      // (это системное действие), user_name=«cron» для отличия в интерфейсе.
+      await db.run(
+        `INSERT INTO audit_log (user_id, user_name, user_role, action, entity_type, entity_id, details, created_at)
+         VALUES (NULL, 'cron', 'system', 'order.auto_reserved', 'order', ?, ?::jsonb, NOW())`,
+        order.id,
+        JSON.stringify({ warehouse: order.warehouse, from: 'auto_cron' }),
+      ).catch((e) => {
+        // eslint-disable-next-line no-console
+        console.warn('[cron auto-reserve] audit_log INSERT failed:', e?.message);
+      });
       reserved.push(order.id);
     }
 
