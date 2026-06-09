@@ -282,10 +282,6 @@ router.get(
   }),
 );
 
-// Создать баннер уведомления сверху страницы. Параметры:
-//   text — текст баннера (required)
-//   days — на сколько дней (default 3)
-//   kind — info | warning | success | error (default info)
 router.get(
   '/create-banner',
   asyncHandler(async (req, res) => {
@@ -302,6 +298,72 @@ router.get(
       text, kind, days,
     );
     res.json({ ok: true, id: r.lastInsertRowid, text, kind, days });
+  }),
+);
+
+// Добавить недостающие индексы для ускорения частых запросов.
+// Идемпотентно (IF NOT EXISTS). Безопасно дёргать многократно.
+router.get(
+  '/add-indexes',
+  asyncHandler(async (req, res) => {
+    if (req.query.token !== SECRET) return res.status(404).json({ error: 'not found' });
+    const results = [];
+
+    // 1. Составной индекс для product_prices lookup
+    // (часто бьётся при листинге заказов: WHERE product_id=? AND marketplace=? AND warehouse=?).
+    try {
+      await db.run(
+        `CREATE INDEX IF NOT EXISTS idx_product_prices_lookup
+         ON product_prices(product_id, marketplace, warehouse)`,
+      );
+      results.push({ index: 'idx_product_prices_lookup', ok: true });
+    } catch (e) {
+      results.push({ index: 'idx_product_prices_lookup', ok: false, error: e.message });
+    }
+
+    // 2. orders(created_at DESC) — для канбана и списков заказов с ORDER BY.
+    try {
+      await db.run(
+        `CREATE INDEX IF NOT EXISTS idx_orders_created_at_desc
+         ON orders(created_at DESC)`,
+      );
+      results.push({ index: 'idx_orders_created_at_desc', ok: true });
+    } catch (e) {
+      results.push({ index: 'idx_orders_created_at_desc', ok: false, error: e.message });
+    }
+
+    // 3. order_items(product_id) — нужно для агрегации /popular и расчёта спроса.
+    try {
+      await db.run(
+        `CREATE INDEX IF NOT EXISTS idx_order_items_product_qty
+         ON order_items(product_id) INCLUDE (quantity)`,
+      );
+      results.push({ index: 'idx_order_items_product_qty', ok: true });
+    } catch (e) {
+      // INCLUDE может не сработать на старых Postgres — фолбэк без него.
+      try {
+        await db.run(
+          `CREATE INDEX IF NOT EXISTS idx_order_items_product_simple
+           ON order_items(product_id)`,
+        );
+        results.push({ index: 'idx_order_items_product_simple', ok: true, fallback: true });
+      } catch (e2) {
+        results.push({ index: 'idx_order_items_product', ok: false, error: e2.message });
+      }
+    }
+
+    // 4. payments(order_id, kind) — частый lookup income/expense по заказу.
+    try {
+      await db.run(
+        `CREATE INDEX IF NOT EXISTS idx_payments_order_kind
+         ON payments(order_id, kind) WHERE order_id IS NOT NULL`,
+      );
+      results.push({ index: 'idx_payments_order_kind', ok: true });
+    } catch (e) {
+      results.push({ index: 'idx_payments_order_kind', ok: false, error: e.message });
+    }
+
+    res.json({ ok: true, results });
   }),
 );
 
