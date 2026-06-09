@@ -29,22 +29,23 @@ router.get(
 
     // Треды для каждого предложения
     const proposalIds = proposals.map((p) => p.id);
-    const messages = proposalIds.length
-      ? await db.all(
-          `SELECT proposal_id, id, user_id, user_name, role, text, created_at
-           FROM ai_proposal_messages
-           WHERE proposal_id = ANY(?::int[])
-           ORDER BY created_at ASC, id ASC`,
-          JSON.stringify(proposalIds),
-        )
-      : [];
-    const msgByProposal = {};
-    for (const m of messages) {
-      if (!msgByProposal[m.proposal_id]) msgByProposal[m.proposal_id] = [];
-      msgByProposal[m.proposal_id].push(m);
+    let msgByProposal = {};
+    if (proposalIds.length) {
+      const placeholders = proposalIds.map(() => '?').join(',');
+      const messages = await db.all(
+        `SELECT proposal_id, id, user_id, user_name, role, text, created_at
+         FROM ai_proposal_messages
+         WHERE proposal_id IN (${placeholders})
+         ORDER BY created_at ASC, id ASC`,
+        ...proposalIds,
+      );
+      for (const m of messages) {
+        if (!msgByProposal[m.proposal_id]) msgByProposal[m.proposal_id] = [];
+        msgByProposal[m.proposal_id].push(m);
+      }
     }
 
-    // feedback: open + awaiting_approval с тредами
+    // feedback: open + awaiting_approval + in_progress с тредами
     const feedbacks = await db.all(
       `SELECT f.id, f.user_id, f.category, f.subject, f.message, f.status,
               f.admin_reply, f.context, f.created_at, f.updated_at,
@@ -56,19 +57,20 @@ router.get(
        LIMIT 100`,
     );
     const feedbackIds = feedbacks.map((f) => f.id);
-    const fbMessages = feedbackIds.length
-      ? await db.all(
-          `SELECT feedback_id, id, user_id, user_name, role, text, created_at
-           FROM feedback_messages
-           WHERE feedback_id = ANY(?::int[])
-           ORDER BY created_at ASC, id ASC`,
-          JSON.stringify(feedbackIds),
-        )
-      : [];
-    const fbMsgById = {};
-    for (const m of fbMessages) {
-      if (!fbMsgById[m.feedback_id]) fbMsgById[m.feedback_id] = [];
-      fbMsgById[m.feedback_id].push(m);
+    let fbMsgById = {};
+    if (feedbackIds.length) {
+      const fbPlaceholders = feedbackIds.map(() => '?').join(',');
+      const fbMessages = await db.all(
+        `SELECT feedback_id, id, user_id, user_name, role, text, created_at
+         FROM feedback_messages
+         WHERE feedback_id IN (${fbPlaceholders})
+         ORDER BY created_at ASC, id ASC`,
+        ...feedbackIds,
+      );
+      for (const m of fbMessages) {
+        if (!fbMsgById[m.feedback_id]) fbMsgById[m.feedback_id] = [];
+        fbMsgById[m.feedback_id].push(m);
+      }
     }
 
     res.json({
