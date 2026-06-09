@@ -453,7 +453,7 @@ export const db = {
 // БАМПАЙ ПРИ КАЖДОМ ДОБАВЛЕНИИ МИГРАЦИИ. Текущие миграции прогоняются
 // только если запись в app_settings.schema_version отличается. Это экономит
 // ~500-2000мс на каждом холодном старте serverless-лямбды.
-const SCHEMA_VERSION = 25;
+const SCHEMA_VERSION = 26;
 
 export async function ensureInitialized() {
   if (globalThis.__crmInitialized) return;
@@ -1082,6 +1082,18 @@ export async function ensureInitialized() {
       // на момент «выполнили заказ»): материалы + труд × ставка.
       await pool.query('ALTER TABLE production_orders ADD COLUMN IF NOT EXISTS cost_total REAL NOT NULL DEFAULT 0');
       await pool.query('ALTER TABLE production_orders ADD COLUMN IF NOT EXISTS ms_processing_id TEXT');
+
+      // ===== Bug fix: waiting_stock в CHECK constraint orders.status (SCHEMA_VERSION 26) =====
+      await pool.query(`
+        DO $$
+        BEGIN
+          ALTER TABLE orders DROP CONSTRAINT IF EXISTS orders_status_check;
+          ALTER TABLE orders ADD CONSTRAINT orders_status_check
+            CHECK(status IN ('new','reserved','shipped','completed','cancelled','waiting_stock'));
+        EXCEPTION WHEN others THEN
+          RAISE WARNING 'orders status check migration: %', SQLERRM;
+        END $$
+      `);
 
       // Маркер успешно прогнанных миграций — следующие холодные старты пропустят DDL.
       await pool.query(
