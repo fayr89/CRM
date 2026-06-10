@@ -114,4 +114,53 @@ router.post('/', async (req, res) => {
   }
 });
 
+// GET /write?secret=...&action=...&params=JSON — для Vercel MCP (только GET)
+router.get('/write', async (req, res) => {
+  if (!checkSecret(req, res)) return;
+  const action = req.query.action;
+  let params = {};
+  try { params = JSON.parse(req.query.params || '{}'); } catch { return res.status(400).json({ error: 'bad params json' }); }
+  try {
+    if (action === 'patch_proposal') {
+      await db.run(`UPDATE ai_proposals SET status = ?, updated_at = NOW() WHERE id = ?`, params.decision, Number(params.id));
+      return res.json({ ok: true });
+    }
+    if (action === 'post_proposal') {
+      const r = await db.run(
+        `INSERT INTO ai_proposals (title, summary, category, risk, source, proposed_changes, feedback_id, status, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?::jsonb, ?, 'pending', NOW(), NOW()) RETURNING id`,
+        params.title, params.summary, params.category || 'feature', params.risk || 'medium',
+        params.source || 'daily-run-2026-06-10', params.proposed_changes ? JSON.stringify(params.proposed_changes) : null,
+        params.feedback_id || null,
+      );
+      return res.json({ ok: true, id: r.lastInsertRowid });
+    }
+    if (action === 'post_proposal_message') {
+      await db.run(
+        `INSERT INTO ai_proposal_messages (proposal_id, user_name, text, created_at) VALUES (?, 'AI ассистент', ?, NOW())`,
+        Number(params.proposal_id), params.text,
+      );
+      return res.json({ ok: true });
+    }
+    if (action === 'patch_feedback') {
+      await db.run(
+        `UPDATE feedback SET status = ?, admin_reply = COALESCE(?, admin_reply), updated_at = NOW() WHERE id = ?`,
+        params.status, params.admin_reply || null, Number(params.id)
+      );
+      return res.json({ ok: true });
+    }
+    if (action === 'post_feedback_message') {
+      await db.run(
+        `INSERT INTO feedback_messages (feedback_id, user_name, role, text, created_at) VALUES (?, ?, 'admin', ?, NOW())`,
+        Number(params.feedback_id), params.user_name || 'AI ассистент', params.text,
+      );
+      await db.run(`UPDATE feedback SET updated_at = NOW() WHERE id = ?`, Number(params.feedback_id));
+      return res.json({ ok: true });
+    }
+    return res.status(400).json({ error: `unknown action: ${action}` });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 export default router;
