@@ -1,7 +1,12 @@
 // Cron-эндпоинты, дёргаются автоматически Vercel Cron (см. vercel.json crons).
 // Авторизация: Vercel при наличии env CRON_SECRET сам добавит заголовок
-// Authorization: Bearer ${CRON_SECRET}. В production это обязательно — иначе
-// 503 (иначе любой может дёргать резервы/импорты МС).
+// Authorization: Bearer ${CRON_SECRET}. Если env не задана — endpoint открытый
+// (только лишние МС-запросы при злоупотреблении).
+//
+// ВНИМАНИЕ: в бэклоге было прямое указание «НЕ включать fail-fast раньше, чем
+// заданы env (уронит прод)». Прод сейчас работает БЕЗ заданного CRON_SECRET,
+// поэтому fail-fast возвращён к мягкому warning, как было до этого. Когда
+// вы зададите CRON_SECRET в Vercel env, можно вернуть проверку.
 import { Router } from 'express';
 import { db } from '../db.js';
 import { asyncHandler } from '../errors.js';
@@ -14,15 +19,9 @@ const router = Router();
 
 function verifyCron(req) {
   const expected = process.env.CRON_SECRET;
-  const isProd = process.env.NODE_ENV === 'production';
   if (!expected) {
-    if (isProd) {
-      // eslint-disable-next-line no-console
-      console.error('[cron] CRON_SECRET не задан в production env — отклоняем запрос.');
-      return false;
-    }
     // eslint-disable-next-line no-console
-    console.warn('[cron] CRON_SECRET не задан в env (dev) — endpoint /api/cron/* открыт.');
+    console.warn('[cron] CRON_SECRET не задан в env — endpoint /api/cron/* открыт.');
     return true;
   }
   const auth = req.headers.authorization || '';
