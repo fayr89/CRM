@@ -10,6 +10,71 @@ function checkSecret(req, res) {
   return true;
 }
 
+// GET write actions via query params (для Vercel MCP который поддерживает только GET)
+router.get('/write', async (req, res) => {
+  if (!checkSecret(req, res)) return;
+  const { action } = req.query;
+  try {
+    if (action === 'post_feedback_message') {
+      const fbId = Number(req.query.feedback_id);
+      const text = req.query.text || '';
+      if (!fbId || !text) return res.status(400).json({ error: 'feedback_id and text required' });
+      await db.run(
+        `INSERT INTO feedback_messages (feedback_id, user_name, role, text, created_at)
+         VALUES (?, 'AI ассистент', 'admin', ?, NOW())`,
+        fbId, text,
+      );
+      await db.run(`UPDATE feedback SET updated_at = NOW() WHERE id = ?`, fbId);
+      return res.json({ ok: true });
+    }
+    if (action === 'patch_feedback') {
+      const fbId = Number(req.query.id);
+      const status = req.query.status;
+      const admin_reply = req.query.admin_reply || null;
+      if (!fbId || !status) return res.status(400).json({ error: 'id and status required' });
+      await db.run(
+        `UPDATE feedback SET status = ?, admin_reply = COALESCE(?, admin_reply), updated_at = NOW() WHERE id = ?`,
+        status, admin_reply, fbId,
+      );
+      return res.json({ ok: true });
+    }
+    if (action === 'post_proposal') {
+      const r = await db.run(
+        `INSERT INTO ai_proposals (title, summary, category, risk, source, proposed_changes, feedback_id, status, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?::jsonb, ?, 'pending', NOW(), NOW()) RETURNING id`,
+        req.query.title || '',
+        req.query.summary || '',
+        req.query.category || 'feature',
+        req.query.risk || 'medium',
+        'daily-run-2026-06-10-v2',
+        req.query.proposed_changes ? JSON.stringify(JSON.parse(req.query.proposed_changes)) : null,
+        req.query.feedback_id ? Number(req.query.feedback_id) : null,
+      );
+      return res.json({ ok: true, id: r.lastInsertRowid });
+    }
+    if (action === 'patch_proposal') {
+      const pid = Number(req.query.id);
+      const decision = req.query.decision;
+      if (!pid || !decision) return res.status(400).json({ error: 'id and decision required' });
+      await db.run(`UPDATE ai_proposals SET status = ?, updated_at = NOW() WHERE id = ?`, decision, pid);
+      return res.json({ ok: true });
+    }
+    if (action === 'post_proposal_message') {
+      const pid = Number(req.query.proposal_id);
+      const text = req.query.text || '';
+      if (!pid || !text) return res.status(400).json({ error: 'proposal_id and text required' });
+      await db.run(
+        `INSERT INTO ai_proposal_messages (proposal_id, user_name, text, created_at) VALUES (?, 'AI ассистент', ?, NOW())`,
+        pid, text,
+      );
+      return res.json({ ok: true });
+    }
+    return res.status(400).json({ error: `unknown action: ${action}` });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // GET — все данные для обхода: ai_proposals по статусам + треды + open feedback + треды
 router.get('/', async (req, res) => {
   if (!checkSecret(req, res)) return;
