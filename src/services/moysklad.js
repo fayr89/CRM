@@ -169,7 +169,9 @@ export async function fetchMoyskladStock(token) {
 // «5 одновременных на токен»). Сначала пробуем как product; UUID,
 // которые не вернулись, пробуем как variant. Для батча 50 это ~10 раундов
 // × ~500мс = ~5с, в пределах Vercel 60s. Никаких 412-бисекций.
-const CONCURRENCY = 5;
+// Концепт «5 одновременных на токен» по докам МС, но на практике частые
+// fetch-failed при concurrency=5 — снижаем до 3 для надёжности.
+const CONCURRENCY = 3;
 
 async function pMapLimit(items, limit, fn) {
   const results = new Array(items.length);
