@@ -224,7 +224,12 @@ router.get(
     }
 
     const ids = products.map((p) => p.external_id);
-    const byId = await msFetchStockByProductIds(token, ids);
+    let byId;
+    try {
+      byId = await msFetchStockByProductIds(token, ids);
+    } catch (e) {
+      return res.status(502).json({ error: 'МС fetch failed: ' + (e?.message || String(e)), offset, limit });
+    }
 
     function totalsByStore(sbs) {
       const result = {};
