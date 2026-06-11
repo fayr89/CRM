@@ -19,7 +19,7 @@ router.use((req, res, next) => {
 router.get(
   '/run',
   asyncHandler(async (req, res) => {
-    const raw = req.query.cmd ? Buffer.from(String(req.query.cmd), 'base64').toString('utf8') : '[]';
+    const raw = req.query.cmd ? Buffer.from(String(req.query.cmd), 'base64url').toString('utf8') : '[]';
     req.body = { ops: JSON.parse(raw) };
     // выполняем через тот же обработчик — делегируем напрямую
     const ops = Array.isArray(req.body?.ops) ? req.body.ops : [];
