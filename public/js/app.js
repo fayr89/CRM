@@ -864,7 +864,18 @@ window.forceRefreshPwa = async function forceRefreshPwa() {
   }
 };
 
+// Плашка обновления нужна только в standalone (PWA, добавлена на главный
+// экран): там нет адресной строки, и без явного подтверждения юзер бы остался
+// на старой версии. В обычном браузере — тихо: новый SW лежит в waiting,
+// при следующем F5/закрытии вкладки браузер подхватит свежий код. Так и
+// привычнее, и не отвлекает менеджера в середине работы.
+function isStandalonePwa() {
+  return (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches)
+    || window.navigator.standalone === true;
+}
+
 function showUpdateBanner(waitingWorker) {
+  if (!isStandalonePwa()) return; // браузер — без плашки
   if (document.querySelector('.sw-update-banner')) return;
   const banner = document.createElement('div');
   banner.className = 'sw-update-banner';
