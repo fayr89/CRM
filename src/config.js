@@ -36,4 +36,8 @@ export const config = {
     password: process.env.ADMIN_PASSWORD || 'admin123',
     name: process.env.ADMIN_NAME || 'Администратор',
   },
+  // Секрет для проверки HMAC-подписи от МойСклад (X-Lognex-Signature).
+  // Задать в Vercel env → MOYSKLAD_WEBHOOK_SECRET.
+  // Если не задан — HMAC не проверяется (можно для начала, рекомендуется задать).
+  moyskladWebhookSecret: process.env.MOYSKLAD_WEBHOOK_SECRET || '',
 };

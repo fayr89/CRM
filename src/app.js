@@ -44,6 +44,7 @@ import productionSettingsRoutes from './routes/productionSettings.js';
 import productionReceiptRoutes from './routes/productionReceipt.js';
 import diagStockRoutes from './routes/diagStock.js';
 import diagRoutes from './routes/diag.js';
+import msWebhookRoutes from './routes/msWebhook.js';
 import { authenticate as authMw } from './auth.js';
 import { importMoyskladStoresFresh } from './routes/stockSyncFresh.js';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -136,6 +137,8 @@ export function createApp({ serveStatic = true } = {}) {
     });
   });
 
+  // МС-вебхук: без JWT, перед всеми auth-маршрутами
+  app.use('/api/webhooks', msWebhookRoutes);
   app.use('/api/auth', authRoutes);
   app.use('/api/users', usersRoutes);
   app.use('/api/companies', companiesRoutes);

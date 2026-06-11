@@ -29,7 +29,7 @@ async function loadPlanFull(planId, includeCost) {
                              WHERE pp.id = ?`, planId);
   if (!plan) return null;
   const items = await db.all(
-    `SELECT pi.id, pi.material_id, pi.qty_per_unit, m.name AS material_name, m.sku AS material_sku,
+    `SELECT pi.id, pi.material_id, pi.qty_per_unit, pi.sizes, m.name AS material_name, m.sku AS material_sku,
             m.unit AS material_unit${includeCost ? ', m.cost_price' : ''}
      FROM processing_plan_items pi JOIN materials m ON m.id = pi.material_id
      WHERE pi.plan_id = ? ORDER BY pi.id`,
@@ -106,9 +106,14 @@ router.get(
   }),
 );
 
+const sizeEntrySchema = z.object({
+  count: z.number().int().positive(),
+  label: z.string().max(80),
+});
 const itemSchema = z.object({
   material_id: z.number().int().positive(),
   qty_per_unit: z.number().positive(),
+  sizes: z.array(sizeEntrySchema).optional().nullable(),
 });
 const stageSchema = z.object({
   name: z.string().min(1).max(100),
@@ -142,8 +147,8 @@ router.post(
       const planId = r.lastInsertRowid;
       for (const it of data.items) {
         await tx.run(
-          `INSERT INTO processing_plan_items (plan_id, material_id, qty_per_unit) VALUES (?, ?, ?)`,
-          planId, it.material_id, it.qty_per_unit,
+          `INSERT INTO processing_plan_items (plan_id, material_id, qty_per_unit, sizes) VALUES (?, ?, ?, ?::jsonb)`,
+          planId, it.material_id, it.qty_per_unit, it.sizes ? JSON.stringify(it.sizes) : null,
         );
       }
       if (data.stages && data.stages.length) {
@@ -189,8 +194,8 @@ router.patch(
         await tx.run('DELETE FROM processing_plan_items WHERE plan_id = ?', cur.id);
         for (const it of data.items) {
           await tx.run(
-            `INSERT INTO processing_plan_items (plan_id, material_id, qty_per_unit) VALUES (?, ?, ?)`,
-            cur.id, it.material_id, it.qty_per_unit,
+            `INSERT INTO processing_plan_items (plan_id, material_id, qty_per_unit, sizes) VALUES (?, ?, ?, ?::jsonb)`,
+            cur.id, it.material_id, it.qty_per_unit, it.sizes ? JSON.stringify(it.sizes) : null,
           );
         }
       }

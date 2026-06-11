@@ -10808,7 +10808,7 @@ export async function renderProcessingPlans(main) {
       productPickerNode = wrap;
     }
 
-    const itemsArea = el('div', { class: 'plan-items', style: { display: 'flex', flexDirection: 'column', gap: '6px', marginTop: '8px' } });
+    const itemsArea = el('div', { class: 'plan-items', style: { display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '8px' } });
     function addItemRow(item) {
       const matSel = el('select', {},
         el('option', { value: '' }, '— материал —'),
@@ -10816,8 +10816,39 @@ export async function renderProcessingPlans(main) {
       );
       const qtyI = el('input', { type: 'number', min: '0', step: '0.001', value: item ? String(item.qty_per_unit) : '', placeholder: 'Норма на 1 ед', style: { width: '120px' } });
       const removeBtn = el('button', { class: 'btn btn-sm', onClick: () => row.remove() }, '×');
-      const row = el('div', { class: 'plan-item-row', style: { display: 'flex', gap: '6px', alignItems: 'center' } }, matSel, qtyI, removeBtn);
-      row._sel = matSel; row._qty = qtyI;
+
+      // Разбивка по типоразмерам: сколько штук какого размера/длины
+      const initSizes = Array.isArray(item?.sizes) ? item.sizes : [];
+      const sizesArea = el('div', { style: { display: 'flex', flexDirection: 'column', gap: '4px', marginTop: '4px', paddingLeft: '4px', borderLeft: '2px solid var(--border)' } });
+      function addSizeRow(sz) {
+        const cntI = el('input', { type: 'number', min: '1', step: '1', value: sz ? String(sz.count) : '', placeholder: 'кол-во', style: { width: '80px' } });
+        const lblI = el('input', { type: 'text', value: sz ? sz.label : '', placeholder: 'типоразмер (напр. 1200мм)', style: { flex: 1, minWidth: '100px' } });
+        const delBtn = el('button', { class: 'btn btn-sm', onClick: () => szRow.remove() }, '×');
+        const szRow = el('div', { style: { display: 'flex', gap: '4px', alignItems: 'center' } }, cntI, lblI, delBtn);
+        szRow._cnt = cntI; szRow._lbl = lblI;
+        sizesArea.append(szRow);
+      }
+      for (const sz of initSizes) addSizeRow(sz);
+
+      const sizesToggle = el('span', { style: { fontSize: '12px', cursor: 'pointer', color: 'var(--text-muted)', userSelect: 'none' } },
+        initSizes.length ? `▾ типоразмеры (${initSizes.length})` : '▸ типоразмеры',
+      );
+      const sizesBlock = el('div', {},
+        sizesArea,
+        el('div', { style: { marginTop: '4px' } },
+          el('button', { type: 'button', class: 'btn btn-sm', onClick: () => addSizeRow() }, '+ типоразмер'),
+        ),
+      );
+      sizesBlock.style.display = initSizes.length ? 'block' : 'none';
+      sizesToggle.addEventListener('click', () => {
+        const shown = sizesBlock.style.display !== 'none';
+        sizesBlock.style.display = shown ? 'none' : 'block';
+        sizesToggle.textContent = shown ? '▸ типоразмеры' : '▾ типоразмеры';
+      });
+
+      const topRow = el('div', { style: { display: 'flex', gap: '6px', alignItems: 'center' } }, matSel, qtyI, sizesToggle, removeBtn);
+      const row = el('div', { class: 'plan-item-row', style: { display: 'flex', flexDirection: 'column' } }, topRow, sizesBlock);
+      row._sel = matSel; row._qty = qtyI; row._sizesArea = sizesArea;
       itemsArea.append(row);
     }
     for (const it of plan.items || []) addItemRow(it);
@@ -10883,7 +10914,17 @@ export async function renderProcessingPlans(main) {
         for (const row of itemsArea.children) {
           const mid = Number(row._sel.value);
           const qty = Number(row._qty.value);
-          if (mid && qty > 0) items.push({ material_id: mid, qty_per_unit: qty });
+          if (mid && qty > 0) {
+            const sizes = [];
+            if (row._sizesArea) {
+              for (const szRow of row._sizesArea.children) {
+                const cnt = parseInt(szRow._cnt?.value, 10);
+                const lbl = szRow._lbl?.value?.trim();
+                if (cnt > 0 && lbl) sizes.push({ count: cnt, label: lbl });
+              }
+            }
+            items.push({ material_id: mid, qty_per_unit: qty, sizes: sizes.length ? sizes : null });
+          }
         }
         const stages = [];
         for (const row of stagesArea.children) {
