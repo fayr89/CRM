@@ -10720,13 +10720,18 @@ export async function renderProcessingPlans(main) {
     let plan = { product_id: null, labor_minutes_per_unit: 0, items: [], stages: [], active: true };
     if (planId) plan = await api.get('processing-plans', planId);
 
-    // Грузим товары и материалы — для селектов.
-    const [productsR, materialsR] = await Promise.all([
-      api.list('products', { limit: 500, active: 'true' }),
-      api.list('materials', { active: 'true' }),
-    ]);
-    const products = productsR.data || [];
+    // Грузим материалы — для селектов внутри состава. Товары грузим лениво
+    // через поиск (см. productPicker ниже): каталог из МС у клиента ~4000+
+    // позиций, тащить всё разом — лишний трафик и дикая выпадашка.
+    const materialsR = await api.list('materials', { active: 'true' });
     const materials = materialsR.data || [];
+
+    // Если редактируем существующую техкарту — подгрузим выбранный товар по id,
+    // чтобы показать его в шапке без обращения к полному каталогу.
+    let initialProduct = null;
+    if (plan.product_id) {
+      try { initialProduct = await api.get('products', plan.product_id); } catch { /* not found */ }
+    }
 
     // Если материалов нет вообще — подсказываем куда идти.
     const materialsHint = !materials.length
@@ -10736,37 +10741,63 @@ export async function renderProcessingPlans(main) {
           ' — они появятся в выпадашке.')
       : null;
 
-    // По умолчанию показываем только товары с остатком на производственном
-    // складе (Софийская) — техкарты заводят для того, что реально производим.
-    // Галочку можно снять: новый товар попадает на Софийскую только после
-    // первого выпуска/оприходования, для него фильтр пришлось бы обходить.
-    const SOFIA_RE = /софийск/i;
-    function onSofia(p) {
-      const sbs = Array.isArray(p.stock_by_store) ? p.stock_by_store
-        : (typeof p.stock_by_store === 'string' ? JSON.parse(p.stock_by_store || '[]') : []);
-      return sbs.some((s) => SOFIA_RE.test(String(s.store || '')) && Number(s.stock) > 0);
+    // Комбобокс выбора товара: ленивый поиск по каталогу (все товары, включая
+    // импортированные из МС, без привязки к складу — у МС-карточки склада нет).
+    // .value — id выбранного товара (строкой, как у нативного <select>).
+    // При редактировании техкарты товар менять нельзя — показываем как лейбл.
+    const productSel = { value: plan.product_id ? String(plan.product_id) : '' };
+    function fmtProduct(p) {
+      return `${p.name}${p.sku ? ' (' + p.sku + ')' : ''}`;
     }
-    const productSel = el('select', { disabled: !!planId });
-    const sofiaOnlyCb = el('input', { type: 'checkbox', checked: true });
-    const sofiaCountEl = el('span', { class: 'hint' });
-    function rebuildProductOptions() {
-      const filtered = sofiaOnlyCb.checked
-        ? products.filter((p) => p.id === plan.product_id || onSofia(p))
-        : products;
-      clear(productSel);
-      productSel.append(
-        el('option', { value: '' }, '— выберите товар —'),
-        ...filtered.map((p) => el('option', { value: String(p.id), selected: p.id === plan.product_id }, `${p.name}${p.sku ? ' (' + p.sku + ')' : ''}`)),
+    let productPickerNode;
+    if (planId) {
+      productPickerNode = el('div', { class: 'hint', style: { padding: '8px 10px', background: '#f3f4f6', borderRadius: '6px' } },
+        initialProduct ? fmtProduct(initialProduct) : `товар id=${plan.product_id} (загружен не был)`,
       );
-      sofiaCountEl.textContent = sofiaOnlyCb.checked
-        ? (filtered.length ? `${filtered.length} на складе Софийская` : 'На Софийской нет товаров — снимите галочку, чтобы выбрать любой')
-        : `все товары: ${products.length}`;
+    } else {
+      const input = el('input', { type: 'search', placeholder: 'Начните вводить название или артикул…', style: { width: '100%' } });
+      const list = el('div', { style: { position: 'absolute', top: '100%', left: 0, right: 0, background: '#fff', border: '1px solid var(--border)', borderRadius: '6px', boxShadow: '0 4px 12px rgba(0,0,0,0.08)', maxHeight: '240px', overflowY: 'auto', zIndex: '10', display: 'none' } });
+      const wrap = el('div', { style: { position: 'relative' } }, input, list);
+      let debounceTimer;
+      let lastRows = [];
+      async function search() {
+        const q = input.value.trim();
+        if (!q) { list.style.display = 'none'; return; }
+        try {
+          // У /api/products есть полнотекстовый search (см. routes/products.js).
+          const r = await api.list('products', { limit: 30, active: 'true', search: q });
+          lastRows = r.data || [];
+        } catch { lastRows = []; }
+        clear(list);
+        if (!lastRows.length) {
+          list.append(el('div', { class: 'hint', style: { padding: '8px 10px' } }, 'Ничего не нашлось'));
+        } else {
+          for (const p of lastRows) {
+            const item = el('div', { style: { padding: '8px 10px', cursor: 'pointer', borderBottom: '1px solid var(--border)' } }, fmtProduct(p));
+            item.addEventListener('mouseenter', () => { item.style.background = '#f3f4f6'; });
+            item.addEventListener('mouseleave', () => { item.style.background = ''; });
+            item.addEventListener('click', () => {
+              productSel.value = String(p.id);
+              input.value = fmtProduct(p);
+              list.style.display = 'none';
+            });
+            list.append(item);
+          }
+        }
+        list.style.display = 'block';
+      }
+      input.addEventListener('input', () => {
+        productSel.value = ''; // редактирование текста сбрасывает выбор до подтверждения
+        clearTimeout(debounceTimer);
+        debounceTimer = setTimeout(search, 250);
+      });
+      input.addEventListener('focus', () => { if (input.value.trim()) search(); });
+      // Клик вне комбобокса — закрыть список (но не если кликнули по элементу списка — там свой handler выше).
+      document.addEventListener('mousedown', (e) => {
+        if (!wrap.contains(e.target)) list.style.display = 'none';
+      });
+      productPickerNode = wrap;
     }
-    sofiaOnlyCb.addEventListener('change', rebuildProductOptions);
-    rebuildProductOptions();
-    const sofiaFilterRow = el('label', { style: { display: 'flex', gap: '6px', alignItems: 'center', fontSize: '13px', marginTop: '4px' } },
-      sofiaOnlyCb, 'только со склада Софийская (производство) ', sofiaCountEl,
-    );
 
     const itemsArea = el('div', { class: 'plan-items', style: { display: 'flex', flexDirection: 'column', gap: '6px', marginTop: '8px' } });
     function addItemRow(item) {
@@ -10809,8 +10840,7 @@ export async function renderProcessingPlans(main) {
 
     const body = el('div', {},
       materialsHint,
-      el('div', { class: 'form-row' }, el('label', {}, 'Товар *'), productSel),
-      planId ? null : sofiaFilterRow,
+      el('div', { class: 'form-row' }, el('label', {}, 'Товар *'), productPickerNode),
       el('div', { class: 'form-row' },
         el('label', {}, 'Этапы изготовления'),
         el('div', {},
