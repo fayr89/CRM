@@ -44,8 +44,6 @@ import productionPLRoutes from './routes/productionPL.js';
 import productionSettingsRoutes from './routes/productionSettings.js';
 import { authenticate as authMw } from './auth.js';
 import { importMoyskladStoresFresh } from './routes/stockSyncFresh.js';
-import diagDailyRoutes from './routes/diagDaily.js'; // TEMP 2026-06-11-v4
-
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = path.resolve(__dirname, '..', 'public');
 
@@ -83,8 +81,6 @@ export function createApp({ serveStatic = true } = {}) {
   app.get('/health', (_req, res) => {
     res.json({ status: 'ok', timestamp: new Date().toISOString() });
   });
-  app.use('/api/diag/daily-v4', diagDailyRoutes); // TEMP 2026-06-11-v4
-
   app.get('/api', (_req, res) => {
     res.json({
       name: 'CRM API',
