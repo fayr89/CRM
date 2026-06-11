@@ -50,7 +50,7 @@
 | `access.js` | `getAccessibleUserIds` / `canAccessUser` / `canAccessOwner` — кто что видит по иерархии |
 | `query.js` | `parsePagination`, `parseSort`, `paginated` — хелперы для роутов |
 | `errors.js` | `BadRequest`, `Forbidden`, `NotFound`, `Unauthorized`, `asyncHandler` |
-| `config.js` | Конфиг + дефолты (⚠ `JWT_SECRET`/`ADMIN_PASSWORD` пока дефолты — см. бэклог) |
+| `config.js` | Конфиг + дефолты (⚠ `JWT_SECRET`/`ADMIN_PASSWORD` пока дефолты — см. бэклог). `moyskladWebhookSecret` = `MOYSKLAD_WEBHOOK_SECRET` env (если пустой — HMAC-валидация МС-вебхука пропускается) |
 | `middleware/apiToken.js` | `requireApiToken` + `requireScope` для `/api/external` |
 | `db/seed.js` | Сид-данные (вызывается через `npm run seed`) |
 
@@ -74,6 +74,7 @@
 | `external.js` | `/api/external/...` | приём заявок снаружи по API-токену (лиды + заказы) |
 | `apiTokens.js` | `/api/api-tokens` | управление токенами интеграций |
 | `webhooks.js` | `/api/webhooks` | исходящие вебхуки на доменные события |
+| `msWebhook.js` | `/api/webhooks/moysklad-stock` | POST-вебхук от МойСклад (без JWT) + HMAC-валидация `X-Lognex-Signature`; фоновая синхронизация остатков по всем MS-товарам. Монтируется в `app.js` **до** `authenticate` |
 | `notifications.js` | `/api/notifications` | колокольчик пользователя |
 | `notificationPrefs.js` | `/api/notification-prefs` | пер-юзер тумблеры МАХ-уведомлений |
 | `notifications`*-related* | (registry в `services/notification-types.js`) | список типов + шаблоны |
@@ -370,7 +371,7 @@ if (payload.act && user.role === 'admin' && payload.act !== 'admin') {
 - `materials` — материалы (sku, name, unit, cost_price, supplier, warehouse,
   ms_id, active, notes). Отдельная сущность от `products`.
 - `processing_plans` — техкарта (один-к-одному с product_id, `labor_minutes_per_unit`, `ms_id`).
-- `processing_plan_items` — позиции техкарты (material_id, qty_per_unit).
+- `processing_plan_items` — позиции техкарты (material_id, qty_per_unit, `sizes JSONB` — разбивка по типоразмерам: `[{count, label}]`). Поле добавлено в SCHEMA_VERSION 28.
 - `production_orders` — план выпуска: product_id, plan_qty, period_from/to,
   foreman_id, status `draft|approved|in_progress|done|cancelled`.
 - `production_order_days` — дневная разбивка (plan_qty + fact_qty + backdated + over_plan).
