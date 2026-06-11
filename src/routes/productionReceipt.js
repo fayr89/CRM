@@ -1,6 +1,5 @@
 // Оприходование материалов/товаров на внутренний склад производства
-// через entity/enter в МойСклад. Нужен для «первого прихода» заведённых
-// материалов (после синка карточки в МС остаток = 0).
+// через entity/enter в МойСклад.
 import { Router } from 'express';
 import { z } from 'zod';
 import { authenticate, requireRole } from '../auth.js';
@@ -57,11 +56,12 @@ router.post(
       if (!msId) throw BadRequest('У товара нет external_id (МС) — нужно импортировать карточку из МС');
     }
 
+    // Минимальный body для entity/enter: только обязательные поля
+    // (organization, store, positions). moment и description опциональны —
+    // если МС не нравится их формат, лучше пусть автогенерирует.
     const body = {
       organization: { meta: { href: msHref('organization', orgId), type: 'organization', mediaType: 'application/json' } },
       store: { meta: { href: msHref('store', wh.id), type: 'store', mediaType: 'application/json' } },
-      moment: new Date().toISOString().slice(0, 19).replace('T', ' '),
-      description: `Оприходование из CRM: ${data.type} ${name} × ${data.qty}`,
       positions: [{
         assortment: { meta: { href: msHref('product', msId), type: 'product', mediaType: 'application/json' } },
         quantity: data.qty,
@@ -72,10 +72,12 @@ router.post(
     try {
       created = await msCreate(token, 'enter', body);
     } catch (e) {
-      throw BadRequest('МС: ' + e.message);
+      // eslint-disable-next-line no-console
+      console.error('[production/receipt] МС-ошибка:', e?.message, '| body:', JSON.stringify(body));
+      // Возвращаем максимум деталей — пользователю видно что не так.
+      throw BadRequest('МС-ошибка при создании прихода: ' + (e?.message || 'unknown'));
     }
 
-    // Для product — обновляем локальный stock_by_store, чтобы CRM сразу видел приход.
     if (data.type === 'product') {
       const p = await db.get('SELECT stock_by_store FROM products WHERE id = ?', data.id);
       let sbs = Array.isArray(p?.stock_by_store) ? [...p.stock_by_store]
