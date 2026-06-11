@@ -122,15 +122,6 @@ router.get(
   }),
 );
 
-// Оприходование (entity/enter) на склад production.internal_warehouse в МС.
-// Это «приход» — увеличивает остаток конкретной номенклатуры на складе.
-// Параметры:
-//   type=material&id=N  — оприходовать материал (из таблицы materials)
-//   type=product&id=N   — оприходовать товар (из таблицы products)
-//   qty=N               — сколько штук
-//   price=P             — цена прихода (опционально; default 0)
-// После создания документа для product дополнительно увеличиваем
-// locally stock_by_store у этого склада, чтобы не ждать импорта остатков.
 router.get(
   '/enter-stock',
   asyncHandler(async (req, res) => {
@@ -145,7 +136,7 @@ router.get(
     const token = await getMsToken();
     if (!token) return res.status(503).json({ error: 'no MC token' });
     const orgId = await getOrganizationId();
-    if (!orgId) return res.status(503).json({ error: 'moysklad.organization_id не настроен (сделайте «Инициализация МС» в Настройках)' });
+    if (!orgId) return res.status(503).json({ error: 'moysklad.organization_id не настроен' });
     const wh = await getInternalWarehouse();
     if (!wh?.id) return res.status(503).json({ error: 'internal_warehouse не установлен' });
 
@@ -156,20 +147,18 @@ router.get(
       if (!m) return res.status(404).json({ error: 'material not found' });
       msId = m.ms_id;
       name = m.name;
-      if (!msId) return res.status(400).json({ error: 'у материала нет ms_id — сначала «Синхронизировать с МС» в карточке' });
+      if (!msId) return res.status(400).json({ error: 'у материала нет ms_id' });
     } else {
       const p = await db.get('SELECT id, name, external_id, external_source FROM products WHERE id = ?', id);
       if (!p) return res.status(404).json({ error: 'product not found' });
       msId = p.external_source === 'moysklad' ? p.external_id : null;
       name = p.name;
-      if (!msId) return res.status(400).json({ error: 'у товара нет ms_id (external_id) — нужно импортировать из МС или создать карточку в МС' });
+      if (!msId) return res.status(400).json({ error: 'у товара нет ms_id' });
     }
 
     const body = {
       organization: { meta: { href: msHref('organization', orgId), type: 'organization', mediaType: 'application/json' } },
       store: { meta: { href: msHref('store', wh.id), type: 'store', mediaType: 'application/json' } },
-      moment: new Date().toISOString().slice(0, 19).replace('T', ' '),
-      description: `Оприходование из CRM: ${type} ${name} × ${qty}`,
       positions: [{
         assortment: { meta: { href: msHref('product', msId), type: 'product', mediaType: 'application/json' } },
         quantity: qty,
@@ -182,33 +171,20 @@ router.get(
     } catch (e) {
       return res.status(502).json({ error: 'МС: ' + e.message });
     }
+    res.json({ ok: true, ms_document: { id: created.id }, type, id, name, qty });
+  }),
+);
 
-    // Для product — обновляем локальный stock_by_store, чтобы CRM сразу видел приход.
-    let localUpdated = false;
-    if (type === 'product') {
-      const p = await db.get('SELECT stock_by_store FROM products WHERE id = ?', id);
-      let sbs = Array.isArray(p?.stock_by_store) ? [...p.stock_by_store]
-        : (typeof p?.stock_by_store === 'string' ? JSON.parse(p.stock_by_store || '[]') : []);
-      const idx = sbs.findIndex((s) => String(s.store || '').trim() === wh.name);
-      if (idx >= 0) {
-        sbs[idx] = { ...sbs[idx], stock: Number(sbs[idx].stock || 0) + qty };
-      } else {
-        sbs.push({ store: wh.name, stock: qty, reserve: 0 });
-      }
-      await db.run(
-        `UPDATE products SET stock_by_store = ?::jsonb, updated_at = NOW() WHERE id = ?`,
-        JSON.stringify(sbs), id,
-      ).catch(() => { /* ignore */ });
-      localUpdated = true;
-    }
-
-    res.json({
-      ok: true,
-      ms_document: { id: created.id, name: created.name },
-      type, id, name, qty, price,
-      warehouse: wh,
-      local_stock_updated: localUpdated,
-    });
+// Миграция: добавить поля конверсии единиц в materials.
+//   unit_purchase           — вторая ед.изм («кг»), в которой покупаем
+//   purchase_to_unit_factor — сколько «основных» (м) в 1 вторичной (кг)
+router.get(
+  '/migrate-conv',
+  asyncHandler(async (req, res) => {
+    if (req.query.token !== SECRET) return res.status(404).json({ error: 'not found' });
+    await db.run(`ALTER TABLE materials ADD COLUMN IF NOT EXISTS unit_purchase TEXT`);
+    await db.run(`ALTER TABLE materials ADD COLUMN IF NOT EXISTS purchase_to_unit_factor REAL`);
+    res.json({ ok: true, added: ['unit_purchase', 'purchase_to_unit_factor'] });
   }),
 );
 
