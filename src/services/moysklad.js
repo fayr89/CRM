@@ -192,8 +192,10 @@ export async function msFetchStockByProductIds(token, externalIds) {
 
   async function queryBatch(entity, ids, depth = 0) {
     if (!ids.length) return new Set();
-    const filterParts = ids.map((id) => `${entity}=${BASE}/entity/${entity}/${id}`).join(';');
-    const url = `${BASE}/report/stock/bystore?filter=${encodeURIComponent(filterParts)}&limit=1000`;
+    // МС не парсит закодированный `;` (%3B) — разделитель OR в filter оставляем
+    // голым, URL-кодируем только сами URL сущностей.
+    const filterParts = ids.map((id) => `${entity}=${encodeURIComponent(`${BASE}/entity/${entity}/${id}`)}`).join(';');
+    const url = `${BASE}/report/stock/bystore?filter=${filterParts}&limit=1000`;
     const res = await msFetch(url, headers);
     if (!res.ok) {
       if (res.status === 412 && ids.length > 1 && depth < BISECT_MAX_DEPTH) {
