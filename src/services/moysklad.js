@@ -159,76 +159,71 @@ export async function fetchMoyskladStock(token) {
   return { byId, bySku, count: rows.length, sample: rows[0] || null };
 }
 
-// Свежие остатки по складам для списка UUID. В МС остатки лежат на разных
-// сущностях — product / variant, — поэтому делаем ДВА запроса последовательно:
-// сначала filter=product=URL1;product=URL2;…, потом variant= ТОЛЬКО для тех
-// UUID, которые product-батч не вернул.
+// Свежие остатки по складам для списка UUID. Раньше делали один батч
+// `filter=product=URL1;product=URL2;…`, но multi-UUID запросы к МС
+// стабильно валятся «fetch failed» на сетевом уровне (Node fetch +
+// промежуточный Cloudflare похоже ломаются на `;` в filter; инцидент
+// 2026-06-11 v3). Single-UUID запросы работают надёжно.
 //
-// Гибридный фильтр (product=…;variant=… в одном запросе) не работает: если
-// UUID существует только как product, МС отвечает 412 «variant с UUID … не
-// найден» и ВЕСЬ батч валится. Из-за этого ТРУФАСТ 70868033 в инциденте
-// 2026-06-11 не подтянулся свежим, и менеджеры видели stock=1 вместо 11.
-//
-// Бисекция при 412: если в батче есть хоть один UUID, который на самом
-// деле другой сущности (variant в product-батче, archived/нет — в любом),
-// весь батч 412. Делим пополам — изолируем «битый», получаем данные для
-// остальных. Без этого refreshProductStocks писал stock_by_store=[] ВСЕМ
-// товарам заказа (инцидент 2026-06-11 v2 — пропадал товар со 170 шт).
-//
-// Critical: variant-батч пробуем ТОЛЬКО для UUID, которых product-батч не
-// нашёл. Иначе для каталога-только-products variant-батч 412 бисектится до
-// 30+ запросов и серверная функция уходит в таймаут (инцидент v3 «fetch
-// failed»). Глубина 4 — компромисс между восстановлением и стоимостью.
-// Для refreshProductStocks/orderRecheck батч обычно 1-10 товаров заказа.
-// Глубина 3 достаточна (2^3=8 листьев) и не даёт каскад запросов как при
-// глубине 4 на большом батче. Для массового аудита используем общий
-// /report/stock/bystore (без filter=) — бисекция там вообще не нужна.
-const BISECT_MAX_DEPTH = 3;
+// Поэтому: делаем по одному запросу на UUID, параллельно по 5 (лимит МС
+// «5 одновременных на токен»). Сначала пробуем как product; UUID,
+// которые не вернулись, пробуем как variant. Для батча 50 это ~10 раундов
+// × ~500мс = ~5с, в пределах Vercel 60s. Никаких 412-бисекций.
+const CONCURRENCY = 5;
+
+async function pMapLimit(items, limit, fn) {
+  const results = new Array(items.length);
+  let next = 0;
+  async function worker() {
+    while (true) {
+      const i = next;
+      next += 1;
+      if (i >= items.length) return;
+      results[i] = await fn(items[i], i);
+    }
+  }
+  const workers = Array.from({ length: Math.min(limit, items.length) }, worker);
+  await Promise.all(workers);
+  return results;
+}
 
 export async function msFetchStockByProductIds(token, externalIds) {
   if (!externalIds?.length) return new Map();
   const headers = authHeader(token);
   const byId = new Map();
 
-  async function queryBatch(entity, ids, depth = 0) {
-    if (!ids.length) return new Set();
-    // МС не парсит закодированный `;` (%3B) — разделитель OR в filter оставляем
-    // голым, URL-кодируем только сами URL сущностей.
-    const filterParts = ids.map((id) => `${entity}=${encodeURIComponent(`${BASE}/entity/${entity}/${id}`)}`).join(';');
-    const url = `${BASE}/report/stock/bystore?filter=${filterParts}&limit=1000`;
+  async function fetchOne(entity, id) {
+    const filter = `${entity}=${encodeURIComponent(`${BASE}/entity/${entity}/${id}`)}`;
+    const url = `${BASE}/report/stock/bystore?filter=${filter}&limit=10`;
     const res = await msFetch(url, headers);
     if (!res.ok) {
-      if (res.status === 412 && ids.length > 1 && depth < BISECT_MAX_DEPTH) {
-        const mid = Math.floor(ids.length / 2);
-        const left = await queryBatch(entity, ids.slice(0, mid), depth + 1);
-        const right = await queryBatch(entity, ids.slice(mid), depth + 1);
-        return new Set([...left, ...right]);
+      // 412 — UUID не сущность этого типа (например variant в product-батче,
+      // или удалён). Молча скипаем — попробуем как variant потом.
+      if (res.status !== 412) {
+        const text = await res.text().catch(() => '');
+        // eslint-disable-next-line no-console
+        console.warn(`[ms-stock] ${entity}/${id} ${res.status}: ${text.slice(0, 200)}`);
       }
-      const text = await res.text().catch(() => '');
-      // eslint-disable-next-line no-console
-      console.warn(`[ms-stock] ${entity}= depth=${depth} size=${ids.length} ${res.status}: ${text.slice(0, 200)}`);
-      return new Set();
+      return false;
     }
     const data = await res.json();
-    const found = new Set();
     for (const r of (data.rows || [])) {
       const stores = (r.stockByStore || []).map((s) => ({
         store: s.name || '—',
         stock: Number(s.stock) || 0,
         reserve: Number(s.reserve) || 0,
       }));
-      const id = extractUuid(r.meta?.href);
-      if (id) {
-        byId.set(id, stores);
-        found.add(id);
-      }
+      const rid = extractUuid(r.meta?.href);
+      if (rid) byId.set(rid, stores);
     }
-    return found;
+    return true;
   }
 
-  const foundAsProduct = await queryBatch('product', externalIds);
-  const missing = externalIds.filter((id) => !foundAsProduct.has(id));
-  if (missing.length) await queryBatch('variant', missing);
+  await pMapLimit(externalIds, CONCURRENCY, (id) => fetchOne('product', id));
+  const missing = externalIds.filter((id) => !byId.has(id));
+  if (missing.length) {
+    await pMapLimit(missing, CONCURRENCY, (id) => fetchOne('variant', id));
+  }
   return byId;
 }
 
