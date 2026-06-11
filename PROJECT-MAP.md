@@ -253,6 +253,26 @@ CRM разделяет заказы на два потока:
   цена запрещена (`priceSchema.warehouse.min(1)`).
 - Lookup цены = `(product_id, 'Общий прайс', order.warehouse)`.
 
+### Переходы статуса waiting_stock
+
+Заказ в `waiting_stock` — товара нет. Когда товар поступает, в карточке
+доступны две кнопки:
+- **«🔄 Проверить и зарезервировать»** (`POST /api/orders/:id/recheck-stock`,
+  `routes/orderRecheck.js`): подтягивает свежие остатки из МС только по
+  позициям этого заказа (через `msFetchStockByProductIds`), обновляет
+  `products.stock_by_store`, проверяет наличие на `orders.warehouse`. Если
+  хватает — резервирует одной транзакцией (status='reserved' +
+  pending-приход в `payments` + `applyLocalStockReserveDelta(0, +1)` +
+  `enqueueMsJob 'customer_order.upsert'`). Если не хватает — остаётся в
+  `waiting_stock` и возвращает `{ok:false, missing:[...]}`. Маршрут
+  смонтирован в `app.js` ДО `ordersRoutes` (узкий путь, отдельный файл).
+- **«✅ Товар поступил»** (`POST /api/orders/:id/mark-ready`) — fallback,
+  просто переводит в `new` без проверок остатков.
+
+Доступ к recheck-stock: владелец заказа или admin/warehouse/aus/rop.
+Для маркетплейс-заказов проверяется `shipment_qr` — без него возвращаем
+сообщение «заполните и нажмите Зарезервировать вручную».
+
 ### Видимость заказов (`orderScope`)
 
 В `routes/orders.js`:
