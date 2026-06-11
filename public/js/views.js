@@ -7191,7 +7191,7 @@ async function openMoyskladImport(onDone) {
         await onDone?.();
         return new Promise((resolve) => setTimeout(() => resolve(true), 1500));
       } catch (e) {
-        statusEl.innerHTML = `❌ ${e.message}`;
+        statusEl.textContent = `❌ ${e.message}`;
         return false;
       }
     },
@@ -7222,7 +7222,7 @@ async function openMoyskladStock(onDone) {
         await onDone?.();
         return new Promise((resolve) => setTimeout(() => resolve(true), 1200));
       } catch (e) {
-        statusEl.innerHTML = `❌ ${e.message}`;
+        statusEl.textContent = `❌ ${e.message}`;
         return false;
       }
     },
@@ -7363,11 +7363,13 @@ async function openPriceTemplate() {
   } catch {
     /* складов нет */
   }
+  // Канал цен в системе один — «Общий прайс» (см. PROJECT-MAP «Прайсы»).
+  // Раньше тут был список площадок из MARKETPLACES — после унификации
+  // выгрузка по «Avito» давала пустой шаблон.
   const channelSel = el(
     'select',
     { class: 'select' },
-    el('option', { value: '' }, '— выберите канал —'),
-    ...MARKETPLACES.filter((m) => m.value).map((m) => el('option', { value: m.value }, m.label)),
+    el('option', { value: 'Общий прайс', selected: true }, 'Общий прайс'),
   );
   const warehouseSel = el(
     'select',
@@ -7490,7 +7492,7 @@ async function openPriceUpload(onDone) {
             ? '❌ Во всех строках с ценой не заполнен «Склад». Скачайте шаблон с выбранным складом или впишите склад в колонку «Склад».'
             : '❌ Не нашёл ни одной строки с заполненной ценой. Заполните колонку «Цена для канала продаж».');
     } catch (e) {
-      statusEl.innerHTML = `❌ Не удалось прочитать файл: ${e.message}`;
+      statusEl.textContent = `❌ Не удалось прочитать файл: ${e.message}`;
     }
   });
 
@@ -7529,7 +7531,7 @@ async function openPriceUpload(onDone) {
         await onDone?.();
         return new Promise((resolve) => setTimeout(() => resolve(true), 1800));
       } catch (e) {
-        statusEl.innerHTML = `❌ ${e.message}`;
+        statusEl.textContent = `❌ ${e.message}`;
         return false;
       }
     },
@@ -10568,6 +10570,10 @@ export async function renderMaterials(main) {
       { name: 'name', label: 'Наименование', required: true },
       { name: 'sku', label: 'Артикул' },
       { name: 'unit', label: 'Ед.изм (шт, м, кг, л)', default: 'шт' },
+      // Конверсия: покупаем в одной единице (кг), храним/списываем в другой (м).
+      // При оприходовании с qty_unit='purchase' бэк умножит на коэффициент.
+      { name: 'unit_purchase', label: 'Закупочная ед.изм (опц. — если покупаете в другой, напр. кг)' },
+      { name: 'purchase_to_unit_factor', label: 'Сколько основных ед. в 1 закупочной (напр. 6.5 м в 1 кг)', type: 'number' },
       ...(canSeeProdCost() ? [{ name: 'cost_price', label: 'Закупочная цена ₽', type: 'number' }] : []),
       { name: 'supplier', label: 'Поставщик' },
       { name: 'warehouse', label: 'Склад хранения' },
@@ -10622,6 +10628,16 @@ export async function renderMaterials(main) {
         // cost_price может быть строкой — приводим к Number.
         if (data.cost_price != null && data.cost_price !== '') data.cost_price = Number(data.cost_price);
         else delete data.cost_price;
+        // Конверсия: пустые поля не шлём (zod ждёт number|null), пара
+        // «единица без коэффициента» бессмысленна — просим оба.
+        const hasUnitP = data.unit_purchase != null && String(data.unit_purchase).trim() !== '';
+        const hasFactor = data.purchase_to_unit_factor != null && String(data.purchase_to_unit_factor).trim() !== '';
+        if (hasUnitP !== hasFactor) {
+          toast('Для конверсии заполните оба поля: закупочную ед.изм и коэффициент', 'error');
+          return false;
+        }
+        if (hasFactor) data.purchase_to_unit_factor = Number(data.purchase_to_unit_factor);
+        else { data.unit_purchase = null; data.purchase_to_unit_factor = null; }
         if (isEdit) await api.update('materials', material.id, data);
         else await api.create('materials', data);
         toast(isEdit ? 'Сохранено' : 'Создано', 'success');
@@ -10720,9 +10736,36 @@ export async function renderProcessingPlans(main) {
           ' — они появятся в выпадашке.')
       : null;
 
-    const productSel = el('select', { disabled: !!planId },
-      el('option', { value: '' }, '— выберите товар —'),
-      ...products.map((p) => el('option', { value: String(p.id), selected: p.id === plan.product_id }, `${p.name}${p.sku ? ' (' + p.sku + ')' : ''}`)),
+    // По умолчанию показываем только товары с остатком на производственном
+    // складе (Софийская) — техкарты заводят для того, что реально производим.
+    // Галочку можно снять: новый товар попадает на Софийскую только после
+    // первого выпуска/оприходования, для него фильтр пришлось бы обходить.
+    const SOFIA_RE = /софийск/i;
+    function onSofia(p) {
+      const sbs = Array.isArray(p.stock_by_store) ? p.stock_by_store
+        : (typeof p.stock_by_store === 'string' ? JSON.parse(p.stock_by_store || '[]') : []);
+      return sbs.some((s) => SOFIA_RE.test(String(s.store || '')) && Number(s.stock) > 0);
+    }
+    const productSel = el('select', { disabled: !!planId });
+    const sofiaOnlyCb = el('input', { type: 'checkbox', checked: true });
+    const sofiaCountEl = el('span', { class: 'hint' });
+    function rebuildProductOptions() {
+      const filtered = sofiaOnlyCb.checked
+        ? products.filter((p) => p.id === plan.product_id || onSofia(p))
+        : products;
+      clear(productSel);
+      productSel.append(
+        el('option', { value: '' }, '— выберите товар —'),
+        ...filtered.map((p) => el('option', { value: String(p.id), selected: p.id === plan.product_id }, `${p.name}${p.sku ? ' (' + p.sku + ')' : ''}`)),
+      );
+      sofiaCountEl.textContent = sofiaOnlyCb.checked
+        ? (filtered.length ? `${filtered.length} на складе Софийская` : 'На Софийской нет товаров — снимите галочку, чтобы выбрать любой')
+        : `все товары: ${products.length}`;
+    }
+    sofiaOnlyCb.addEventListener('change', rebuildProductOptions);
+    rebuildProductOptions();
+    const sofiaFilterRow = el('label', { style: { display: 'flex', gap: '6px', alignItems: 'center', fontSize: '13px', marginTop: '4px' } },
+      sofiaOnlyCb, 'только со склада Софийская (производство) ', sofiaCountEl,
     );
 
     const itemsArea = el('div', { class: 'plan-items', style: { display: 'flex', flexDirection: 'column', gap: '6px', marginTop: '8px' } });
@@ -10767,6 +10810,7 @@ export async function renderProcessingPlans(main) {
     const body = el('div', {},
       materialsHint,
       el('div', { class: 'form-row' }, el('label', {}, 'Товар *'), productSel),
+      planId ? null : sofiaFilterRow,
       el('div', { class: 'form-row' },
         el('label', {}, 'Этапы изготовления'),
         el('div', {},
