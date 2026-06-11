@@ -160,39 +160,49 @@ export async function fetchMoyskladStock(token) {
 }
 
 // Свежие остатки по складам для списка UUID. В МС остатки лежат на разных
-// сущностях — product / variant / consignment, — поэтому фильтр строим
-// сразу обоими: `product=URL1;variant=URL1;product=URL2;variant=URL2;...`.
-// Раньше слали только product=, и все товары-модификации (например
-// «Q20176/70868033») возвращали пустой результат и наш импорт обнулял им
-// stock_by_store. (Инцидент 2026-06-11 с ТРУФАСТ Контейнером.)
+// сущностях — product / variant, — поэтому делаем ДВА отдельных запроса:
+// один с filter=product=URL1;product=URL2;..., второй с filter=variant=…
 //
-// МС-фильтр поддерживает OR через `;`, ограничения у нас 1500 символов
-// на batch (msError усекает текст до 1500). 50 ID × 2 = 100 значений по
-// ~80 символов = ~8 КБ — в пределах безопасного URL-лимита.
+// Гибридный фильтр (product=…;variant=… в одном запросе) не работает: если
+// UUID существует только как product, МС отвечает 412 «variant с UUID … не
+// найден» и ВЕСЬ батч валится. Из-за этого ТРУФАСТ 70868033 в инциденте
+// 2026-06-11 не подтянулся свежим, и менеджеры видели stock=1 вместо 11.
+//
+// Раздельные запросы дешевле: «product»-батч у нас уже работал годами,
+// «variant»-батч добавлен для модификаций. Если один из них упадёт — мы
+// логируем и возвращаем то, что собрали. Никаких false-negative-обнулений.
 export async function msFetchStockByProductIds(token, externalIds) {
   if (!externalIds?.length) return new Map();
   const headers = authHeader(token);
-  const filterParts = externalIds.flatMap((id) => [
-    `product=${BASE}/entity/product/${id}`,
-    `variant=${BASE}/entity/variant/${id}`,
-  ]).join(';');
-  const url = `${BASE}/report/stock/bystore?filter=${encodeURIComponent(filterParts)}&limit=1000`;
-  const res = await msFetch(url, headers);
-  if (!res.ok) {
-    const text = await res.text();
-    throw msError(res.status, text);
-  }
-  const data = await res.json();
   const byId = new Map();
-  for (const r of (data.rows || [])) {
-    const stores = (r.stockByStore || []).map((s) => ({
-      store: s.name || '—',
-      stock: Number(s.stock) || 0,
-      reserve: Number(s.reserve) || 0,
-    }));
-    const id = extractUuid(r.meta?.href);
-    if (id) byId.set(id, stores);
+
+  async function batchByEntity(entity) {
+    const filterParts = externalIds.map((id) => `${entity}=${BASE}/entity/${entity}/${id}`).join(';');
+    const url = `${BASE}/report/stock/bystore?filter=${encodeURIComponent(filterParts)}&limit=1000`;
+    const res = await msFetch(url, headers);
+    if (!res.ok) {
+      // 412 «… не найден» — типичный ответ когда в батче есть UUID, который
+      // не является сущностью этого типа. Логируем и идём дальше: тот же
+      // UUID может быть найден другим запросом.
+      const text = await res.text().catch(() => '');
+      // eslint-disable-next-line no-console
+      console.warn(`[ms-stock] batch ${entity}= failed ${res.status}: ${text.slice(0, 300)}`);
+      return;
+    }
+    const data = await res.json();
+    for (const r of (data.rows || [])) {
+      const stores = (r.stockByStore || []).map((s) => ({
+        store: s.name || '—',
+        stock: Number(s.stock) || 0,
+        reserve: Number(s.reserve) || 0,
+      }));
+      const id = extractUuid(r.meta?.href);
+      if (id) byId.set(id, stores);
+    }
   }
+
+  await batchByEntity('product');
+  await batchByEntity('variant');
   return byId;
 }
 
