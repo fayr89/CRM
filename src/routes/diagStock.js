@@ -10,7 +10,7 @@ import { db } from '../db.js';
 import { asyncHandler } from '../errors.js';
 import { authenticate, requireRole } from '../auth.js';
 import { decryptSecret } from '../services/secrets.js';
-import { msFetchStockByProductIds } from '../services/moysklad.js';
+import { msFetchStockByProductIds, fetchMoyskladStockByStorePage } from '../services/moysklad.js';
 
 const router = Router();
 
@@ -176,43 +176,36 @@ router.get(
   }),
 );
 
-// Массовый аудит CRM vs МС: пробегает товары порциями PAGE=50, берёт BEFORE
-// (что в БД), фетчит МС, обновляет БД (если МС вернул данные) и считает
-// расхождения. Возвращает summary + список товаров где CRM != MC.
-// Чтобы не упереться в 10с-таймаут — пагинация: offset/limit, и фронт/MCP
-// сам циклом дёргает по очереди.
+// Массовый аудит CRM vs МС: пагинируем общий отчёт МС
+// /report/stock/bystore (без filter=) — один МС-запрос на 500 товаров,
+// без 412-бисекций. Для каждого товара МС → ищем у нас в БД по external_id
+// → сравниваем stock_by_store. Если у МС данные есть, перезаписываем в БД.
+//
+// Параметры:
+//   offset — стартовый offset для МС-отчёта (нужен для пагинации)
+//   limit — размер страницы МС (по умолчанию 500)
+//   warehouse — сужает diff до одного склада (например "Склад МСК (Электросталь)")
+//
+// Ответ: summary за страницу + nextOffset + done. Дёргать в цикле до done=true.
 router.get(
   '/audit',
   requireRole('admin', 'aus', 'rop'),
   asyncHandler(async (req, res) => {
     const offset = Math.max(0, parseInt(req.query.offset, 10) || 0);
-    const PAGE = Math.min(50, Math.max(1, parseInt(req.query.limit, 10) || 50));
+    const limit = Math.min(1000, Math.max(50, parseInt(req.query.limit, 10) || 500));
     const warehouseFilter = req.query.warehouse ? String(req.query.warehouse).trim() : null;
 
     const token = await getMsToken();
     if (!token) return res.status(503).json({ error: 'no MC token' });
 
-    const totalRow = await db.get(
-      `SELECT COUNT(*)::int AS total FROM products
-       WHERE external_source = 'moysklad' AND external_id IS NOT NULL
-         AND is_markdown IS NOT TRUE AND active = TRUE`,
-    );
-    const total = totalRow?.total || 0;
-
-    const products = await db.all(
-      `SELECT id, sku, name, external_id, stock_by_store
-       FROM products
-       WHERE external_source = 'moysklad' AND external_id IS NOT NULL
-         AND is_markdown IS NOT TRUE AND active = TRUE
-       ORDER BY id LIMIT ? OFFSET ?`,
-      PAGE, offset,
-    );
-    if (!products.length) {
-      return res.json({ ok: true, total, offset, nextOffset: offset, done: true, mismatches: [], stats: { checked: 0, fixed: 0 } });
+    let page;
+    try {
+      page = await fetchMoyskladStockByStorePage(token, offset, limit);
+    } catch (e) {
+      return res.status(502).json({ error: 'МС: ' + e.message });
     }
-
-    const ids = products.map((p) => p.external_id);
-    const byId = await msFetchStockByProductIds(token, ids);
+    const { byId, size } = page;
+    const fetched = page.fetched || 0;
 
     function totalsByStore(sbs) {
       const result = {};
@@ -227,48 +220,59 @@ router.get(
       return result;
     }
 
-    const mismatches = [];
+    let checked = 0;
     let fixed = 0;
-    let noMsData = 0;
-    for (const p of products) {
-      const msStores = byId.get(p.external_id);
-      const beforeMap = totalsByStore(p.stock_by_store);
-      const msMap = msStores ? totalsByStore(msStores) : null;
+    let noOurMatch = 0;
+    const mismatches = [];
 
-      if (msStores && msStores.length) {
-        await db.run(
-          `UPDATE products SET stock_by_store = ?::jsonb, updated_at = NOW() WHERE id = ?`,
-          JSON.stringify(msStores), p.id,
-        );
-        fixed += 1;
-      } else {
-        noMsData += 1;
-      }
+    if (byId.size) {
+      const externalIds = [...byId.keys()];
+      const ours = await db.all(
+        `SELECT id, sku, name, external_id, stock_by_store
+         FROM products
+         WHERE external_source = 'moysklad' AND external_id = ANY(?)
+           AND is_markdown IS NOT TRUE AND active = TRUE`,
+        externalIds,
+      );
+      const oursByExt = new Map(ours.map((p) => [p.external_id, p]));
 
-      if (!msMap) continue;
-      const stores = new Set([...Object.keys(beforeMap), ...Object.keys(msMap)]);
-      const diffs = [];
-      for (const s of stores) {
-        if (warehouseFilter && s !== warehouseFilter) continue;
-        const b = beforeMap[s] || { stock: 0, reserve: 0, available: 0 };
-        const m = msMap[s] || { stock: 0, reserve: 0, available: 0 };
-        if (b.stock !== m.stock || b.reserve !== m.reserve) {
-          diffs.push({ store: s, before: b, ms: m });
+      for (const extId of externalIds) {
+        const p = oursByExt.get(extId);
+        if (!p) { noOurMatch += 1; continue; }
+        checked += 1;
+        const msStores = byId.get(extId);
+        const beforeMap = totalsByStore(p.stock_by_store);
+        const msMap = totalsByStore(msStores);
+
+        if (msStores && msStores.length) {
+          await db.run(
+            `UPDATE products SET stock_by_store = ?::jsonb, updated_at = NOW() WHERE id = ?`,
+            JSON.stringify(msStores), p.id,
+          );
+          fixed += 1;
         }
-      }
-      if (diffs.length) {
-        mismatches.push({
-          id: p.id, sku: p.sku, name: p.name,
-          diffs,
-        });
+
+        const stores = new Set([...Object.keys(beforeMap), ...Object.keys(msMap)]);
+        const diffs = [];
+        for (const s of stores) {
+          if (warehouseFilter && s !== warehouseFilter) continue;
+          const b = beforeMap[s] || { stock: 0, reserve: 0, available: 0 };
+          const m = msMap[s] || { stock: 0, reserve: 0, available: 0 };
+          if (b.stock !== m.stock || b.reserve !== m.reserve) {
+            diffs.push({ store: s, before: b, ms: m });
+          }
+        }
+        if (diffs.length) {
+          mismatches.push({ id: p.id, sku: p.sku, name: p.name, diffs });
+        }
       }
     }
 
-    const nextOffset = offset + products.length;
-    const done = products.length < PAGE || nextOffset >= total;
+    const nextOffset = offset + fetched;
+    const done = fetched < limit || nextOffset >= size;
     res.json({
-      ok: true, total, offset, nextOffset, done,
-      stats: { checked: products.length, fixed, no_ms_data: noMsData, mismatched: mismatches.length },
+      ok: true, ms_total: size, offset, nextOffset, fetched, done,
+      stats: { checked, fixed, no_our_match: noOurMatch, mismatched: mismatches.length },
       mismatches,
     });
   }),

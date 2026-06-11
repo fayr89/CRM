@@ -179,7 +179,11 @@ export async function fetchMoyskladStock(token) {
 // нашёл. Иначе для каталога-только-products variant-батч 412 бисектится до
 // 30+ запросов и серверная функция уходит в таймаут (инцидент v3 «fetch
 // failed»). Глубина 4 — компромисс между восстановлением и стоимостью.
-const BISECT_MAX_DEPTH = 4;
+// Для refreshProductStocks/orderRecheck батч обычно 1-10 товаров заказа.
+// Глубина 3 достаточна (2^3=8 листьев) и не даёт каскад запросов как при
+// глубине 4 на большом батче. Для массового аудита используем общий
+// /report/stock/bystore (без filter=) — бисекция там вообще не нужна.
+const BISECT_MAX_DEPTH = 3;
 
 export async function msFetchStockByProductIds(token, externalIds) {
   if (!externalIds?.length) return new Map();
