@@ -6848,12 +6848,16 @@ async function openProductForm(product, onSaved) {
       return;
     }
   }
-  // Список складов для прайса (цена задаётся на канал + склад).
+  // Список складов для прайса (цена задаётся на канал + склад) и для
+  // фильтра блока «Остатки по складам» ниже — чтобы не показывать чужие
+  // фулфилменты (FBW Иваненко/Уютный мир, Qazpost и т.п.), которые скрыты
+  // в Настройках → Видимость складов.
   let priceWarehouses = [];
+  let hiddenStoresSet = new Set();
   try {
     const w = await api.warehousesList();
-    const hidden = new Set(w.hidden || []);
-    priceWarehouses = (w.all || []).filter((s) => !hidden.has(s));
+    hiddenStoresSet = new Set(w.hidden || []);
+    priceWarehouses = (w.all || []).filter((s) => !hiddenStoresSet.has(s));
   } catch {
     /* складов нет — можно сохранить прайс без склада */
   }
@@ -7059,7 +7063,12 @@ async function openProductForm(product, onSaved) {
     ),
     isEdit && Array.isArray(cur.stock_by_store) && cur.stock_by_store.length
       ? (() => {
-          const visible = cur.stock_by_store.filter((s) => (Number(s.stock) || 0) !== 0 || (Number(s.reserve) || 0) !== 0);
+          // Скрываем чужие склады из «Видимость складов» — менеджеру они только
+          // мешают (FBW Иваненко, Qazpost Астана и т.п.). При нулях/отрицаниях
+          // тоже скрываем (как раньше).
+          const visible = cur.stock_by_store.filter((s) =>
+            !hiddenStoresSet.has(s.store)
+            && ((Number(s.stock) || 0) !== 0 || (Number(s.reserve) || 0) !== 0));
           const totalStock = visible.reduce((sum, s) => sum + (Number(s.stock) || 0), 0);
           const totalReserve = visible.reduce((sum, s) => sum + (Number(s.reserve) || 0), 0);
           return el(
