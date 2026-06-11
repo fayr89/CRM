@@ -159,10 +159,23 @@ export async function fetchMoyskladStock(token) {
   return { byId, bySku, count: rows.length, sample: rows[0] || null };
 }
 
-export async function msFetchStockByProductIds(token, productExternalIds) {
-  if (!productExternalIds?.length) return new Map();
+// Свежие остатки по складам для списка UUID. В МС остатки лежат на разных
+// сущностях — product / variant / consignment, — поэтому фильтр строим
+// сразу обоими: `product=URL1;variant=URL1;product=URL2;variant=URL2;...`.
+// Раньше слали только product=, и все товары-модификации (например
+// «Q20176/70868033») возвращали пустой результат и наш импорт обнулял им
+// stock_by_store. (Инцидент 2026-06-11 с ТРУФАСТ Контейнером.)
+//
+// МС-фильтр поддерживает OR через `;`, ограничения у нас 1500 символов
+// на batch (msError усекает текст до 1500). 50 ID × 2 = 100 значений по
+// ~80 символов = ~8 КБ — в пределах безопасного URL-лимита.
+export async function msFetchStockByProductIds(token, externalIds) {
+  if (!externalIds?.length) return new Map();
   const headers = authHeader(token);
-  const filterParts = productExternalIds.map((id) => `product=${BASE}/entity/product/${id}`).join(';');
+  const filterParts = externalIds.flatMap((id) => [
+    `product=${BASE}/entity/product/${id}`,
+    `variant=${BASE}/entity/variant/${id}`,
+  ]).join(';');
   const url = `${BASE}/report/stock/bystore?filter=${encodeURIComponent(filterParts)}&limit=1000`;
   const res = await msFetch(url, headers);
   if (!res.ok) {
