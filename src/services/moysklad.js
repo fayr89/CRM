@@ -160,23 +160,25 @@ export async function fetchMoyskladStock(token) {
 }
 
 // Свежие остатки по складам для списка UUID. В МС остатки лежат на разных
-// сущностях — product / variant, — поэтому делаем ДВА отдельных запроса:
-// один с filter=product=URL1;product=URL2;..., второй с filter=variant=…
+// сущностях — product / variant, — поэтому делаем ДВА запроса последовательно:
+// сначала filter=product=URL1;product=URL2;…, потом variant= ТОЛЬКО для тех
+// UUID, которые product-батч не вернул.
 //
 // Гибридный фильтр (product=…;variant=… в одном запросе) не работает: если
 // UUID существует только как product, МС отвечает 412 «variant с UUID … не
 // найден» и ВЕСЬ батч валится. Из-за этого ТРУФАСТ 70868033 в инциденте
 // 2026-06-11 не подтянулся свежим, и менеджеры видели stock=1 вместо 11.
 //
-// Бисекция при 412: если в product-батче есть хоть один UUID, который на
-// самом деле variant (или удалён), весь батч 412. Делим пополам и пробуем
-// снова — так находим «битый» UUID и получаем данные для остальных. Без
-// этого refreshProductStocks при попытке резерва писал stock_by_store=[]
-// ВСЕМ товарам заказа (инцидент 2026-06-11 v2 — пропадал товар со 170 шт).
+// Бисекция при 412: если в батче есть хоть один UUID, который на самом
+// деле другой сущности (variant в product-батче, archived/нет — в любом),
+// весь батч 412. Делим пополам — изолируем «битый», получаем данные для
+// остальных. Без этого refreshProductStocks писал stock_by_store=[] ВСЕМ
+// товарам заказа (инцидент 2026-06-11 v2 — пропадал товар со 170 шт).
 //
-// Глубина 4 — компромисс: при 1 битом UUID в батче 50 восстанавливаем ~94%
-// данных за ~15 запросов; при «полный батч в неправильном типе» (типичный
-// случай variant-батча когда все UUID — products) ограничивает overhead.
+// Critical: variant-батч пробуем ТОЛЬКО для UUID, которых product-батч не
+// нашёл. Иначе для каталога-только-products variant-батч 412 бисектится до
+// 30+ запросов и серверная функция уходит в таймаут (инцидент v3 «fetch
+// failed»). Глубина 4 — компромисс между восстановлением и стоимостью.
 const BISECT_MAX_DEPTH = 4;
 
 export async function msFetchStockByProductIds(token, externalIds) {
@@ -184,24 +186,25 @@ export async function msFetchStockByProductIds(token, externalIds) {
   const headers = authHeader(token);
   const byId = new Map();
 
-  async function batchByEntity(entity, ids, depth = 0) {
-    if (!ids.length) return;
+  async function queryBatch(entity, ids, depth = 0) {
+    if (!ids.length) return new Set();
     const filterParts = ids.map((id) => `${entity}=${BASE}/entity/${entity}/${id}`).join(';');
     const url = `${BASE}/report/stock/bystore?filter=${encodeURIComponent(filterParts)}&limit=1000`;
     const res = await msFetch(url, headers);
     if (!res.ok) {
       if (res.status === 412 && ids.length > 1 && depth < BISECT_MAX_DEPTH) {
         const mid = Math.floor(ids.length / 2);
-        await batchByEntity(entity, ids.slice(0, mid), depth + 1);
-        await batchByEntity(entity, ids.slice(mid), depth + 1);
-        return;
+        const left = await queryBatch(entity, ids.slice(0, mid), depth + 1);
+        const right = await queryBatch(entity, ids.slice(mid), depth + 1);
+        return new Set([...left, ...right]);
       }
       const text = await res.text().catch(() => '');
       // eslint-disable-next-line no-console
-      console.warn(`[ms-stock] batch ${entity}= depth=${depth} size=${ids.length} failed ${res.status}: ${text.slice(0, 200)}`);
-      return;
+      console.warn(`[ms-stock] ${entity}= depth=${depth} size=${ids.length} ${res.status}: ${text.slice(0, 200)}`);
+      return new Set();
     }
     const data = await res.json();
+    const found = new Set();
     for (const r of (data.rows || [])) {
       const stores = (r.stockByStore || []).map((s) => ({
         store: s.name || '—',
@@ -209,12 +212,17 @@ export async function msFetchStockByProductIds(token, externalIds) {
         reserve: Number(s.reserve) || 0,
       }));
       const id = extractUuid(r.meta?.href);
-      if (id) byId.set(id, stores);
+      if (id) {
+        byId.set(id, stores);
+        found.add(id);
+      }
     }
+    return found;
   }
 
-  await batchByEntity('product', externalIds);
-  await batchByEntity('variant', externalIds);
+  const foundAsProduct = await queryBatch('product', externalIds);
+  const missing = externalIds.filter((id) => !foundAsProduct.has(id));
+  if (missing.length) await queryBatch('variant', missing);
   return byId;
 }
 
