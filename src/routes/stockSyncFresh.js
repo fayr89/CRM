@@ -60,22 +60,24 @@ export async function importMoyskladStoresFresh(req, res) {
   }
 
   // present — товары, для которых МС вернул stockByStore (есть остатки).
-  // absent — товары, которых МС не вернул (нулевые остатки или архивирован).
+  // absent — товары, которых МС не вернул в этом батче. РАНЬШЕ обнуляли их
+  // в NULL — но если МС-батч валится 412 целиком, ВСЕ товары попадают в
+  // absent и стираются (инцидент 2026-06-11 v2). Сейчас оставляем как было,
+  // очисткой архивных занимается только полный cron stock-sync.
   const present = [];
   const presentJson = [];
-  const absent = [];
+  let absentCount = 0;
   for (const p of products) {
     const sbs = byId.get(p.external_id);
     if (sbs && sbs.length) {
       present.push(p.external_id);
       presentJson.push(JSON.stringify(sbs));
     } else {
-      absent.push(p.external_id);
+      absentCount += 1;
     }
   }
 
   let updated = 0;
-  let cleared = 0;
   await db.withTransaction(async (tx) => {
     if (present.length) {
       const r = await tx.run(
@@ -86,21 +88,15 @@ export async function importMoyskladStoresFresh(req, res) {
       );
       updated = r.changes || 0;
     }
-    if (absent.length) {
-      const r = await tx.run(
-        `UPDATE products SET stock_by_store = NULL, updated_at = NOW()
-         WHERE external_source = 'moysklad' AND external_id = ANY(?)
-           AND is_markdown IS NOT TRUE`,
-        absent,
-      );
-      cleared = r.changes || 0;
-    }
   });
+  const cleared = 0;
+  const keptAbsent = absentCount;
 
   const nextOffset = offset + products.length;
   const done = products.length < PAGE || nextOffset >= total;
   res.json({
-    ok: true, updated, cleared, fetched: products.length,
+    ok: true, updated, cleared, kept_absent: keptAbsent,
+    fetched: products.length,
     nextOffset, total, done, source: 'fresh',
   });
 }

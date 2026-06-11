@@ -168,25 +168,37 @@ export async function fetchMoyskladStock(token) {
 // найден» и ВЕСЬ батч валится. Из-за этого ТРУФАСТ 70868033 в инциденте
 // 2026-06-11 не подтянулся свежим, и менеджеры видели stock=1 вместо 11.
 //
-// Раздельные запросы дешевле: «product»-батч у нас уже работал годами,
-// «variant»-батч добавлен для модификаций. Если один из них упадёт — мы
-// логируем и возвращаем то, что собрали. Никаких false-negative-обнулений.
+// Бисекция при 412: если в product-батче есть хоть один UUID, который на
+// самом деле variant (или удалён), весь батч 412. Делим пополам и пробуем
+// снова — так находим «битый» UUID и получаем данные для остальных. Без
+// этого refreshProductStocks при попытке резерва писал stock_by_store=[]
+// ВСЕМ товарам заказа (инцидент 2026-06-11 v2 — пропадал товар со 170 шт).
+//
+// Глубина 4 — компромисс: при 1 битом UUID в батче 50 восстанавливаем ~94%
+// данных за ~15 запросов; при «полный батч в неправильном типе» (типичный
+// случай variant-батча когда все UUID — products) ограничивает overhead.
+const BISECT_MAX_DEPTH = 4;
+
 export async function msFetchStockByProductIds(token, externalIds) {
   if (!externalIds?.length) return new Map();
   const headers = authHeader(token);
   const byId = new Map();
 
-  async function batchByEntity(entity) {
-    const filterParts = externalIds.map((id) => `${entity}=${BASE}/entity/${entity}/${id}`).join(';');
+  async function batchByEntity(entity, ids, depth = 0) {
+    if (!ids.length) return;
+    const filterParts = ids.map((id) => `${entity}=${BASE}/entity/${entity}/${id}`).join(';');
     const url = `${BASE}/report/stock/bystore?filter=${encodeURIComponent(filterParts)}&limit=1000`;
     const res = await msFetch(url, headers);
     if (!res.ok) {
-      // 412 «… не найден» — типичный ответ когда в батче есть UUID, который
-      // не является сущностью этого типа. Логируем и идём дальше: тот же
-      // UUID может быть найден другим запросом.
+      if (res.status === 412 && ids.length > 1 && depth < BISECT_MAX_DEPTH) {
+        const mid = Math.floor(ids.length / 2);
+        await batchByEntity(entity, ids.slice(0, mid), depth + 1);
+        await batchByEntity(entity, ids.slice(mid), depth + 1);
+        return;
+      }
       const text = await res.text().catch(() => '');
       // eslint-disable-next-line no-console
-      console.warn(`[ms-stock] batch ${entity}= failed ${res.status}: ${text.slice(0, 300)}`);
+      console.warn(`[ms-stock] batch ${entity}= depth=${depth} size=${ids.length} failed ${res.status}: ${text.slice(0, 200)}`);
       return;
     }
     const data = await res.json();
@@ -201,8 +213,8 @@ export async function msFetchStockByProductIds(token, externalIds) {
     }
   }
 
-  await batchByEntity('product');
-  await batchByEntity('variant');
+  await batchByEntity('product', externalIds);
+  await batchByEntity('variant', externalIds);
   return byId;
 }
 

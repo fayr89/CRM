@@ -1108,15 +1108,24 @@ router.post(
       throw BadRequest('Не удалось получить остатки из МС: ' + e.message);
     }
 
+    // Если МС не вернул данные по UUID (батч 412 даже после бисекции, или
+    // товар архивирован) — НЕ пишем пустой []: оставляем старое значение,
+    // иначе reserve следом видит stock=0 у заказа и валит «недостаточно
+    // товара». Очисткой архивных занимается только полный cron (там это
+    // безопасно через updated_at < started_at). Инцидент 2026-06-11 v2.
     const updated = [];
     for (const p of products) {
-      const stores = byId.get(p.external_id) || [];
-      await db.run(
-        `UPDATE products SET stock_by_store = ?::jsonb, updated_at = NOW() WHERE id = ?`,
-        JSON.stringify(stores),
-        p.id,
-      );
-      updated.push({ id: p.id, stock_by_store: stores });
+      const stores = byId.get(p.external_id);
+      if (stores && stores.length) {
+        await db.run(
+          `UPDATE products SET stock_by_store = ?::jsonb, updated_at = NOW() WHERE id = ?`,
+          JSON.stringify(stores),
+          p.id,
+        );
+        updated.push({ id: p.id, stock_by_store: stores });
+      } else {
+        updated.push({ id: p.id, stock_by_store: null, kept_existing: true });
+      }
     }
     res.json({ updated });
   }),

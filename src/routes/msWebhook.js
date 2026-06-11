@@ -55,39 +55,29 @@ router.post(
       const byId = await msFetchStockByProductIds(token, ids).catch(() => null);
       if (!byId) break;
 
+      // absent НЕ нулим: при 412 от МС весь батч был бы в absent → стёрли бы
+      // всё (см. инцидент 2026-06-11 v2). Очистку архивных делает только
+      // полный cron stock-sync через updated_at < started_at.
       const present = [];
       const presentJson = [];
-      const absent = [];
       for (const p of products) {
         const sbs = byId.get(p.external_id);
         if (sbs && sbs.length) {
           present.push(p.external_id);
           presentJson.push(JSON.stringify(sbs));
-        } else {
-          absent.push(p.external_id);
         }
       }
-      await db.withTransaction(async (tx) => {
-        if (present.length) {
-          await tx.run(
-            `UPDATE products AS p SET stock_by_store = d.sbs, updated_at = NOW()
-             FROM unnest(?::text[], ?::jsonb[]) AS d(external_id, sbs)
-             WHERE p.external_source = 'moysklad' AND p.external_id = d.external_id`,
-            present, presentJson,
-          );
-        }
-        if (absent.length) {
-          await tx.run(
-            `UPDATE products SET stock_by_store = NULL, updated_at = NOW()
-             WHERE external_source = 'moysklad' AND external_id = ANY(?)
-               AND is_markdown IS NOT TRUE`,
-            absent,
-          );
-        }
-      }).catch((e) => {
-        // eslint-disable-next-line no-console
-        console.warn('[ms-webhook-stock] db update error:', e?.message);
-      });
+      if (present.length) {
+        await db.run(
+          `UPDATE products AS p SET stock_by_store = d.sbs, updated_at = NOW()
+           FROM unnest(?::text[], ?::jsonb[]) AS d(external_id, sbs)
+           WHERE p.external_source = 'moysklad' AND p.external_id = d.external_id`,
+          present, presentJson,
+        ).catch((e) => {
+          // eslint-disable-next-line no-console
+          console.warn('[ms-webhook-stock] db update error:', e?.message);
+        });
+      }
 
       offset += products.length;
       if (products.length < PAGE) break;
