@@ -4,7 +4,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { errorHandler } from './errors.js';
 import { tickMsQueue } from './services/ms-jobs.js';
-import './services/ms-handlers.js'; // регистрирует обработчики МС-очереди при импорте
+import './services/ms-handlers.js';
 import authRoutes from './routes/auth.js';
 import usersRoutes from './routes/users.js';
 import companiesRoutes from './routes/companies.js';
@@ -35,13 +35,13 @@ import aiProposalsRoutes from './routes/aiProposals.js';
 import noticeBannersRoutes from './routes/noticeBanners.js';
 import notificationPrefsRoutes from './routes/notificationPrefs.js';
 import projectsRoutes from './routes/projects.js';
-// Производственный модуль (PROD): материалы, техкарты, производственные заказы, подряды.
 import materialsRoutes from './routes/materials.js';
 import processingPlansRoutes from './routes/processingPlans.js';
 import productionOrdersRoutes from './routes/productionOrders.js';
 import contractsRoutes from './routes/contracts.js';
 import productionPLRoutes from './routes/productionPL.js';
 import productionSettingsRoutes from './routes/productionSettings.js';
+import diagProdLinkRoutes from './routes/diagProdLink.js'; // TEMP
 import { authenticate as authMw } from './auth.js';
 import { importMoyskladStoresFresh } from './routes/stockSyncFresh.js';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -123,11 +123,7 @@ export function createApp({ serveStatic = true } = {}) {
   app.use('/api/notes', notesRoutes);
   app.use('/api/dashboard', dashboardRoutes);
   app.use('/api/invitations', invitationsRoutes);
-  // Патч на mark-waiting: основной хендлер в orders.js забывал две вещи при
-  // переходе reserved → waiting_stock:
-  //   1) снять локальный резерв на товаре (иначе резерв «прилипает» и нельзя больше бронировать тот же товар);
-  //   2) удалить pending income payment (был создан при reserve — висит в кассе непонятно за что).
-  // Перехватываем ДО основного хендлера. Основной потом сменит статус и отправит МС-job.
+  // Патч на mark-waiting: основной хендлер в orders.js забывал две вещи при переходе reserved → waiting_stock.
   app.post('/api/orders/:id/mark-waiting', async (req, res, next) => {
     try {
       const { db } = await import('./db.js');
@@ -160,8 +156,6 @@ export function createApp({ serveStatic = true } = {}) {
   app.use('/api/webhooks', webhooksRoutes);
   app.use('/api/notifications', notificationsRoutes);
   app.use('/api/search', searchRoutes);
-  // Перехват «Обновить остатки»: основной хендлер тянет общий отчёт МС (кешируется).
-  // Наша версия дёргает filter=product=URL партиями — МС адресный запрос не кеширует.
   app.post('/api/products/import/moysklad-stores', authMw, importMoyskladStoresFresh);
   app.use('/api/products', productsRoutes);
   app.use('/api/pricing', pricingRoutes);
@@ -181,6 +175,7 @@ export function createApp({ serveStatic = true } = {}) {
   app.use('/api/contracts', contractsRoutes);
   app.use('/api/production', productionPLRoutes);
   app.use('/api/production-settings', productionSettingsRoutes);
+  app.use('/api/diag-prod', diagProdLinkRoutes); // TEMP
   app.use((req, res) => {
     res.status(404).json({ error: `Route not found: ${req.method} ${req.path}` });
   });
