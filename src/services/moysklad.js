@@ -15,9 +15,6 @@ function authHeader(token) {
   return { Authorization: `Bearer ${t}`, Accept: 'application/json;charset=utf-8' };
 }
 
-// Запрос к МойСклад с повтором при 429/503. При превышении лимита одновременных
-// запросов МойСклад отдаёт 429 (код 1073) — ждём с растущей паузой и повторяем
-// (ресурсоёмкие отчёты остатков часто пересекаются с другими запросами по токену).
 async function msFetch(url, headers, retries = 4) {
   for (let attempt = 0; ; attempt += 1) {
     const res = await fetch(url, { headers, signal: AbortSignal.timeout(60000) });
@@ -41,12 +38,11 @@ function msError(status, text) {
       'МойСклад: превышен лимит одновременных запросов. Подождите несколько секунд и повторите.',
     );
   }
-  return new Error(`МойСклад ответил ${status}: ${text.slice(0, 200)}`);
+  // Раньше обрезали 200 символов — этого мало чтобы видеть все ошибки позиций
+  // в документах. С 1500 символов помещается и подробный errors[] и moreInfo.
+  return new Error(`МойСклад ответил ${status}: ${text.slice(0, 1500)}`);
 }
 
-// Постранично выкачивает все строки с эндпоинта МойСклад. По умолчанию limit=1000;
-// для запросов с expand можно указать меньшее значение (МС возвращает huge JSON
-// при сочетании limit=1000 + expand).
 async function fetchAll(endpoint, token, pageSize = PAGE_SIZE) {
   const headers = authHeader(token);
   const out = [];
@@ -68,9 +64,6 @@ async function fetchAll(endpoint, token, pageSize = PAGE_SIZE) {
   return out;
 }
 
-// Есть ли у товара изображение в МС. Сам URL мы НЕ сохраняем — он требует
-// Bearer-токен для скачивания. Вместо этого ставим image_url = путь к нашему
-// прокси-эндпоинту, который тянет картинку с МС через токен.
 function hasMsImage(images) {
   return (images?.rows || []).length > 0;
 }
@@ -83,7 +76,6 @@ function mapSalePrices(salePrices) {
 }
 
 function mapProduct(p, supplierMap) {
-  // Поставщик приходит ссылкой (supplier.meta.href .../counterparty/<UUID>) — резолвим имя.
   const supplierId = extractUuid(p.supplier?.meta?.href);
   const supplier = p.supplier?.name || (supplierId && supplierMap ? supplierMap.get(supplierId) : null) || null;
   return {
@@ -100,15 +92,12 @@ function mapProduct(p, supplierMap) {
   };
 }
 
-// .../entity/product/<UUID> → <UUID> (убираем query параметры типа ?expand=supplier)
 function extractUuid(href) {
   if (!href) return null;
   const path = href.split('?')[0];
   return path.split('/').pop();
 }
 
-// У модификаций часть полей наследуется от родителя (uom, описание, изображения, цены).
-// В ответе МойСклад они не дублируются, поэтому подмёрживаем из уже загруженных products.
 function mapVariant(v, productById) {
   const parentId = extractUuid(v.product?.meta?.href);
   const parent = parentId ? productById.get(parentId) : null;
@@ -117,8 +106,6 @@ function mapVariant(v, productById) {
   const ownHasImage = hasMsImage(v.images);
   const buy = (v.buyPrice?.value || 0) / 100;
 
-  // У модификации код по умолчанию равен родительскому → ловим коллизию по unique sku.
-  // Дописываем значения характеристик: "TSH-001/Красный/XL".
   const baseCode = v.article || v.code || parent?.sku || null;
   const charSuffix = (v.characteristics || []).map((c) => c.value).filter(Boolean).join('/');
   const sku = baseCode
@@ -128,12 +115,10 @@ function mapVariant(v, productById) {
   return {
     externalId: v.id,
     sku,
-    name: v.name, // МойСклад уже формирует "Продукт / Цвет / Размер"
+    name: v.name,
     costPrice: buy || parent?.costPrice || 0,
     defaultPrice: ownSalePrices[0]?.value ?? parent?.defaultPrice ?? 0,
     salePrices: ownSalePrices.length ? ownSalePrices : (parent?.salePrices || []),
-    // Для модификации: своя картинка → ссылка на /api/products/external/{v.id}/image.
-    // Иначе наследуем URL родителя (он уже /api/products/external/{parent.id}/image или null).
     imageUrl: ownHasImage ? `/api/products/external/${v.id}/image` : (parent?.imageUrl || null),
     unit: parent?.unit || 'шт',
     description: parent?.description || null,
@@ -141,12 +126,7 @@ function mapVariant(v, productById) {
   };
 }
 
-// Возвращает плоский массив товаров + модификаций из МойСклад.
-// МойСклад хранит цены в копейках — делим на 100. Для картинок передаём expand —
-// тогда product.images.rows содержит ссылки на скачивание (через Bearer).
 export async function fetchMoyskladProducts(token) {
-  // Поставщики: expand игнорируется при limit>100, поэтому тянем контрагентов
-  // отдельно и сопоставляем по ссылке product.supplier.meta.href → имя.
   let supplierMap = new Map();
   try {
     const agents = await fetchAll('/entity/counterparty', token);
@@ -155,8 +135,6 @@ export async function fetchMoyskladProducts(token) {
     // не критично — товары импортируются без поставщика
   }
 
-  // expand=images.miniature даёт inline images.rows с миниатюрами.
-  // Меньший pageSize (100), чтобы payload не разрастался.
   const productRows = await fetchAll('/entity/product?expand=images.miniature', token, 100);
   const products = productRows.map((p) => mapProduct(p, supplierMap));
   const productById = new Map(products.map((p) => [p.externalId, p]));
@@ -167,8 +145,6 @@ export async function fetchMoyskladProducts(token) {
   return [...products, ...variants];
 }
 
-// Текущие остатки по всем складам: Map(externalId → количество).
-// Берём из отчёта /report/stock/all, привязка по UUID из meta.href.
 export async function fetchMoyskladStock(token) {
   const rows = await fetchAll('/report/stock/all', token);
   const byId = new Map();
@@ -183,9 +159,6 @@ export async function fetchMoyskladStock(token) {
   return { byId, bySku, count: rows.length, sample: rows[0] || null };
 }
 
-// Свежие остатки по складам для конкретного списка товаров (UUID-ов МС).
-// Используется при открытии формы заказа для on-demand-обновления полей stock_by_store
-// у выбранных товаров. МС-фильтр поддерживает несколько значений через ';'.
 export async function msFetchStockByProductIds(token, productExternalIds) {
   if (!productExternalIds?.length) return new Map();
   const headers = authHeader(token);
@@ -210,8 +183,6 @@ export async function msFetchStockByProductIds(token, productExternalIds) {
   return byId;
 }
 
-// Одна страница отчёта по складам — для порционной загрузки большого каталога.
-// Возвращает Map(sku → [{store, stock}]) для страницы + общий размер отчёта.
 export async function fetchMoyskladStockByStorePage(token, offset = 0, limit = 500) {
   const headers = authHeader(token);
   const url = `${BASE}/report/stock/bystore?limit=${limit}&offset=${offset}`;
@@ -225,14 +196,11 @@ export async function fetchMoyskladStockByStorePage(token, offset = 0, limit = 5
   const byId = new Map();
   const bySku = new Map();
   for (const r of rows) {
-    // Сохраняем все склады, включая с нулевыми остатками — для полной информации.
-    // stock — доступно к продаже, reserve — зарезервировано (показываем отдельно).
     const stores = (r.stockByStore || []).map((s) => ({
       store: s.name || '—',
       stock: Number(s.stock) || 0,
       reserve: Number(s.reserve) || 0,
     }));
-    // Добавляем только если есть хотя бы один склад (даже с нулевыми остатками)
     if (!stores.length) continue;
     const id = extractUuid(r.meta?.href);
     if (id) byId.set(id, stores);
@@ -251,7 +219,6 @@ export async function fetchMoyskladStockByStorePage(token, offset = 0, limit = 5
     })),
   }));
 
-  // Полная структура первой строки для отладки
   const firstRowFull = rows[0] ? JSON.stringify(rows[0], null, 2) : null;
   console.log(
     `[moysklad] /report/stock/bystore: ${rows.length} rows, ` +
@@ -263,13 +230,6 @@ export async function fetchMoyskladStockByStorePage(token, offset = 0, limit = 5
   return { byId, bySku, samples, size: data.meta?.size ?? offset + rows.length, fetched: rows.length, rowCount: rows.length };
 }
 
-// ============= Write-API для интеграции списания/прихода =============
-
-// Низкоуровневый JSON-запрос: GET/POST/PUT/DELETE.
-// Таймаут 25 сек — write-операции делаются в реал-тайме при ответе пользователю,
-// но МС иногда лагает (особенно при создании нескольких товаров под уценку).
-// inline-await в enqueueMsJob ограничен 12 сек — этот таймаут защищает воркер,
-// который вызывается в фоне.
 async function msRequest(method, endpoint, token, body) {
   const headers = { ...authHeader(token), 'Content-Type': 'application/json' };
   const url = `${BASE}${endpoint}`;
@@ -285,7 +245,6 @@ async function msRequest(method, endpoint, token, body) {
         const text = await res.text().catch(() => '');
         throw msError(res.status, text);
       }
-      // DELETE возвращает 200 без тела.
       const text = await res.text();
       return text ? JSON.parse(text) : null;
     }
@@ -298,33 +257,28 @@ async function msRequest(method, endpoint, token, body) {
   }
 }
 
-// Список складов МС: [{id, name}]. Используем для маппинга orders.warehouse → uuid.
 export async function msFetchStores(token) {
   const rows = await fetchAll('/entity/store', token);
   return rows.map((s) => ({ id: s.id, name: s.name, archived: !!s.archived }));
 }
 
-// Активные организации в МС. Первая обычно — твоя компания.
 export async function msFetchOrganizations(token) {
   const rows = await fetchAll('/entity/organization', token);
   return rows.filter((o) => !o.archived).map((o) => ({ id: o.id, name: o.name }));
 }
 
-// Поиск контрагента по имени (точный матч). Для «Розничный покупатель».
 export async function msFindCounterpartyByName(token, name) {
   const enc = encodeURIComponent(name);
   const rows = await fetchAll(`/entity/counterparty?filter=name=${enc}`, token);
   return rows.map((c) => ({ id: c.id, name: c.name }));
 }
 
-// Поиск проекта по имени (точный матч).
 export async function msFindProjectByName(token, name) {
   const enc = encodeURIComponent(name);
   const rows = await fetchAll(`/entity/project?filter=name=${enc}`, token);
   return rows.map((p) => ({ id: p.id, name: p.name }));
 }
 
-// Хелпер: ссылка на сущность МС по UUID для использования в meta-полях документов.
 export function msHref(entity, id) {
   return {
     meta: {
@@ -335,24 +289,18 @@ export function msHref(entity, id) {
   };
 }
 
-// Generic POST для создания документа (customerorder, demand, salesreturn, loss).
 export async function msCreate(token, entity, body) {
   return await msRequest('POST', `/entity/${entity}`, token, body);
 }
 
-// Generic PUT для обновления.
 export async function msUpdate(token, entity, id, body) {
   return await msRequest('PUT', `/entity/${entity}/${id}`, token, body);
 }
 
-// Generic DELETE.
 export async function msDelete(token, entity, id) {
   return await msRequest('DELETE', `/entity/${entity}/${id}`, token);
 }
 
-// Загрузить изображение в карточку товара МС. base64DataUrl — это data:image/...;base64,...
-// (то, что хранится в return_proof). МС эндпоинт POST /entity/product/{id}/images
-// принимает массив [{ filename, content (base64 без префикса) }].
 export async function msUploadProductImage(token, productId, base64DataUrl, filenameHint = 'photo') {
   const m = String(base64DataUrl || '').match(/^data:(image\/\w+);base64,(.+)$/);
   if (!m) throw new Error('Невалидный data URL — нужно data:image/...;base64,...');
@@ -363,8 +311,6 @@ export async function msUploadProductImage(token, productId, base64DataUrl, file
   ]);
 }
 
-// Прикрепить файл к произвольному документу МС (salesreturn, loss, demand, customerorder).
-// data URL → /entity/{entityType}/{id}/files. МС держит до 100 файлов на документе.
 export async function msAttachFile(token, entityType, entityId, base64DataUrl, filenameHint = 'file') {
   const m = String(base64DataUrl || '').match(/^data:([^;]+);base64,(.+)$/);
   if (!m) throw new Error('Невалидный data URL');
