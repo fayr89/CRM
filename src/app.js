@@ -77,6 +77,31 @@ export function createApp({ serveStatic = true } = {}) {
     tickMsQueue();
     next();
   });
+
+  // Алиасинг marketplace «Avito» → «Общий прайс».
+  // Фронт (views.js MARKETPLACES) жёстко содержит 'Avito', но в БД все цены
+  // переименованы в «Общий прайс» миграцией. Поэтому без подмены экспорт/импорт
+  // шаблона прайса даёт пустые цены. Подмена покрывает query и body во всех
+  // /api/* — выгрузка шаблона, импорт прайса, выпадашка цен в форме заказа.
+  app.use('/api', (req, _res, next) => {
+    try {
+      if (req.query?.marketplace === 'Avito') req.query.marketplace = 'Общий прайс';
+      if (req.body && typeof req.body === 'object') {
+        if (req.body.marketplace === 'Avito') req.body.marketplace = 'Общий прайс';
+        if (Array.isArray(req.body.rows)) {
+          for (const r of req.body.rows) {
+            if (r && r.marketplace === 'Avito') r.marketplace = 'Общий прайс';
+          }
+        }
+        if (Array.isArray(req.body.marketplaces)) {
+          // При сохранении списка marketplaces — не подменяем (пользователь
+          // явно настраивает справочник).
+        }
+      }
+    } catch { /* ignore */ }
+    next();
+  });
+
   if (serveStatic) app.use(express.static(PUBLIC_DIR));
 
   app.get('/health', (_req, res) => {
@@ -124,7 +149,6 @@ export function createApp({ serveStatic = true } = {}) {
   app.use('/api/notes', notesRoutes);
   app.use('/api/dashboard', dashboardRoutes);
   app.use('/api/invitations', invitationsRoutes);
-  // Патч на mark-waiting: основной хендлер в orders.js забывал две вещи при переходе reserved → waiting_stock.
   app.post('/api/orders/:id/mark-waiting', async (req, res, next) => {
     try {
       const { db } = await import('./db.js');
