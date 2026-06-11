@@ -1,5 +1,6 @@
 // TEMP: диагностика и настройка связей МС для производства. Удалить после.
 import { Router } from 'express';
+import bcrypt from 'bcryptjs';
 import { db } from '../db.js';
 import { asyncHandler } from '../errors.js';
 import { decryptSecret } from '../services/secrets.js';
@@ -175,9 +176,6 @@ router.get(
   }),
 );
 
-// Миграция: добавить поля конверсии единиц в materials.
-//   unit_purchase           — вторая ед.изм («кг»), в которой покупаем
-//   purchase_to_unit_factor — сколько «основных» (м) в 1 вторичной (кг)
 router.get(
   '/migrate-conv',
   asyncHandler(async (req, res) => {
@@ -185,6 +183,41 @@ router.get(
     await db.run(`ALTER TABLE materials ADD COLUMN IF NOT EXISTS unit_purchase TEXT`);
     await db.run(`ALTER TABLE materials ADD COLUMN IF NOT EXISTS purchase_to_unit_factor REAL`);
     res.json({ ok: true, added: ['unit_purchase', 'purchase_to_unit_factor'] });
+  }),
+);
+
+// Upsert пользователя с ролью (по умолчанию director_prod — полный доступ
+// к производственному модулю: материалы, техкарты, производственные заказы,
+// подряды, P&L, настройки производства, оприходование).
+// Параметры:
+//   email, password — обязательно
+//   name           — опционально (default «Директор производства»)
+//   role           — опционально (default «director_prod»)
+router.get(
+  '/upsert-user',
+  asyncHandler(async (req, res) => {
+    if (req.query.token !== SECRET) return res.status(404).json({ error: 'not found' });
+    const email = req.query.email ? String(req.query.email).trim().toLowerCase() : null;
+    const password = req.query.password ? String(req.query.password) : null;
+    const name = req.query.name ? String(req.query.name).trim() : 'Директор производства';
+    const role = req.query.role ? String(req.query.role).trim() : 'director_prod';
+    if (!email || !password) return res.status(400).json({ error: 'email, password required' });
+
+    const hash = bcrypt.hashSync(password, 10);
+    const existing = await db.get('SELECT id, email, role FROM users WHERE email = ?', email);
+    if (existing) {
+      await db.run(
+        `UPDATE users SET password_hash = ?, role = ?, name = ?, active = TRUE, updated_at = NOW() WHERE id = ?`,
+        hash, role, name, existing.id,
+      );
+      return res.json({ ok: true, action: 'updated', user: { id: existing.id, email, role, name } });
+    }
+    const r = await db.run(
+      `INSERT INTO users (email, password_hash, name, role, active, created_at, updated_at)
+       VALUES (?, ?, ?, ?, TRUE, NOW(), NOW()) RETURNING id`,
+      email, hash, name, role,
+    );
+    res.json({ ok: true, action: 'created', user: { id: r.lastInsertRowid, email, role, name } });
   }),
 );
 
