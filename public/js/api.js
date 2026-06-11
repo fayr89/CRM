@@ -83,6 +83,7 @@ export const api = {
   // Avito / прямые продажи
   markOrderWaiting: (id) => request('POST', `/api/orders/${id}/mark-waiting`),
   markOrderReady: (id) => request('POST', `/api/orders/${id}/mark-ready`),
+  recheckOrderStock: (id) => request('POST', `/api/orders/${id}/recheck-stock`),
   splitOrder: (id, body) => request('POST', `/api/orders/${id}/split`, { body }),
   extractItem: (id, itemId, body) => request('POST', `/api/orders/${id}/items/${itemId}/extract`, { body }),
   unshipOrder: (id) => request('POST', `/api/orders/${id}/unship`),

@@ -3716,6 +3716,27 @@ async function showOrderDetails(order, reload) {
                 class: 'btn btn-sm btn-primary',
                 onClick: async () => {
                   try {
+                    const r = await api.recheckOrderStock(order.id);
+                    if (r.reserved) {
+                      toast(r.message || 'Товар есть — заказ зарезервирован', 'success');
+                    } else if (Array.isArray(r.missing) && r.missing.length) {
+                      const list = r.missing
+                        .map((m) => `${m.name || m.sku || '—'} (нужно ${m.qty}, доступно ${m.available})`)
+                        .join('; ');
+                      toast(`${r.message}: ${list}`, 'error');
+                    } else {
+                      toast(r.message || 'Не удалось зарезервировать', 'error');
+                    }
+                    reload?.();
+                  } catch (e) { toast(e.message, 'error'); }
+                },
+              }, '🔄 Проверить и зарезервировать')
+            : null,
+          canMarkReady
+            ? el('button', {
+                class: 'btn btn-sm',
+                onClick: async () => {
+                  try {
                     await api.markOrderReady(order.id);
                     toast('Заказ переведён в «Новый»', 'success');
                     reload?.();

@@ -43,6 +43,7 @@ import productionPLRoutes from './routes/productionPL.js';
 import productionSettingsRoutes from './routes/productionSettings.js';
 import productionReceiptRoutes from './routes/productionReceipt.js';
 import diagStockRoutes from './routes/diagStock.js';
+import orderRecheckRoutes from './routes/orderRecheck.js';
 import msWebhookRoutes from './routes/msWebhook.js';
 import { authenticate as authMw } from './auth.js';
 import { importMoyskladStoresFresh } from './routes/stockSyncFresh.js';
@@ -172,6 +173,9 @@ export function createApp({ serveStatic = true } = {}) {
     }
     next();
   });
+  // recheck-stock — узкий путь для waiting_stock; монтируем ДО общего
+  // ordersRoutes чтобы не зависеть от порядка регистрации внутри orders.js.
+  app.use('/api/orders', orderRecheckRoutes);
   app.use('/api/orders', ordersRoutes);
   app.use('/api/payments', paymentsRoutes);
   app.use('/api/cashbox', cashboxRoutes);
