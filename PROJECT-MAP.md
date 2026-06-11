@@ -252,6 +252,17 @@ CRM разделяет заказы на два потока:
 - Цена строго привязана к складу (`product_prices.warehouse`). Без склада
   цена запрещена (`priceSchema.warehouse.min(1)`).
 - Lookup цены = `(product_id, 'Общий прайс', order.warehouse)`.
+- ⚠️ Граблезон МС-батчей (`msFetchStockByProductIds`): один битый UUID
+  в фильтре `product=…;product=…` валит весь батч 412. Раньше callers
+  (`/refresh-stocks`, `stockSyncFresh`, `msWebhook`) интерпретировали
+  пустой ответ как «архивирован» и писали `[]`/`NULL` — стирали остатки у
+  ВСЕХ товаров батча. Инцидент 2026-06-11 v2: после `refreshProductStocks`
+  перед резервом все товары заказа получали `stock_by_store=[]`, резерв
+  валился «недостаточно товара» (00466287 — 170 шт в МС, 0 в CRM).
+  Чинили: (1) `msFetchStockByProductIds` бисектит при 412 (глубина 4) —
+  изолирует битый UUID; (2) callers НЕ пишут пустое/NULL когда МС не
+  вернул — оставляют последнее значение. Очистку архивных делает только
+  полный `cron stock-sync` через `updated_at < started_at`.
 
 ### Переходы статуса waiting_stock
 
