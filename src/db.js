@@ -747,23 +747,28 @@ export async function ensureInitialized() {
       // Строгая модель «канал+склад»: цены без склада недопустимы — чистим их на каждом
       // холодном старте (самовосстановление, если что-то просочилось из старого клиента).
       await pool.query("DELETE FROM product_prices WHERE warehouse IS NULL OR warehouse = ''");
-      // Обновляем CHECK роли (добавлены rop, aus, finance) — для users и invitations.
-      // DO ... EXCEPTION на случай гонки нескольких холодных стартов лямбд (без него —
-      // 42710 duplicate_object, если другая лямбда уже создала constraint между DROP и ADD).
+      // Обновляем CHECK роли — для users и invitations. ВАЖНО: список ролей
+      // должен совпадать с финальным (включая производственные director_prod/
+      // foreman/master/supply) — миграции гейтятся ОДНОЙ schema_version и при
+      // бампе прогоняются ВСЕ блоки заново. Урезанный список здесь уронил прод
+      // 2026-06-11: ADD CONSTRAINT упёрся в существующего director_prod
+      // (check_violation не ловился EXCEPTION-ом duplicate_object).
       await pool.query(`
         DO $$ BEGIN
           ALTER TABLE users DROP CONSTRAINT IF EXISTS users_role_check;
           ALTER TABLE users ADD CONSTRAINT users_role_check
-            CHECK (role IN ('admin','manager','sales','warehouse','rop','aus','finance'));
-        EXCEPTION WHEN duplicate_object THEN NULL;
+            CHECK (role IN ('admin','manager','sales','warehouse','rop','aus','finance','director_prod','foreman','master','supply'));
+        EXCEPTION WHEN others THEN
+          RAISE WARNING 'users_role_check (early) migration: %', SQLERRM;
         END $$;
       `);
       await pool.query(`
         DO $$ BEGIN
           ALTER TABLE invitations DROP CONSTRAINT IF EXISTS invitations_role_check;
           ALTER TABLE invitations ADD CONSTRAINT invitations_role_check
-            CHECK (role IN ('admin','manager','sales','warehouse','rop','aus','finance'));
-        EXCEPTION WHEN duplicate_object THEN NULL;
+            CHECK (role IN ('admin','manager','sales','warehouse','rop','aus','finance','director_prod','foreman','master','supply'));
+        EXCEPTION WHEN others THEN
+          RAISE WARNING 'invitations_role_check (early) migration: %', SQLERRM;
         END $$;
       `);
       // Вложения в тредах обращений: позволяет прикреплять файлы к ответам в переписке.
