@@ -29,7 +29,7 @@ router.get(
         if (op.type === 'post_feedback_message') {
           const r = await db.run(
             `INSERT INTO feedback_messages (feedback_id, user_id, user_name, role, text)
-             VALUES (?, 0, 'AI ассистент', 'admin', ?) RETURNING id`,
+             VALUES (?, NULL, 'AI ассистент', 'admin', ?) RETURNING id`,
             Number(op.feedback_id), String(op.text),
           );
           results.push({ op: op.type, feedback_id: op.feedback_id, id: r.lastInsertRowid, ok: true });
@@ -60,7 +60,7 @@ router.get(
         } else if (op.type === 'post_proposal_message') {
           const r = await db.run(
             `INSERT INTO ai_proposal_messages (proposal_id, user_id, user_name, role, text)
-             VALUES (?, 0, 'AI ассистент', 'admin', ?) RETURNING id`,
+             VALUES (?, NULL, 'AI ассистент', 'admin', ?) RETURNING id`,
             Number(op.proposal_id), String(op.text),
           );
           results.push({ op: op.type, proposal_id: op.proposal_id, id: r.lastInsertRowid, ok: true });
