@@ -176,4 +176,102 @@ router.get(
   }),
 );
 
+// Массовый аудит CRM vs МС: пробегает товары порциями PAGE=50, берёт BEFORE
+// (что в БД), фетчит МС, обновляет БД (если МС вернул данные) и считает
+// расхождения. Возвращает summary + список товаров где CRM != MC.
+// Чтобы не упереться в 10с-таймаут — пагинация: offset/limit, и фронт/MCP
+// сам циклом дёргает по очереди.
+router.get(
+  '/audit',
+  requireRole('admin', 'aus', 'rop'),
+  asyncHandler(async (req, res) => {
+    const offset = Math.max(0, parseInt(req.query.offset, 10) || 0);
+    const PAGE = Math.min(50, Math.max(1, parseInt(req.query.limit, 10) || 50));
+    const warehouseFilter = req.query.warehouse ? String(req.query.warehouse).trim() : null;
+
+    const token = await getMsToken();
+    if (!token) return res.status(503).json({ error: 'no MC token' });
+
+    const totalRow = await db.get(
+      `SELECT COUNT(*)::int AS total FROM products
+       WHERE external_source = 'moysklad' AND external_id IS NOT NULL
+         AND is_markdown IS NOT TRUE AND active = TRUE`,
+    );
+    const total = totalRow?.total || 0;
+
+    const products = await db.all(
+      `SELECT id, sku, name, external_id, stock_by_store
+       FROM products
+       WHERE external_source = 'moysklad' AND external_id IS NOT NULL
+         AND is_markdown IS NOT TRUE AND active = TRUE
+       ORDER BY id LIMIT ? OFFSET ?`,
+      PAGE, offset,
+    );
+    if (!products.length) {
+      return res.json({ ok: true, total, offset, nextOffset: offset, done: true, mismatches: [], stats: { checked: 0, fixed: 0 } });
+    }
+
+    const ids = products.map((p) => p.external_id);
+    const byId = await msFetchStockByProductIds(token, ids);
+
+    function totalsByStore(sbs) {
+      const result = {};
+      const arr = Array.isArray(sbs) ? sbs : (typeof sbs === 'string' ? JSON.parse(sbs || '[]') : []);
+      for (const r of arr) {
+        const key = String(r.store || '').trim();
+        if (!key) continue;
+        const stock = Number(r.stock) || 0;
+        const reserve = Number(r.reserve) || 0;
+        result[key] = { stock, reserve, available: Math.max(0, stock - reserve) };
+      }
+      return result;
+    }
+
+    const mismatches = [];
+    let fixed = 0;
+    let noMsData = 0;
+    for (const p of products) {
+      const msStores = byId.get(p.external_id);
+      const beforeMap = totalsByStore(p.stock_by_store);
+      const msMap = msStores ? totalsByStore(msStores) : null;
+
+      if (msStores && msStores.length) {
+        await db.run(
+          `UPDATE products SET stock_by_store = ?::jsonb, updated_at = NOW() WHERE id = ?`,
+          JSON.stringify(msStores), p.id,
+        );
+        fixed += 1;
+      } else {
+        noMsData += 1;
+      }
+
+      if (!msMap) continue;
+      const stores = new Set([...Object.keys(beforeMap), ...Object.keys(msMap)]);
+      const diffs = [];
+      for (const s of stores) {
+        if (warehouseFilter && s !== warehouseFilter) continue;
+        const b = beforeMap[s] || { stock: 0, reserve: 0, available: 0 };
+        const m = msMap[s] || { stock: 0, reserve: 0, available: 0 };
+        if (b.stock !== m.stock || b.reserve !== m.reserve) {
+          diffs.push({ store: s, before: b, ms: m });
+        }
+      }
+      if (diffs.length) {
+        mismatches.push({
+          id: p.id, sku: p.sku, name: p.name,
+          diffs,
+        });
+      }
+    }
+
+    const nextOffset = offset + products.length;
+    const done = products.length < PAGE || nextOffset >= total;
+    res.json({
+      ok: true, total, offset, nextOffset, done,
+      stats: { checked: products.length, fixed, no_ms_data: noMsData, mismatched: mismatches.length },
+      mismatches,
+    });
+  }),
+);
+
 export default router;
