@@ -43,7 +43,6 @@ import productionPLRoutes from './routes/productionPL.js';
 import productionSettingsRoutes from './routes/productionSettings.js';
 import productionReceiptRoutes from './routes/productionReceipt.js';
 import diagProdLinkRoutes from './routes/diagProdLink.js'; // TEMP
-import diagDailyRoutes from './routes/diagDaily.js'; // TEMP
 import { authenticate as authMw } from './auth.js';
 import { importMoyskladStoresFresh } from './routes/stockSyncFresh.js';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -203,7 +202,6 @@ export function createApp({ serveStatic = true } = {}) {
   app.use('/api/production/receipt', productionReceiptRoutes);
   app.use('/api/production-settings', productionSettingsRoutes);
   app.use('/api/diag-prod', diagProdLinkRoutes); // TEMP
-  app.use('/api/diag/daily', diagDailyRoutes); // TEMP
   app.use((req, res) => {
     res.status(404).json({ error: `Route not found: ${req.method} ${req.path}` });
   });
