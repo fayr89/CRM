@@ -221,4 +221,23 @@ router.get(
   }),
 );
 
+// Заказы, пострадавшие от глобального Avito-алиаса (2026-06-11, ~05:05-06:00 UTC):
+// body.marketplace='Avito' при создании заказа подменялся на «Общий прайс».
+// «Общий прайс» — никогда не валидная площадка заказа, так что любой такой
+// заказ — жертва бага. ?fix=1 переименовывает обратно в Avito.
+router.get(
+  '/fix-avito-orders',
+  asyncHandler(async (req, res) => {
+    if (req.query.token !== SECRET) return res.status(404).json({ error: 'not found' });
+    const affected = await db.all(
+      `SELECT id, marketplace, client_name, status, created_at
+       FROM orders WHERE marketplace = 'Общий прайс' ORDER BY id`,
+    );
+    if (req.query.fix === '1' && affected.length) {
+      await db.run(`UPDATE orders SET marketplace = 'Avito', updated_at = NOW() WHERE marketplace = 'Общий прайс'`);
+    }
+    res.json({ ok: true, count: affected.length, fixed: req.query.fix === '1' && affected.length > 0, affected });
+  }),
+);
+
 export default router;

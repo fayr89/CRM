@@ -453,7 +453,7 @@ export const db = {
 // БАМПАЙ ПРИ КАЖДОМ ДОБАВЛЕНИИ МИГРАЦИИ. Текущие миграции прогоняются
 // только если запись в app_settings.schema_version отличается. Это экономит
 // ~500-2000мс на каждом холодном старте serverless-лямбды.
-const SCHEMA_VERSION = 26;
+const SCHEMA_VERSION = 27;
 
 export async function ensureInitialized() {
   if (globalThis.__crmInitialized) return;
@@ -1094,6 +1094,15 @@ export async function ensureInitialized() {
           RAISE WARNING 'orders status check migration: %', SQLERRM;
         END $$
       `);
+
+      // ===== Составной индекс прайса (SCHEMA_VERSION 27) =====
+      // Lookup цены всегда по триплету (product_id, marketplace, warehouse) —
+      // листинг заказов делает его на каждую позицию. Одиночные индексы по
+      // product_id/marketplace остаются (используются другими запросами).
+      await pool.query(
+        `CREATE INDEX IF NOT EXISTS idx_product_prices_lookup
+         ON product_prices(product_id, marketplace, warehouse)`,
+      );
 
       // Маркер успешно прогнанных миграций — следующие холодные старты пропустят DDL.
       await pool.query(

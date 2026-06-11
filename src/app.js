@@ -78,12 +78,12 @@ export function createApp({ serveStatic = true } = {}) {
     next();
   });
 
-  // Алиасинг marketplace «Avito» → «Общий прайс».
-  // Фронт (views.js MARKETPLACES) жёстко содержит 'Avito', но в БД все цены
-  // переименованы в «Общий прайс» миграцией. Поэтому без подмены экспорт/импорт
-  // шаблона прайса даёт пустые цены. Подмена покрывает query и body во всех
-  // /api/* — выгрузка шаблона, импорт прайса, выпадашка цен в форме заказа.
-  app.use('/api', (req, _res, next) => {
+  // Алиасинг канала цены «Avito» → «Общий прайс» — ТОЛЬКО для /api/products
+  // (шаблон прайса, импорт цен, lookup каталога). В заказах marketplace —
+  // это площадка продажи (Avito/WB/...), её подменять НЕЛЬЗЯ: первая версия
+  // этого алиаса висела на всех /api/* и переименовывала площадку у новых
+  // заказов + ломала фильтр списка заказов. Не расширять обратно.
+  app.use('/api/products', (req, _res, next) => {
     try {
       if (req.query?.marketplace === 'Avito') req.query.marketplace = 'Общий прайс';
       if (req.body && typeof req.body === 'object') {
@@ -92,10 +92,6 @@ export function createApp({ serveStatic = true } = {}) {
           for (const r of req.body.rows) {
             if (r && r.marketplace === 'Avito') r.marketplace = 'Общий прайс';
           }
-        }
-        if (Array.isArray(req.body.marketplaces)) {
-          // При сохранении списка marketplaces — не подменяем (пользователь
-          // явно настраивает справочник).
         }
       }
     } catch { /* ignore */ }
