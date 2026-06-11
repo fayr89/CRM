@@ -109,10 +109,13 @@ router.get(
       const feedback_id = Number(req.query.feedback_id);
       const text = req.query.text ? decodeURIComponent(req.query.text) : null;
       if (!feedback_id || !text) return res.status(400).json({ error: 'feedback_id and text required' });
+      const adminUser = await db.get(`SELECT id FROM users WHERE role='admin' ORDER BY id LIMIT 1`);
+      const adminId = adminUser?.id || null;
       const r = await db.run(
-        `INSERT INTO feedback_messages (feedback_id, user_id, user_name, role, text)
-         VALUES (?, 0, 'AI ассистент', 'admin', ?) RETURNING id, created_at`,
+        `INSERT INTO feedback_messages (feedback_id, user_id, user_name, role, text, attachments)
+         VALUES (?, ?, 'AI ассистент', 'admin', ?, NULL) RETURNING id, created_at`,
         feedback_id,
+        adminId,
         text,
       );
       return res.json({ id: r.lastInsertRowid });
@@ -161,10 +164,13 @@ router.get(
       const id = Number(req.query.id);
       const text = req.query.text ? decodeURIComponent(req.query.text) : null;
       if (!id || !text) return res.status(400).json({ error: 'id and text required' });
+      const adminUser = await db.get(`SELECT id FROM users WHERE role='admin' ORDER BY id LIMIT 1`);
+      const adminId = adminUser?.id || null;
       const r = await db.run(
         `INSERT INTO ai_proposal_messages (proposal_id, user_id, user_name, role, text)
-         VALUES (?, 0, 'AI ассистент', 'admin', ?) RETURNING id, created_at`,
+         VALUES (?, ?, 'AI ассистент', 'admin', ?) RETURNING id, created_at`,
         id,
+        adminId,
         text,
       );
       return res.json({ id: r.lastInsertRowid });
