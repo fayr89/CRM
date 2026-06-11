@@ -68,7 +68,7 @@
 | `notes.js` | `/api/notes` | заметки |
 | `dashboard.js` | `/api/dashboard` | агрегаты для главной |
 | `invitations.js` | `/api/invitations` | приглашения |
-| `orders.js` | `/api/orders` | **БОЛЬШОЙ** — заказы, импорт CSV, экспорт CSV, лист сборки, возвраты, потери, recent-items |
+| `orders.js` | `/api/orders` | **БОЛЬШОЙ** — заказы, импорт CSV, экспорт CSV (одна строка на товар), лист сборки, возвраты, потери, recent-items, `/shipped-archive` (последние 200 отгруженных, для архива на странице Отгрузок) |
 | `payments.js` | `/api/payments` | платежи / подтверждение / отклонение |
 | `cashbox.js` | `/api/cashbox` | касса менеджера |
 | `external.js` | `/api/external/...` | приём заявок снаружи по API-токену (лиды + заказы) |
@@ -161,7 +161,7 @@
 | `renderResource(main, key, opts)` | `#/leads`, `#/contacts`, `#/companies`, `#/deals`, `#/activities`, `#/users` | универсальный CRUD-список ресурса (`RESOURCES[key]` — конфиг) |
 | `renderOrders(main, opts)` | `#/orders` | продажи с площадок. **directMode=false** в коде = «не B2B» |
 | `renderDirectOrders` | `#/direct-orders` | B2B-заказы. Прокси `renderOrders(main, {..., directMode: true})` |
-| `renderShipping` | `#/shipping` | график отгрузок для склада |
+| `renderShipping` | `#/shipping` | график отгрузок для склада. Для admin/warehouse внизу — lazy-loaded «Архив отгрузок» (`api.shippedArchive()`), сгруппированный по `shipped_at` |
 | `renderReturns` | `#/returns` | возвраты, обработка складом |
 | `renderLostGoods` | `#/lost-goods` | потерянные товары + аннулирование |
 | `renderProducts` | `#/products` | каталог + прайсы + импорт МойСклад |
@@ -185,6 +185,8 @@
 **Внутренние helper-функции в `views.js`** (не экспортируются, но важные):
 - `openOrderForm(order, onSaved, opts)` — модал создания/редактирования заказа.
   `opts.b2b=true` или `!order.marketplace` → b2b-режим (см. секцию «Доменные решения»).
+  Комиссия: 3 поля (`commissionSaleI × commissionPctI% = commissionAmountI`), в БД пишется только `commissionAmountI`.
+  Поле «Проект»: видимо только если `meEmail === 'andrreysirko@gmail.com'`.
 - `showOrderDetails(order, reload)` — модал с деталями заказа.
 - `openOrderImportModal(onDone, opts)` — модал импорта CSV. `opts.b2b=true` → b2b-шаблон.
 - `itemsEditor(initialItems, opts)` — редактор позиций (поиск, популярные, каталог).
@@ -321,10 +323,15 @@ if (payload.act && user.role === 'admin' && payload.act !== 'admin') {
 
 ### Проекты (стикеры)
 
-Сущность `projects (id, name, color, active)`. Прикрепляется к
+Сущность `projects (id, name, color, active, is_production)`. Прикрепляется к
 `leads`, `deals`, `orders`, `contacts`, `companies` через `project_id`
 (nullable). Управление: «Настройки → Проекты». Фильтр по проекту в
 списках + цветной стикер на карточках.
+
+**Поле «Проект» в форме заказа** видно только пользователю с email
+`andrreysirko@gmail.com` (два аккаунта Avito). Активные проекты:
+«Проект 1» (id=2) и «Проект 2» (id=3). «ЧПБ» (id=1) деактивирован.
+Флаг `is_production=true` на всех трёх для P&L производства.
 
 ### AI-инбокс предложений + тред заметок
 
