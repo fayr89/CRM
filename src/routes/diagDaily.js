@@ -151,6 +151,38 @@ router.get('/', async (req, res) => {
       return res.json({ ok: true, id: r.lastInsertRowid });
     }
 
+    // --- manage projects: list / create / update ---
+    if (action === 'list_projects') {
+      const rows = await db.all(`SELECT id, name, active, is_production, sort_order FROM projects ORDER BY sort_order ASC, name ASC`);
+      return res.json({ data: rows });
+    }
+    if (action === 'create_project') {
+      const name = req.query.name || '';
+      const color = req.query.color || '#6366f1';
+      const is_production = req.query.is_production === 'true';
+      const r = await db.run(
+        `INSERT INTO projects (name, color, active, is_production, sort_order) VALUES ($1, $2, true, $3, 0) RETURNING id`,
+        name, color, is_production,
+      );
+      return res.json({ ok: true, id: r.lastInsertRowid });
+    }
+    if (action === 'update_project') {
+      const id = Number(req.query.id);
+      const name = req.query.name;
+      const active = req.query.active;
+      const is_production = req.query.is_production;
+      const sets = [];
+      const params = [];
+      if (name !== undefined) { sets.push(`name = $${sets.length + 1}`); params.push(name); }
+      if (active !== undefined) { sets.push(`active = $${sets.length + 1}`); params.push(active === 'true'); }
+      if (is_production !== undefined) { sets.push(`is_production = $${sets.length + 1}`); params.push(is_production === 'true'); }
+      if (!sets.length) return res.json({ error: 'nothing to update' });
+      sets.push(`updated_at = NOW()`);
+      params.push(id);
+      await db.run(`UPDATE projects SET ${sets.join(', ')} WHERE id = $${params.length}`, ...params);
+      return res.json({ ok: true });
+    }
+
     return res.json({ error: 'unknown action' });
   } catch (err) {
     return res.status(500).json({ error: String(err) });

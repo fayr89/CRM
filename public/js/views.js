@@ -1818,7 +1818,29 @@ async function openOrderForm(order, onSaved, opts = {}) {
   });
   const currencyI = el('input', { type: 'text', value: cur.currency || 'RUB', maxlength: '3', style: { width: '80px' } });
   const notesI = el('textarea', {}, cur.notes || '');
-  const commissionI = el('input', { type: 'number', min: '0', step: '0.01', value: cur.commission != null ? cur.commission : '', placeholder: '0' });
+  // Commission UX: base sale amount × % → commission amount
+  const commissionSaleI = el('input', { type: 'number', min: '0', step: '0.01', value: cur.total_amount != null ? cur.total_amount : '', placeholder: 'Сумма продажи' });
+  const commissionPctI = el('select', {},
+    el('option', { value: '' }, '—'),
+    el('option', { value: '5' }, '5%'),
+    el('option', { value: '7' }, '7%'),
+    el('option', { value: '15' }, '15%'),
+  );
+  const commissionAmountI = el('input', { type: 'number', min: '0', step: '0.01', value: cur.commission != null ? cur.commission : '', placeholder: '0' });
+  // Pre-select % if it matches a known rate
+  if (cur.commission != null && cur.total_amount) {
+    const pct = Math.round(cur.commission / cur.total_amount * 100);
+    if ([5, 7, 15].includes(pct)) commissionPctI.value = String(pct);
+  }
+  function recalcCommission() {
+    const base = Number(commissionSaleI.value);
+    const pct = Number(commissionPctI.value);
+    if (base > 0 && pct > 0) commissionAmountI.value = (base * pct / 100).toFixed(2);
+  }
+  commissionSaleI.addEventListener('input', recalcCommission);
+  commissionPctI.addEventListener('change', recalcCommission);
+  commissionAmountI.addEventListener('input', () => { commissionPctI.value = ''; });
+
   const projectI = el(
     'select',
     {},
@@ -1827,7 +1849,9 @@ async function openOrderForm(order, onSaved, opts = {}) {
   );
   // Заметка для менеджера — склад не видит. На форме рендерим только не-складу
   // (склад заказы редко создаёт, но на всякий случай).
-  const meRole = JSON.parse(localStorage.getItem('crm_user') || '{}').role;
+  const meUser = JSON.parse(localStorage.getItem('crm_user') || '{}');
+  const meRole = meUser.role;
+  const meEmail = meUser.email;
   const managerNoteI = meRole !== 'warehouse'
     ? el('textarea', { rows: '2', placeholder: 'Заметка только для менеджеров (склад не увидит)' }, cur.manager_note || '')
     : null;
@@ -2170,8 +2194,18 @@ async function openOrderForm(order, onSaved, opts = {}) {
       el('div', { class: 'form-row' }, el('label', {}, 'Заметки'), notesI),
       managerNoteI ? el('div', { class: 'form-row', style: { gridColumn: '1 / -1' } },
         el('label', {}, '🔒 Заметка для менеджеров'), managerNoteI) : null,
-      el('div', { class: 'form-row' }, el('label', {}, 'Комиссия площадки'), commissionI),
-      CACHE.projects.length ? el('div', { class: 'form-row' }, el('label', {}, 'Проект'), projectI) : null,
+      el('div', { class: 'form-row', style: { gridColumn: '1 / -1' } },
+        el('label', {}, 'Комиссия площадки'),
+        el('div', { style: { display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' } },
+          commissionSaleI,
+          el('span', { style: { color: 'var(--muted)' } }, '×'),
+          commissionPctI,
+          el('span', { style: { color: 'var(--muted)' } }, '='),
+          commissionAmountI,
+          el('span', { style: { color: 'var(--muted)', fontSize: '13px' } }, '₽'),
+        ),
+      ),
+      CACHE.projects.length && meEmail === 'andrreysirko@gmail.com' ? el('div', { class: 'form-row' }, el('label', {}, 'Проект'), projectI) : null,
     ),
     recentItemsPanel,
     el('div', { class: 'form-row' },
@@ -2265,7 +2299,7 @@ async function openOrderForm(order, onSaved, opts = {}) {
         delivery_method: deliveryI.value || null,
         avito_dialog_url: isB2B ? null : (avitoDialogI.value.trim() || null),
         warehouse: warehouseI.value || null,
-        commission: commissionI.value !== '' ? Number(commissionI.value) : null,
+        commission: commissionAmountI.value !== '' ? Number(commissionAmountI.value) : null,
         project_id: projectI.value ? Number(projectI.value) : null,
         ...(statusI ? { status: statusI.value } : {}),
       };
@@ -8688,6 +8722,69 @@ function renderContent(container, schedule, readyList, canEdit, reload) {
       el('h3', { style: { marginTop: '20px' } }, `Заказы к отгрузке (${orders.length})`),
       card,
     );
+  }
+
+  // Архив отгрузок (lazy — грузится при раскрытии)
+  if (canEdit) {
+    const archiveDetails = el('details', { style: { marginTop: '20px' } });
+    const archiveSummary = el('summary', { style: { cursor: 'pointer', fontWeight: '600', fontSize: '16px', padding: '8px 0' } }, 'Архив отгрузок');
+    const archiveBody = el('div');
+    let archiveLoaded = false;
+    archiveDetails.addEventListener('toggle', async () => {
+      if (!archiveDetails.open || archiveLoaded) return;
+      archiveLoaded = true;
+      archiveBody.replaceChildren(el('div', { class: 'loading' }, 'Загрузка…'));
+      try {
+        const r = await api.shippedArchive();
+        const shipped = r.data || [];
+        if (!shipped.length) {
+          archiveBody.replaceChildren(el('div', { class: 'empty' }, 'Нет отгруженных заказов'));
+          return;
+        }
+        // Group by shipped_at date
+        const groups = new Map();
+        for (const o of shipped) {
+          const d = o.shipped_at ? new Date(o.shipped_at) : null;
+          const key = d ? new Intl.DateTimeFormat('ru-RU', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'Europe/Moscow' }).format(d) : 'Дата неизвестна';
+          if (!groups.has(key)) groups.set(key, []);
+          groups.get(key).push(o);
+        }
+        const wrap = el('div');
+        for (const [dateLabel, list] of groups) {
+          const tbl = el('table', { class: 'data' },
+            el('thead', {}, el('tr', {},
+              el('th', {}, '№'), el('th', {}, 'Площадка'), el('th', {}, 'Клиент'),
+              el('th', {}, 'Трек-номер'), el('th', {}, 'Менеджер'), el('th', {}, 'Сумма'),
+            )),
+            el('tbody', {},
+              ...list.map((o) => el('tr', {
+                style: { cursor: 'pointer' },
+                onClick: async (e) => {
+                  if (e.target.closest('button, input, a')) return;
+                  try { const full = await api.get('orders', o.id); await showOrderDetails(full, () => {}); } catch (err) { toast(err.message, 'error'); }
+                },
+              },
+                el('td', {}, '#' + o.id),
+                el('td', {}, o.marketplace || '—'),
+                el('td', {}, o.client_name || '—'),
+                el('td', {}, o.shipment_qr || '—'),
+                el('td', {}, o.manager_name || '—'),
+                el('td', {}, fmtMoney(o.total_amount, o.currency)),
+              )),
+            ),
+          );
+          wrap.append(
+            el('div', { style: { fontWeight: '600', padding: '10px 0 4px', borderTop: '1px solid var(--border)' } }, dateLabel),
+            el('div', { class: 'table-wrap' }, tbl),
+          );
+        }
+        archiveBody.replaceChildren(wrap);
+      } catch (e) {
+        archiveBody.replaceChildren(el('div', { class: 'empty' }, `Ошибка: ${e.message}`));
+      }
+    });
+    archiveDetails.append(archiveSummary, archiveBody);
+    container.append(archiveDetails);
   }
 }
 

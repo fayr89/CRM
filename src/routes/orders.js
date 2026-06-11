@@ -387,10 +387,7 @@ router.get(
       itemsByOrder.get(it.order_id).push(it);
     }
 
-    // Порядковый номер в выгрузке — совпадает с номером на PDF-этикетке.
-    orders.forEach((o, idx) => { o._seq = idx + 1; });
-    // Способ отправки: предпочтительно delivery_method (СДЭК/Почта/Avito Доставка),
-    // если пусто — marketplace. payment_method (cash/card) НЕ используется.
+    // Способ отправки: предпочтительно delivery_method, если пусто — marketplace.
     const shipMethod = (row) => {
       const dm = String(row.delivery_method || '').trim().toLowerCase();
       const map = {
@@ -403,51 +400,46 @@ router.get(
       const mpMap = { avito: 'Avito', wildberries: 'Wildberries', wb: 'Wildberries', ozon: 'Ozon', yandex: 'Я.Маркет', yandex_market: 'Я.Маркет' };
       return mpMap[mp] || row.marketplace || '';
     };
-    // Excel автоматически переводит длинные числа в научную нотацию ("8,05128E+13")
-    // и срезает ведущие нули. Оборачиваем в формулу-строку ="...", тогда Excel
-    // оставляет значение как текст.
     const asTextForExcel = (v) => {
       const s = String(v ?? '').trim();
       return s ? `="${s.replace(/"/g, '""')}"` : '';
     };
 
+    // Новый формат: одна строка на каждый товар в заказе.
+    // Первая строка заказа содержит Дату, Способ отправки, Трек, Менеджер, Комментарий.
+    // Последующие строки — только Артикул, Наименование, Кол-во, Цена.
+    const rows = [];
+    for (const o of orders) {
+      const list = itemsByOrder.get(o.id) || [{}];
+      list.forEach((it, idx) => {
+        const isFirst = idx === 0;
+        rows.push({
+          _date: isFirst ? csvDate(o.created_at) : '',
+          _sku: it.sku ? asTextForExcel(it.sku) : '',
+          _name: it.name || '',
+          _qty: it.quantity != null ? String(it.quantity) : '',
+          _price: it.unit_price != null ? String(it.unit_price) : '',
+          _ship: isFirst ? shipMethod(o) : '',
+          _track: isFirst ? asTextForExcel(o.shipment_qr || '') : '',
+          _manager: isFirst ? (o.manager_name || '') : '',
+          _notes: isFirst ? (o.notes || '') : '',
+        });
+      });
+    }
+
     const columns = [
-      {
-        key: 'sku',
-        label: 'Артикул',
-        get: (row) => {
-          const list = itemsByOrder.get(row.id) || [];
-          const skus = list.map((i) => i.sku || '').filter(Boolean);
-          if (!skus.length) return '';
-          // Каждый артикул как текст-формула, склеены через ' | '.
-          return skus.map((s) => `="${s.replace(/"/g, '""')}"`).join(' | ');
-        },
-      },
-      {
-        key: 'qty',
-        label: 'Кол-во',
-        get: (row) => {
-          const list = itemsByOrder.get(row.id) || [];
-          return list.map((i) => String(i.quantity)).join(' | ');
-        },
-      },
-      {
-        key: 'items',
-        label: 'Наименование',
-        get: (row) => {
-          const list = itemsByOrder.get(row.id) || [];
-          return list.map((i) => i.name).join(' | ');
-        },
-      },
-      { key: 'ship_method', label: 'Способ отправки', get: shipMethod },
-      { key: 'shipment_qr', label: 'Трек номер', format: asTextForExcel },
-      { key: 'manager_name', label: 'Менеджер' },
-      { key: '_seq', label: '№', format: (v) => String(v) },
-      { key: 'id', label: 'ID', format: (v) => `#${v}` },
-      { key: 'notes', label: 'Комментарий' },
+      { key: '_date', label: 'Дата создания заказа' },
+      { key: '_sku', label: 'Артикул' },
+      { key: '_name', label: 'Наименование' },
+      { key: '_qty', label: 'Количество' },
+      { key: '_price', label: 'Цена 1шт' },
+      { key: '_ship', label: 'Способ отправки' },
+      { key: '_track', label: 'Трек номер' },
+      { key: '_manager', label: 'Менеджер' },
+      { key: '_notes', label: 'Комментарий' },
     ];
 
-    const csv = toCsv(orders, columns);
+    const csv = toCsv(rows, columns);
     const filename = `orders-${new Date().toISOString().slice(0, 10)}.csv`;
     res.setHeader('Content-Type', 'text/csv; charset=utf-8');
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
@@ -641,6 +633,29 @@ router.get(
         : null,
       data: orders,
     });
+  }),
+);
+
+// Архив отгрузок: заказы со статусом 'shipped', сгруппированные по дате,
+// для просмотра склада и администраторов.
+router.get(
+  '/shipped-archive',
+  asyncHandler(async (req, res) => {
+    if (!['warehouse', 'admin'].includes(req.user.role)) {
+      return res.json({ data: [] });
+    }
+    const orders = await db.all(
+      `SELECT o.id, o.marketplace, o.client_name,
+              o.total_amount, o.currency, o.reserved_at, o.shipped_at,
+              o.payment_method, o.shipment_qr,
+              u.name AS manager_name
+       FROM orders o
+       LEFT JOIN users u ON u.id = o.manager_id
+       WHERE o.status = 'shipped'
+       ORDER BY o.shipped_at DESC NULLS LAST
+       LIMIT 200`,
+    );
+    res.json({ data: orders });
   }),
 );
 

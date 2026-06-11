@@ -284,6 +284,7 @@ export const api = {
   warehouseSchedule: () => request('GET', '/api/warehouse/schedule'),
   updateWarehouseSchedule: (body) => request('PUT', '/api/warehouse/schedule', { body }),
   readyToShip: () => request('GET', '/api/orders/ready-to-ship'),
+  shippedArchive: () => request('GET', '/api/orders/shipped-archive'),
 
   // Аналитика для руководства
   analyticsRevenue: (days) => request('GET', '/api/analytics/revenue', { query: { days } }),
