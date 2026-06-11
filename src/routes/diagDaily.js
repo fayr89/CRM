@@ -33,8 +33,10 @@ router.get('/all', asyncHandler(async (req, res) => {
   }
 
   const feedbacks = await db.all(
-    `SELECT id, user_id, user_name, category, message, status, admin_reply, created_at, updated_at
-     FROM feedback WHERE status IN ('open', 'awaiting_approval') ORDER BY created_at DESC LIMIT 50`,
+    `SELECT f.id, f.user_id, u.name AS user_name, u.email AS user_email,
+            f.category, f.subject, f.message, f.status, f.admin_reply, f.created_at, f.updated_at
+     FROM feedback f LEFT JOIN users u ON u.id = f.user_id
+     WHERE f.status IN ('open', 'awaiting_approval') ORDER BY f.created_at DESC LIMIT 50`,
   );
 
   const feedbackMessages = {};
@@ -48,8 +50,9 @@ router.get('/all', asyncHandler(async (req, res) => {
 
   // Также тянем недавно закрытые (для полноты картины)
   const closedFeedbacks = await db.all(
-    `SELECT id, user_id, user_name, category, message, status, admin_reply, created_at, updated_at
-     FROM feedback WHERE status = 'closed' ORDER BY updated_at DESC LIMIT 10`,
+    `SELECT f.id, f.user_id, u.name AS user_name, f.category, f.subject, f.message, f.status, f.admin_reply, f.created_at, f.updated_at
+     FROM feedback f LEFT JOIN users u ON u.id = f.user_id
+     WHERE f.status = 'closed' ORDER BY f.updated_at DESC LIMIT 10`,
   );
 
   res.json({
