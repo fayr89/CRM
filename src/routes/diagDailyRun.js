@@ -10,172 +10,165 @@ const SECRET = 'dr20260611q7mz';
 
 router.use((req, res, next) => {
   if (req.query?.secret !== SECRET) return res.status(403).json({ error: 'forbidden' });
-  req.user = { id: 0, role: 'admin', name: 'AI ассистент' };
+  req.user = { id: null, role: 'admin', name: 'AI ассистент' };
   next();
 });
 
-// GET ?secret=X — dump all proposals + feedback with threads
+// GET ?secret=X — dump all proposals (with threads) + open/awaiting feedback (with threads)
 router.get(
   '/',
-  asyncHandler(async (req, res) => {
-    const op = req.query.op || 'data';
-
-    if (op === 'data') {
-      const proposals = await db.all(
+  asyncHandler(async (_req, res) => {
+    const statuses = ['approved', 'revision', 'rejected', 'pending'];
+    const proposals = {};
+    for (const st of statuses) {
+      const rows = await db.all(
         `SELECT p.*, u.name AS admin_decision_by_name,
-                f.subject AS feedback_subject, f.user_id AS feedback_user_id,
-                fu.name AS feedback_author_name
+                f.subject AS feedback_subject, fu.name AS feedback_author_name
          FROM ai_proposals p
          LEFT JOIN users u ON u.id = p.admin_decision_by
          LEFT JOIN feedback f ON f.id = p.feedback_id
          LEFT JOIN users fu ON fu.id = f.user_id
-         ORDER BY (CASE p.status WHEN 'pending' THEN 0 WHEN 'revision' THEN 1
-                  WHEN 'approved' THEN 2 WHEN 'done' THEN 3 ELSE 4 END),
-                  p.created_at DESC
-         LIMIT 100`,
+         WHERE p.status = ?
+         ORDER BY p.created_at DESC`,
+        st,
       );
-
-      const proposalIds = proposals.map((p) => p.id);
-      let proposalMessages = [];
-      if (proposalIds.length) {
-        proposalMessages = await db.all(
-          `SELECT proposal_id, id, user_name, role, text, created_at
+      for (const p of rows) {
+        p.messages = await db.all(
+          `SELECT id, user_name, role, text, created_at
            FROM ai_proposal_messages
-           WHERE proposal_id = ANY(?::int[])
+           WHERE proposal_id = ?
            ORDER BY created_at ASC, id ASC`,
-          JSON.stringify(proposalIds),
+          p.id,
         );
       }
-
-      const feedbackRows = await db.all(
-        `SELECT f.id, f.subject, f.category, f.status, f.admin_reply,
-                f.created_at, f.updated_at,
-                u.name AS author_name, u.email AS author_email
-         FROM feedback f
-         JOIN users u ON u.id = f.user_id
-         WHERE f.status IN ('open', 'awaiting_approval')
-         ORDER BY f.created_at DESC
-         LIMIT 100`,
-      );
-
-      const feedbackIds = feedbackRows.map((f) => f.id);
-      let feedbackMessages = [];
-      if (feedbackIds.length) {
-        feedbackMessages = await db.all(
-          `SELECT fm.feedback_id, fm.id, fm.user_name, fm.role, fm.text, fm.created_at
-           FROM feedback_messages fm
-           WHERE fm.feedback_id = ANY(?::int[])
-           ORDER BY fm.created_at ASC, fm.id ASC`,
-          JSON.stringify(feedbackIds),
-        );
-      }
-
-      const proposalMsgMap = {};
-      for (const m of proposalMessages) {
-        if (!proposalMsgMap[m.proposal_id]) proposalMsgMap[m.proposal_id] = [];
-        proposalMsgMap[m.proposal_id].push(m);
-      }
-      const feedbackMsgMap = {};
-      for (const m of feedbackMessages) {
-        if (!feedbackMsgMap[m.feedback_id]) feedbackMsgMap[m.feedback_id] = [];
-        feedbackMsgMap[m.feedback_id].push(m);
-      }
-
-      return res.json({
-        proposals: proposals.map((p) => ({ ...p, messages: proposalMsgMap[p.id] || [] })),
-        feedback: feedbackRows.map((f) => ({ ...f, messages: feedbackMsgMap[f.id] || [] })),
-      });
+      proposals[st] = rows;
     }
 
-    if (op === 'proposal-done') {
-      const id = Number(req.query.id);
-      if (!id) return res.status(400).json({ error: 'id required' });
-      await db.run(
-        `UPDATE ai_proposals SET status = 'done', updated_at = NOW() WHERE id = ?`,
-        id,
+    const feedback = await db.all(
+      `SELECT f.id, f.subject, f.category, f.status, f.admin_reply,
+              f.created_at, f.updated_at,
+              u.name AS author_name, u.email AS author_email
+       FROM feedback f
+       JOIN users u ON u.id = f.user_id
+       WHERE f.status IN ('open', 'awaiting_approval')
+       ORDER BY f.created_at DESC`,
+    );
+    for (const fb of feedback) {
+      fb.messages = await db.all(
+        `SELECT id, user_name, role, text, created_at
+         FROM feedback_messages
+         WHERE feedback_id = ?
+         ORDER BY created_at ASC, id ASC`,
+        fb.id,
       );
-      return res.json({ ok: true, id, status: 'done' });
     }
 
-    if (op === 'proposal-patch') {
-      const id = Number(req.query.id);
-      const status = req.query.status;
-      const notes = req.query.notes ?? null;
-      if (!id || !status) return res.status(400).json({ error: 'id and status required' });
-      await db.run(
-        `UPDATE ai_proposals SET status = ?, admin_notes = ?, updated_at = NOW() WHERE id = ?`,
-        status, notes, id,
-      );
-      return res.json({ ok: true, id, status });
-    }
+    res.json({ proposals, feedback });
+  }),
+);
 
-    if (op === 'proposal-create') {
-      const title = req.query.title || '';
-      const summary = req.query.summary || '';
-      const category = req.query.category || null;
-      const risk = req.query.risk || 'medium';
-      const source = req.query.source || null;
-      const feedbackId = req.query.feedback_id ? Number(req.query.feedback_id) : null;
-      const proposed_changes = req.query.proposed_changes || null;
-      if (!title || !summary) return res.status(400).json({ error: 'title and summary required' });
-      const r = await db.run(
-        `INSERT INTO ai_proposals (feedback_id, title, summary, category, risk, source, proposed_changes)
-         VALUES (?, ?, ?, ?, ?, ?, ?::jsonb) RETURNING id`,
-        feedbackId, title, summary, category, risk, source,
-        proposed_changes ? proposed_changes : null,
-      );
-      return res.status(201).json({ ok: true, id: r.lastInsertRowid });
-    }
+// ?secret=X&op=proposal-done&id=N
+router.get(
+  '/proposal-done',
+  asyncHandler(async (req, res) => {
+    const id = Number(req.query.id);
+    if (!id) return res.status(400).json({ error: 'id required' });
+    await db.run(
+      `UPDATE ai_proposals SET status = 'done', updated_at = NOW() WHERE id = ?`,
+      id,
+    );
+    res.json({ ok: true, id, status: 'done' });
+  }),
+);
 
-    if (op === 'proposal-msg') {
-      const id = Number(req.query.id);
-      const text = req.query.text || '';
-      if (!id || !text) return res.status(400).json({ error: 'id and text required' });
-      await db.run(
-        `INSERT INTO ai_proposal_messages (proposal_id, user_id, user_name, role, text)
-         VALUES (?, 0, 'AI ассистент', 'admin', ?)`,
-        id, text,
-      );
-      return res.json({ ok: true });
-    }
+// ?secret=X&op=proposal-patch&id=N&status=S&notes=...
+router.get(
+  '/proposal-patch',
+  asyncHandler(async (req, res) => {
+    const id = Number(req.query.id);
+    const status = req.query.status || null;
+    const notes = req.query.notes ?? null;
+    if (!id) return res.status(400).json({ error: 'id required' });
+    const sets = ['updated_at = NOW()'];
+    const vals = [];
+    if (status) { sets.unshift('status = ?'); vals.push(status); }
+    if (notes !== null) { sets.unshift('admin_notes = ?'); vals.push(notes); }
+    await db.run(`UPDATE ai_proposals SET ${sets.join(', ')} WHERE id = ?`, ...vals, id);
+    res.json({ ok: true, id, status });
+  }),
+);
 
-    if (op === 'feedback-msg') {
-      const id = Number(req.query.id);
-      const text = req.query.text || '';
-      const newStatus = req.query.status || null;
-      const adminReply = req.query.reply || null;
-      if (!id || !text) return res.status(400).json({ error: 'id and text required' });
-      await db.run(
-        `INSERT INTO feedback_messages (feedback_id, user_id, user_name, role, text)
-         VALUES (?, 0, 'AI ассистент', 'admin', ?)`,
-        id, text,
-      );
-      if (newStatus || adminReply) {
-        const sets = [];
-        const vals = [];
-        if (newStatus) { sets.push('status = ?'); vals.push(newStatus); }
-        if (adminReply) { sets.push('admin_reply = ?'); vals.push(adminReply); }
-        sets.push('updated_at = NOW()');
-        await db.run(`UPDATE feedback SET ${sets.join(', ')} WHERE id = ?`, ...vals, id);
-      }
-      return res.json({ ok: true });
-    }
+// ?secret=X&title=...&summary=...&category=...&risk=...&source=...&feedback_id=N
+router.get(
+  '/proposal-create',
+  asyncHandler(async (req, res) => {
+    const { title, summary, category, risk, source } = req.query;
+    const feedbackId = req.query.feedback_id ? Number(req.query.feedback_id) : null;
+    if (!title || !summary) return res.status(400).json({ error: 'title and summary required' });
+    const r = await db.run(
+      `INSERT INTO ai_proposals (feedback_id, title, summary, category, risk, source)
+       VALUES (?, ?, ?, ?, ?, ?) RETURNING id`,
+      feedbackId, title, summary, category || null, risk || 'medium', source || null,
+    );
+    res.status(201).json({ ok: true, id: r.lastInsertRowid });
+  }),
+);
 
-    if (op === 'feedback-patch') {
-      const id = Number(req.query.id);
-      const status = req.query.status || null;
-      const reply = req.query.reply || null;
-      if (!id) return res.status(400).json({ error: 'id required' });
-      const sets = [];
+// ?secret=X&id=N&text=...
+router.get(
+  '/proposal-msg',
+  asyncHandler(async (req, res) => {
+    const id = Number(req.query.id);
+    const text = req.query.text || '';
+    if (!id || !text) return res.status(400).json({ error: 'id and text required' });
+    await db.run(
+      `INSERT INTO ai_proposal_messages (proposal_id, user_id, user_name, role, text)
+       VALUES (?, NULL, 'AI ассистент', 'admin', ?)`,
+      id, text,
+    );
+    res.json({ ok: true });
+  }),
+);
+
+// ?secret=X&id=N&text=...&status=OPTIONAL&reply=OPTIONAL
+router.get(
+  '/feedback-msg',
+  asyncHandler(async (req, res) => {
+    const id = Number(req.query.id);
+    const text = req.query.text || '';
+    const newStatus = req.query.status || null;
+    const adminReply = req.query.reply || null;
+    if (!id || !text) return res.status(400).json({ error: 'id and text required' });
+    await db.run(
+      `INSERT INTO feedback_messages (feedback_id, user_id, user_name, role, text)
+       VALUES (?, NULL, 'AI ассистент', 'admin', ?)`,
+      id, text,
+    );
+    if (newStatus || adminReply) {
+      const sets = ['updated_at = NOW()'];
       const vals = [];
-      if (status) { sets.push('status = ?'); vals.push(status); }
-      if (reply) { sets.push('admin_reply = ?'); vals.push(reply); }
-      sets.push('updated_at = NOW()');
+      if (newStatus) { sets.unshift('status = ?'); vals.push(newStatus); }
+      if (adminReply) { sets.unshift('admin_reply = ?'); vals.push(adminReply); }
       await db.run(`UPDATE feedback SET ${sets.join(', ')} WHERE id = ?`, ...vals, id);
-      return res.json({ ok: true, id, status });
     }
+    res.json({ ok: true });
+  }),
+);
 
-    return res.status(400).json({ error: `unknown op: ${op}` });
+// ?secret=X&id=N&status=S&reply=OPTIONAL
+router.get(
+  '/feedback-patch',
+  asyncHandler(async (req, res) => {
+    const id = Number(req.query.id);
+    const status = req.query.status || null;
+    const reply = req.query.reply || null;
+    if (!id) return res.status(400).json({ error: 'id required' });
+    const sets = ['updated_at = NOW()'];
+    const vals = [];
+    if (status) { sets.unshift('status = ?'); vals.push(status); }
+    if (reply) { sets.unshift('admin_reply = ?'); vals.push(reply); }
+    await db.run(`UPDATE feedback SET ${sets.join(', ')} WHERE id = ?`, ...vals, id);
+    res.json({ ok: true, id, status });
   }),
 );
 
