@@ -5,6 +5,7 @@ import { db } from '../db.js';
 import { BadRequest, NotFound, asyncHandler } from '../errors.js';
 import {
   msFetchStores, msFetchOrganizations, msFindCounterpartyByName,
+  msCreate, msDelete,
 } from '../services/moysklad.js';
 import {
   getMoyskladToken, getMsConfig, setMsSetting,
@@ -203,6 +204,63 @@ router.post(
   asyncHandler(async (_req, res) => {
     const processed = await runPendingMsJobs(20);
     res.json({ processed });
+  }),
+);
+
+// =================== МС webhookstock (подписка на изменения остатков) ===================
+//
+// МС умеет дёргать наш URL когда у товара меняется остаток. Это снимает
+// нагрузку с cron stock-sync (тот всё равно остаётся как страховка). Тип
+// сущности — `webhookstock`. Параметры: url, action (CREATE), stockType
+// (stock — общий остаток) и опционально secret для HMAC X-Lognex-Signature.
+//
+// Принимающий маршрут — POST /api/webhooks/moysklad-stock (см. msWebhook.js).
+
+const MS_WEBHOOK_URL = 'https://crm-orcin-six.vercel.app/api/webhooks/moysklad-stock';
+
+router.get(
+  '/ms/webhook-stocks',
+  requireRole('admin'),
+  asyncHandler(async (_req, res) => {
+    const token = await getMoyskladToken();
+    if (!token) throw BadRequest('Токен МойСклад не настроен');
+    const r = await fetch('https://api.moysklad.ru/api/remap/1.2/entity/webhookstock?limit=100', {
+      headers: { Authorization: `Bearer ${token}`, Accept: 'application/json;charset=utf-8' },
+    });
+    const data = r.ok ? await r.json() : null;
+    if (!r.ok) throw BadRequest(`МС ${r.status}: ${(await r.text()).slice(0, 500)}`);
+    const rows = (data?.rows || []).map((w) => ({
+      id: w.id, url: w.url, enabled: w.enabled,
+      stockType: w.stockType, reportType: w.reportType,
+      created: w.created, updated: w.updated,
+    }));
+    res.json({ count: rows.length, our_url: MS_WEBHOOK_URL, rows });
+  }),
+);
+
+router.post(
+  '/ms/webhook-stocks/subscribe',
+  requireRole('admin'),
+  asyncHandler(async (req, res) => {
+    const token = await getMoyskladToken();
+    if (!token) throw BadRequest('Токен МойСклад не настроен');
+    const stockType = req.body?.stockType || 'stock';
+    const created = await msCreate(token, 'webhookstock', {
+      url: MS_WEBHOOK_URL,
+      stockType,
+    });
+    res.json({ ok: true, webhook: { id: created.id, url: created.url, stockType: created.stockType } });
+  }),
+);
+
+router.delete(
+  '/ms/webhook-stocks/:id',
+  requireRole('admin'),
+  asyncHandler(async (req, res) => {
+    const token = await getMoyskladToken();
+    if (!token) throw BadRequest('Токен МойСклад не настроен');
+    await msDelete(token, 'webhookstock', req.params.id);
+    res.json({ ok: true });
   }),
 );
 
