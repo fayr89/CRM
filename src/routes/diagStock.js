@@ -199,6 +199,7 @@ router.get(
     const url = req.body?.url || req.query?.url
       || 'https://crm-orcin-six.vercel.app/api/webhooks/moysklad-stock';
     const stockType = req.body?.stockType || req.query?.stockType || 'stock';
+    const reportType = req.body?.reportType || req.query?.reportType || 'bystore';
     const r = await fetch(`${BASE}/entity/webhookstock`, {
       method: 'POST',
       headers: {
@@ -206,7 +207,7 @@ router.get(
         'Content-Type': 'application/json',
         Accept: 'application/json;charset=utf-8',
       },
-      body: JSON.stringify({ url, stockType }),
+      body: JSON.stringify({ url, stockType, reportType }),
     });
     const text = await r.text();
     res.status(r.status).json({ status: r.status, body: text ? JSON.parse(text) : null });

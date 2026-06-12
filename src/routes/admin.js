@@ -245,11 +245,13 @@ router.post(
     const token = await getMoyskladToken();
     if (!token) throw BadRequest('Токен МойСклад не настроен');
     const stockType = req.body?.stockType || 'stock';
+    const reportType = req.body?.reportType || 'bystore';
     const created = await msCreate(token, 'webhookstock', {
       url: MS_WEBHOOK_URL,
       stockType,
+      reportType,
     });
-    res.json({ ok: true, webhook: { id: created.id, url: created.url, stockType: created.stockType } });
+    res.json({ ok: true, webhook: { id: created.id, url: created.url, stockType: created.stockType, reportType: created.reportType } });
   }),
 );
 
