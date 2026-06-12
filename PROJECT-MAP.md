@@ -278,6 +278,16 @@ CRM разделяет заказы на два потока:
   **работает** — критичные обновления перед резервом всё равно делает
   `refreshProductStocks` per-order (там per-UUID на 1-10 товаров заказа
   быстро).
+- **МС webhookstock-подписка**: точечное обновление stock_by_store по
+  событиям в МС. Принимающий маршрут — `POST /api/webhooks/moysklad-stock`
+  (`msWebhook.js`): парсит `events[].meta.href`/`stockUpdate.goodMeta.href`,
+  извлекает UUID и делает узкий `msFetchStockByProductIds` ТОЛЬКО по этим
+  UUID. Раньше при любом stock-вебхуке делали полный re-sync каталога —
+  обжирали бюджет. Управление подпиской: `/api/admin/ms/webhook-stocks`
+  (GET/POST/DELETE, admin). Текущая подписка зарегистрирована 2026-06-12
+  на `https://crm-orcin-six.vercel.app/api/webhooks/moysklad-stock`,
+  `stockType=stock`, `reportType=bystore`. Так стоки приходят в CRM в
+  реальном времени, cron остаётся как страховка раз в 5 мин.
 
 ### Переходы статуса waiting_stock
 
