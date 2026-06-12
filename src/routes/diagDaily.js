@@ -53,7 +53,7 @@ router.get(
     if (action === 'patch-proposal') {
       await db.run(
         `UPDATE ai_proposals SET status = ?, admin_notes = COALESCE(?, admin_notes),
-         admin_decision_by = 0, admin_decision_at = NOW(), updated_at = NOW()
+         admin_decision_by = NULL, admin_decision_at = NOW(), updated_at = NOW()
          WHERE id = ?`,
         decision, notes || null, numId,
       );
@@ -64,7 +64,7 @@ router.get(
     if (action === 'post-proposal-msg') {
       await db.run(
         `INSERT INTO ai_proposal_messages (proposal_id, user_id, user_name, role, text)
-         VALUES (?, 0, 'AI ассистент', 'admin', ?)`,
+         VALUES (?, NULL, 'AI ассистент', 'admin', ?)`,
         numId, text,
       );
       return res.json({ ok: true });
@@ -119,7 +119,7 @@ router.get(
       const newStatus = status || cur.status;
       const justResolved = (newStatus === 'awaiting_approval' || newStatus === 'closed')
         && cur.status !== 'awaiting_approval' && cur.status !== 'closed';
-      const resolvedBy = justResolved ? 0 : cur.resolved_by;
+      const resolvedBy = justResolved ? null : cur.resolved_by;
       const resolvedAtSql = justResolved ? 'NOW()' : 'resolved_at';
       await db.run(
         `UPDATE feedback SET
@@ -140,7 +140,7 @@ router.get(
       if (!fb) return res.status(404).json({ error: 'not found' });
       await db.run(
         `INSERT INTO feedback_messages (feedback_id, user_id, user_name, role, text)
-         VALUES (?, 0, 'AI ассистент', 'admin', ?)`,
+         VALUES (?, NULL, 'AI ассистент', 'admin', ?)`,
         numId, text,
       );
       return res.json({ ok: true });
