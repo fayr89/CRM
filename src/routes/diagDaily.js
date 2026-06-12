@@ -32,9 +32,11 @@ router.get('/daily-full', async (req, res) => {
 
     // 3. Feedback — open + awaiting_approval
     const feedbacks = await db.all(
-      `SELECT f.id, f.user_name, f.email, f.category, f.subject, f.message,
+      `SELECT f.id, u.name AS user_name, u.email,
+              f.category, f.subject, f.message,
               f.status, f.admin_reply, f.created_at, f.updated_at
        FROM feedback f
+       LEFT JOIN users u ON f.user_id = u.id
        WHERE f.status IN ('open', 'awaiting_approval')
        ORDER BY f.created_at DESC`,
     );
@@ -43,7 +45,7 @@ router.get('/daily-full', async (req, res) => {
     const feedbackMessages = {};
     for (const f of feedbacks) {
       const msgs = await db.all(
-        `SELECT id, user_name, role, message, created_at
+        `SELECT id, user_name, role, text, created_at
          FROM feedback_messages WHERE feedback_id = ?
          ORDER BY created_at ASC`,
         f.id,
