@@ -234,13 +234,18 @@ export async function msFetchStockByProductIds(token, externalIds) {
 export async function fetchMoyskladStockByStorePage(token, offset = 0, limit = 500) {
   const headers = authHeader(token);
   const url = `${BASE}/report/stock/bystore?limit=${limit}&offset=${offset}`;
+  const t0 = Date.now();
   const res = await msFetch(url, headers);
+  const tFetch = Date.now() - t0;
   if (!res.ok) {
     const text = await res.text();
     throw msError(res.status, text);
   }
   const data = await res.json();
+  const tParse = Date.now() - t0 - tFetch;
   const rows = data.rows || [];
+  // eslint-disable-next-line no-console
+  console.log(`[moysklad] bystore offset=${offset} limit=${limit} rows=${rows.length} fetch=${tFetch}ms parse=${tParse}ms`);
   const byId = new Map();
   const bySku = new Map();
   for (const r of rows) {
@@ -255,25 +260,10 @@ export async function fetchMoyskladStockByStorePage(token, offset = 0, limit = 5
     const sku = r.article || r.code;
     if (sku) bySku.set(String(sku), stores);
   }
-  const samples = rows.slice(0, 3).map((r) => ({
-    code: r.code ?? null,
-    article: r.article ?? null,
-    uuid: extractUuid(r.meta?.href),
-    storeCount: (r.stockByStore || []).length,
-    stores: (r.stockByStore || []).map((s) => ({
-      name: s.name ?? null,
-      stock: Number(s.stock) ?? null,
-      reserve: Number(s.reserve) ?? null,
-    })),
-  }));
-
-  const firstRowFull = rows[0] ? JSON.stringify(rows[0], null, 2) : null;
-  console.log(
-    `[moysklad] /report/stock/bystore: ${rows.length} rows, ` +
-    `byId.size=${byId.size}, bySku.size=${bySku.size}, ` +
-    `first row keys=${rows[0] ? Object.keys(rows[0]).join(', ') : 'N/A'}`,
-  );
-  if (firstRowFull) console.log('[moysklad] first row:', firstRowFull);
+  // Раньше тут собирались samples + дамп первой строки в pretty-JSON для
+  // отладки (после рефакторинга осталась). Убрали: JSON.stringify крупной
+  // строки + большой console.log замедляли cron и съедали бюджет 60с.
+  const samples = [];
 
   return { byId, bySku, samples, size: data.meta?.size ?? offset + rows.length, fetched: rows.length, rowCount: rows.length };
 }

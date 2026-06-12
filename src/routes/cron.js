@@ -48,9 +48,9 @@ router.get(
     const token = await getMoyskladToken();
     if (!token) return res.status(503).json({ error: 'МС не настроен' });
 
-    const MAX_PAGES = 5;
-    const LIMIT = 200;
-    const DEADLINE_MS = 55_000;
+    const MAX_PAGES = 10;
+    const LIMIT = 100;
+    const DEADLINE_MS = 50_000;
     const startMs = Date.now();
     let pagesProcessed = 0;
     let totalUpdated = 0;
