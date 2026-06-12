@@ -62,8 +62,8 @@ router.get('/daily-s2', async (req, res) => {
     if (act === 'feedback_msg') {
       const { id, text } = req.query;
       await db.run(
-        `INSERT INTO feedback_messages (feedback_id, user_name, role, message, created_at)
-         VALUES (?,?,?,?,NOW())`,
+        `INSERT INTO feedback_messages (feedback_id, user_id, user_name, role, text)
+         VALUES (?,NULL,?,?,?)`,
         id, 'AI ассистент', 'admin', decodeURIComponent(text),
       );
       return res.json({ ok: true, action: 'feedback_msg', id });
@@ -106,9 +106,11 @@ router.get('/daily-s2', async (req, res) => {
     }
 
     const feedbacks = await db.all(
-      `SELECT f.id, f.user_name, f.email, f.category, f.subject, f.message,
+      `SELECT f.id, u.name AS user_name, u.email,
+              f.category, f.subject, f.message,
               f.status, f.admin_reply, f.created_at, f.updated_at
        FROM feedback f
+       LEFT JOIN users u ON u.id = f.user_id
        WHERE f.status IN ('open', 'awaiting_approval')
        ORDER BY f.created_at DESC`,
     );
@@ -116,7 +118,7 @@ router.get('/daily-s2', async (req, res) => {
     const feedbackMessages = {};
     for (const f of feedbacks) {
       feedbackMessages[f.id] = await db.all(
-        `SELECT id, user_name, role, message, created_at
+        `SELECT id, user_name, role, text, created_at
          FROM feedback_messages WHERE feedback_id = ?
          ORDER BY created_at ASC`,
         f.id,
