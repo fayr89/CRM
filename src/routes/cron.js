@@ -37,8 +37,10 @@ async function getMoyskladToken() {
 }
 
 // Auto-импорт остатков по складам. Vercel Cron дёргает каждые 15 мин (см. vercel.json).
-// Лямбда имеет 60s timeout, поэтому делаем максимум 5 страниц по 1000 (≈5000 товаров).
-// Если каталог больше — следующий cron-тик подхватит next-offset из app_settings.
+// Лямбда имеет 60s timeout. МС-отчёт `/report/stock/bystore?limit=1000` иногда
+// не успевает (504 каждые 15 мин в инциденте 2026-06-12). Снижаем LIMIT до 200
+// чтобы каждая страница укладывалась в ~5-10с, и держим внутренний дедлайн 55с
+// чтобы сохранить offset и выйти до Vercel-таймаута.
 router.get(
   '/refresh-stocks',
   asyncHandler(async (req, res) => {
@@ -47,7 +49,9 @@ router.get(
     if (!token) return res.status(503).json({ error: 'МС не настроен' });
 
     const MAX_PAGES = 5;
-    const LIMIT = 1000;
+    const LIMIT = 200;
+    const DEADLINE_MS = 55_000;
+    const startMs = Date.now();
     let pagesProcessed = 0;
     let totalUpdated = 0;
     let clearedMissing = 0;
@@ -67,6 +71,11 @@ router.get(
     }
 
     for (let i = 0; i < MAX_PAGES; i += 1) {
+      if (Date.now() - startMs > DEADLINE_MS) {
+        // eslint-disable-next-line no-console
+        console.warn('[cron] внутренний дедлайн 55с — сохраняем offset и выходим');
+        break;
+      }
       let page;
       try {
         page = await fetchMoyskladStockByStorePage(token, offset, LIMIT);
