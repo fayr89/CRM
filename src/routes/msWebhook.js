@@ -1,6 +1,15 @@
-// Входящий webhook от МойСклад: событие stock.change → обновляем остатки.
+// Входящий webhook от МойСклад: событие изменения остатков → обновляем
+// stock_by_store у конкретных товаров.
+//
 // Маршрут НЕ требует JWT: вызывается МС извне.
 // HMAC-подпись X-Lognex-Signature проверяется если задан MOYSKLAD_WEBHOOK_SECRET.
+//
+// Раньше при любом stock-вебхуке делали ПОЛНЫЙ re-sync каталога (4255 товаров
+// per-UUID → ~30 минут). Это съедало бюджет лямбды и блокировало другие
+// вызовы. Сейчас парсим events[].meta.href / stockUpdate.goodMeta.href,
+// извлекаем UUID-ы только тех товаров где остаток реально поменялся, и
+// дёргаем msFetchStockByProductIds именно по ним. Обычный батч = 1-5 UUID,
+// отрабатывает за пару секунд.
 import crypto from 'crypto';
 import { Router } from 'express';
 import { asyncHandler } from '../errors.js';
@@ -16,9 +25,38 @@ async function getMsToken() {
   return stored || process.env.MOYSKLAD_TOKEN || null;
 }
 
+// Из href вида .../entity/product/UUID или .../entity/variant/UUID
+// возвращает {uuid, kind}. Если не похоже на product/variant — null.
+function parseEntityHref(href) {
+  if (typeof href !== 'string') return null;
+  const m = /\/entity\/(product|variant)\/([0-9a-f-]+)(?:\?|$)/i.exec(href);
+  if (!m) return null;
+  return { kind: m[1], uuid: m[2] };
+}
+
+// Из тела вебхука вытаскивает уникальные UUID товаров/вариантов.
+// MoySklad шлёт events: [{ meta: {href: ...}, ... }] или с goodMeta / stockUpdate.
+function extractProductUuids(body) {
+  const uuids = new Set();
+  const events = Array.isArray(body?.events) ? body.events : [];
+  for (const ev of events) {
+    const candidates = [
+      ev?.meta?.href,
+      ev?.stockUpdate?.goodMeta?.href,
+      ev?.goodMeta?.href,
+      ev?.product?.meta?.href,
+    ];
+    for (const href of candidates) {
+      const parsed = parseEntityHref(href);
+      if (parsed) uuids.add(parsed.uuid);
+    }
+  }
+  return [...uuids];
+}
+
 // POST /api/webhooks/moysklad-stock
-// Настройка в МС: ЛК → Настройки → Вебхуки → добавить URL и Secret.
-// Принимает события stock.change. Отвечает 200 немедленно, sync — фоново.
+// Настройка в МС: создаётся через /api/admin/ms/webhook-stocks (либо в ЛК МС
+// → Настройки → Вебхуки).
 router.post(
   '/moysklad-stock',
   asyncHandler(async (req, res) => {
@@ -32,38 +70,23 @@ router.post(
       }
     }
 
-    // Отвечаем немедленно — МС ждёт ответа не более нескольких секунд.
-    res.json({ ok: true });
+    // Отвечаем немедленно — МС ждёт ответа в пределах ~5с.
+    const uuids = extractProductUuids(req.body);
+    res.json({ ok: true, events: uuids.length });
 
-    // Фоновая синхронизация остатков по страницам.
+    if (!uuids.length) return;
     const token = await getMsToken().catch(() => null);
     if (!token) return;
 
-    const PAGE = 50;
-    let offset = 0;
-    for (;;) {
-      const products = await db.all(
-        `SELECT id, external_id FROM products
-         WHERE external_source = 'moysklad' AND external_id IS NOT NULL
-           AND is_markdown IS NOT TRUE AND active = TRUE
-         ORDER BY id LIMIT ? OFFSET ?`,
-        PAGE, offset,
-      ).catch(() => []);
-      if (!products.length) break;
-
-      const ids = products.map((p) => p.external_id);
-      const byId = await msFetchStockByProductIds(token, ids).catch(() => null);
-      if (!byId) break;
-
-      // absent НЕ нулим: при 412 от МС весь батч был бы в absent → стёрли бы
-      // всё (см. инцидент 2026-06-11 v2). Очистку архивных делает только
-      // полный cron stock-sync через updated_at < started_at.
+    // Фоновый sync именно этих товаров.
+    try {
+      const byId = await msFetchStockByProductIds(token, uuids);
       const present = [];
       const presentJson = [];
-      for (const p of products) {
-        const sbs = byId.get(p.external_id);
+      for (const uuid of uuids) {
+        const sbs = byId.get(uuid);
         if (sbs && sbs.length) {
-          present.push(p.external_id);
+          present.push(uuid);
           presentJson.push(JSON.stringify(sbs));
         }
       }
@@ -73,14 +96,11 @@ router.post(
            FROM unnest(?::text[], ?::jsonb[]) AS d(external_id, sbs)
            WHERE p.external_source = 'moysklad' AND p.external_id = d.external_id`,
           present, presentJson,
-        ).catch((e) => {
-          // eslint-disable-next-line no-console
-          console.warn('[ms-webhook-stock] db update error:', e?.message);
-        });
+        );
       }
-
-      offset += products.length;
-      if (products.length < PAGE) break;
+    } catch (e) {
+      // eslint-disable-next-line no-console
+      console.warn('[ms-webhook-stock] update failed:', e?.message);
     }
   }),
 );

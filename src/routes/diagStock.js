@@ -176,4 +176,55 @@ router.get(
   }),
 );
 
+// TEMP: разовый setup МС-вебхука на изменения остатков. Использую через
+// MCP при первичной настройке, потом удалю.
+router.get(
+  '/webhook-stock-list',
+  requireRole('admin', 'aus', 'rop'),
+  asyncHandler(async (_req, res) => {
+    const token = await getMsToken();
+    if (!token) return res.status(503).json({ error: 'no MC token' });
+    const r = await msGet(token, '/entity/webhookstock?limit=100');
+    res.json({ status: r.status, body: r.body });
+  }),
+);
+
+// GET-вариант чтобы дёрнуть через MCP web_fetch_vercel_url (он умеет только GET).
+router.get(
+  '/webhook-stock-subscribe',
+  requireRole('admin', 'aus', 'rop'),
+  asyncHandler(async (req, res) => {
+    const token = await getMsToken();
+    if (!token) return res.status(503).json({ error: 'no MC token' });
+    const url = req.body?.url || req.query?.url
+      || 'https://crm-orcin-six.vercel.app/api/webhooks/moysklad-stock';
+    const stockType = req.body?.stockType || req.query?.stockType || 'stock';
+    const r = await fetch(`${BASE}/entity/webhookstock`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+        Accept: 'application/json;charset=utf-8',
+      },
+      body: JSON.stringify({ url, stockType }),
+    });
+    const text = await r.text();
+    res.status(r.status).json({ status: r.status, body: text ? JSON.parse(text) : null });
+  }),
+);
+
+router.delete(
+  '/webhook-stock/:id',
+  requireRole('admin', 'aus', 'rop'),
+  asyncHandler(async (req, res) => {
+    const token = await getMsToken();
+    if (!token) return res.status(503).json({ error: 'no MC token' });
+    const r = await fetch(`${BASE}/entity/webhookstock/${req.params.id}`, {
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${token}`, Accept: 'application/json;charset=utf-8' },
+    });
+    res.status(r.status).json({ status: r.status });
+  }),
+);
+
 export default router;
