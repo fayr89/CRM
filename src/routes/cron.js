@@ -55,8 +55,8 @@ router.get(
     const token = await getMoyskladToken();
     if (!token) return res.status(503).json({ error: 'МС не настроен' });
 
-    const PAGE = 100;
-    const DEADLINE_MS = 50_000;
+    const PAGE = 20;
+    const DEADLINE_MS = 45_000;
     const startMs = Date.now();
     let totalUpdated = 0;
     let clearedMissing = 0;
