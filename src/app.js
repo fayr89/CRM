@@ -45,6 +45,7 @@ import productionReceiptRoutes from './routes/productionReceipt.js';
 import diagStockRoutes from './routes/diagStock.js';
 import orderRecheckRoutes from './routes/orderRecheck.js';
 import msWebhookRoutes from './routes/msWebhook.js';
+import diagAiDailyRoutes from './routes/diagAiDaily.js';
 import { authenticate as authMw } from './auth.js';
 import { importMoyskladStoresFresh } from './routes/stockSyncFresh.js';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -205,6 +206,7 @@ export function createApp({ serveStatic = true } = {}) {
   app.use('/api/production/receipt', productionReceiptRoutes);
   app.use('/api/production-settings', productionSettingsRoutes);
   app.use('/api/diag-stock', diagStockRoutes);
+  app.use('/api/diag/ai-daily', diagAiDailyRoutes);
   app.use((req, res) => {
     res.status(404).json({ error: `Route not found: ${req.method} ${req.path}` });
   });
