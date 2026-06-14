@@ -43,7 +43,6 @@ import productionPLRoutes from './routes/productionPL.js';
 import productionSettingsRoutes from './routes/productionSettings.js';
 import productionReceiptRoutes from './routes/productionReceipt.js';
 import diagStockRoutes from './routes/diagStock.js';
-import diagDailyRunRoutes from './routes/diagDailyRun.js';
 import orderRecheckRoutes from './routes/orderRecheck.js';
 import msWebhookRoutes from './routes/msWebhook.js';
 import { authenticate as authMw } from './auth.js';
@@ -206,7 +205,6 @@ export function createApp({ serveStatic = true } = {}) {
   app.use('/api/production/receipt', productionReceiptRoutes);
   app.use('/api/production-settings', productionSettingsRoutes);
   app.use('/api/diag-stock', diagStockRoutes);
-  app.use('/api/diag', diagDailyRunRoutes);
   app.use((req, res) => {
     res.status(404).json({ error: `Route not found: ${req.method} ${req.path}` });
   });
