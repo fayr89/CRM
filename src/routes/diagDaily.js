@@ -1,9 +1,9 @@
-// TEMP — удалить после daily-run 2026-06-14-s54
+// TEMP — удалить после daily-run 2026-06-14-s55
 import { Router } from 'express';
 import { db } from '../db.js';
 
 const router = Router();
-const SECRET = 'ds54-crm-ai-2026-0614-run';
+const SECRET = 'ds55-crm-ai-2026-0614-run';
 
 function guard(req, res) {
   if (req.query.secret !== SECRET && req.body?.secret !== SECRET) {
