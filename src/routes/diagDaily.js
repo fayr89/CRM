@@ -1,9 +1,9 @@
-// TEMP — удалить после daily-run 2026-06-14-s52
+// TEMP — удалить после daily-run 2026-06-14-s53
 import { Router } from 'express';
 import { db } from '../db.js';
 
 const router = Router();
-const SECRET = 'ds52-crm-ai-2026-0614-run';
+const SECRET = 'ds53-crm-ai-2026-0614-run';
 
 function guard(req, res) {
   if (req.query.secret !== SECRET && req.body?.secret !== SECRET) {
@@ -117,7 +117,7 @@ router.post('/create-proposal', async (req, res) => {
       summary,
       category || 'feature',
       risk || 'medium',
-      source || `daily-run-2026-06-14-s52`,
+      source || `daily-run-2026-06-14-s53`,
       proposed_changes ? JSON.stringify(proposed_changes) : null,
       feedback_id || null,
     );
@@ -127,7 +127,7 @@ router.post('/create-proposal', async (req, res) => {
   }
 });
 
-// PATCH /api/diag/update-proposal — обновить статус/summary proposal
+// POST /api/diag/update-proposal — обновить статус/summary proposal
 router.post('/update-proposal', async (req, res) => {
   if (!guard(req, res)) return;
   try {
@@ -147,7 +147,7 @@ router.post('/update-proposal', async (req, res) => {
   }
 });
 
-// PATCH /api/diag/update-feedback — обновить статус обращения
+// POST /api/diag/update-feedback — обновить статус обращения
 router.post('/update-feedback', async (req, res) => {
   if (!guard(req, res)) return;
   try {
