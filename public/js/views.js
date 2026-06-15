@@ -3888,7 +3888,7 @@ export async function renderCashbox(main) {
   const isAdmin = me.role === 'admin';
   const canConfirm = ['admin', 'finance'].includes(me.role); // подтверждение транзакций
   const canFilterByManager = ['admin', 'finance'].includes(me.role);
-  const state = { managerId: '', projectId: '' };
+  const state = { managerId: '', projectId: '', search: '' };
   const tableArea = el('div');
   const summaryArea = el('div');
   const filterArea = el('div', { class: 'filter-bar', style: { marginBottom: '12px' } });
@@ -3901,6 +3901,7 @@ export async function renderCashbox(main) {
       const paymentsQuery = { limit: 50 };
       if (state.managerId) paymentsQuery.manager_id = state.managerId;
       if (state.projectId) paymentsQuery.project_id = state.projectId;
+      if (state.search) paymentsQuery.search = state.search;
       const [cashbox, payments] = await Promise.all([
         api.cashbox(undefined, state.managerId || undefined, state.projectId || undefined),
         api.list('payments', paymentsQuery),
@@ -3939,6 +3940,21 @@ export async function renderCashbox(main) {
       });
       filterArea.append(el('label', { style: { marginLeft: '12px' } }, '📁 Проект: ', psel));
     }
+    const searchInput = el('input', {
+      type: 'search',
+      placeholder: '🔍 Трек № или № заказа',
+      value: state.search,
+      style: { marginLeft: '12px', padding: '4px 8px', width: '200px' },
+    });
+    let searchTimer;
+    searchInput.addEventListener('input', () => {
+      clearTimeout(searchTimer);
+      searchTimer = setTimeout(() => {
+        state.search = searchInput.value.trim();
+        reload();
+      }, 400);
+    });
+    filterArea.append(searchInput);
   }
 
   function renderSummary(cashbox) {
@@ -3982,12 +3998,13 @@ export async function renderCashbox(main) {
       'tr',
       {},
       el('th', {}, 'Дата'),
-      el('th', {}, 'Тип'),
+      el('th', {}, 'Заказ'),
+      el('th', {}, 'Трек №'),
       el('th', {}, 'Сумма'),
       el('th', {}, 'Комиссия'),
       el('th', {}, 'К зачислению'),
+      el('th', {}, 'Тип'),
       el('th', {}, 'Метод'),
-      el('th', {}, 'Заказ'),
       el('th', {}, 'Менеджер'),
       el('th', {}, 'Статус'),
       el('th', { style: { textAlign: 'right' } }, 'Действия'),
@@ -4004,7 +4021,8 @@ export async function renderCashbox(main) {
         'tr',
         { style: isCommissionRow ? { background: '#f9fafb' } : {} },
         el('td', {}, fmtDateTime(p.created_at)),
-        el('td', {}, typeLabel),
+        el('td', {}, p.order_id ? `#${p.order_id}` : (p.reference || '—')),
+        el('td', { style: { fontFamily: 'monospace', fontSize: '12px' } }, p.order_shipment_qr || '—'),
         el('td', {}, fmtMoney(p.amount, p.currency)),
         el(
           'td',
@@ -4040,8 +4058,8 @@ export async function renderCashbox(main) {
               sign + fmtMoney(net, p.currency || 'RUB')),
           );
         })(),
+        el('td', {}, typeLabel),
         el('td', {}, p.method ? tr('payment_method', p.method) : '—'),
-        el('td', {}, p.order_id ? `#${p.order_id}` : (p.reference || '—')),
         el('td', {}, p.manager_name || '—'),
         el('td', {}, badge(p.status, 'payment_status')),
         el(

@@ -73,6 +73,15 @@ router.get(
       where.push('p.order_id = ?');
       params.push(Number(req.query.order_id));
     }
+    if (req.query.project_id) {
+      where.push('o.project_id = ?');
+      params.push(Number(req.query.project_id));
+    }
+    if (req.query.search) {
+      const like = `%${req.query.search}%`;
+      where.push('(o.shipment_qr ILIKE ? OR o.reference_number ILIKE ?)');
+      params.push(like, like);
+    }
     const scope = await paymentsScope(req.user, 'p.manager_id');
     if (scope.sql) {
       where.push(scope.sql);
@@ -82,7 +91,7 @@ router.get(
 
     const rows = await db.all(
       `SELECT p.*, u.name AS manager_name, cu.name AS confirmer_name,
-              o.reference_number AS order_reference
+              o.reference_number AS order_reference, o.shipment_qr AS order_shipment_qr
        FROM payments p
        LEFT JOIN users u ON u.id = p.manager_id
        LEFT JOIN users cu ON cu.id = p.confirmed_by
@@ -93,7 +102,7 @@ router.get(
       offset,
     );
     const { total } = await db.get(
-      `SELECT COUNT(*)::int AS total FROM payments p ${whereSql}`,
+      `SELECT COUNT(*)::int AS total FROM payments p LEFT JOIN orders o ON o.id = p.order_id ${whereSql}`,
       ...params,
     );
     res.json(paginated(rows, total, page, limit));

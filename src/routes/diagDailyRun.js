@@ -138,7 +138,7 @@ router.get(
       if (!id || !text) return res.status(400).json({ error: 'id and text required' });
       await db.run(
         `INSERT INTO ai_proposal_messages (proposal_id, user_id, user_name, role, text)
-         VALUES (?, 0, 'AI ассистент', 'admin', ?)`,
+         VALUES (?, NULL, 'AI ассистент', 'admin', ?)`,
         Number(id),
         text,
       );
@@ -150,7 +150,7 @@ router.get(
       if (!feedback_id || !text) return res.status(400).json({ error: 'feedback_id and text required' });
       await db.run(
         `INSERT INTO feedback_messages (feedback_id, user_id, user_name, role, text)
-         VALUES (?, 0, 'AI ассистент', 'admin', ?)`,
+         VALUES (?, NULL, 'AI ассистент', 'admin', ?)`,
         Number(feedback_id),
         text,
       );
@@ -174,7 +174,7 @@ router.get(
       if (text) {
         await db.run(
           `INSERT INTO feedback_messages (feedback_id, user_id, user_name, role, text)
-           VALUES (?, 0, 'AI ассистент', 'admin', ?)`,
+           VALUES (?, NULL, 'AI ассистент', 'admin', ?)`,
           Number(feedback_id), text,
         );
       }
