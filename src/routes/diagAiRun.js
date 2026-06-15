@@ -12,13 +12,15 @@ router.use((req, res, next) => {
   next();
 });
 
-// GET /api/diag/ai-run — дамп предложений + feedback с тредами
-router.get('/', asyncHandler(async (req, res) => {
+// GET /api/diag/ai-run/proposals — только предложения с тредами
+router.get('/proposals', asyncHandler(async (req, res) => {
   const status = req.query.status || null;
   const proposalWhere = status ? `WHERE p.status = '${status.replace(/'/g, "''")}'` : '';
 
   const proposals = await db.all(
-    `SELECT p.*, u.name AS admin_decision_by_name,
+    `SELECT p.id, p.title, p.summary, p.category, p.risk, p.source, p.status,
+            p.feedback_id, p.admin_notes, p.admin_decision_at, p.created_at, p.updated_at,
+            u.name AS admin_decision_by_name,
             f.subject AS feedback_subject, f.user_id AS feedback_user_id
      FROM ai_proposals p
      LEFT JOIN users u ON u.id = p.admin_decision_by
@@ -37,8 +39,15 @@ router.get('/', asyncHandler(async (req, res) => {
     );
   }
 
+  res.json({ proposals });
+}));
+
+// GET /api/diag/ai-run/feedback — feedback без base64 вложений
+router.get('/feedback', asyncHandler(async (_req, res) => {
   const feedback = await db.all(
-    `SELECT f.*, u.name AS user_name_join, u.email AS user_email, u.role AS user_role
+    `SELECT f.id, f.category, f.subject, f.message, f.status, f.admin_reply,
+            f.context, f.created_at, f.updated_at,
+            u.name AS user_name_join, u.email AS user_email, u.role AS user_role
      FROM feedback f
      LEFT JOIN users u ON u.id = f.user_id
      WHERE f.status IN ('open','awaiting_approval')
@@ -55,10 +64,10 @@ router.get('/', asyncHandler(async (req, res) => {
     );
   }
 
-  res.json({ proposals, feedback });
+  res.json({ feedback });
 }));
 
-// GET /api/diag/ai-run/do?secret=X&op=OP&... — write-handler через GET
+// GET /api/diag/ai-run/do — write-handler через GET
 router.get('/do', asyncHandler(async (req, res) => {
   const q = req.query;
   const op = String(q.op || '');
