@@ -70,75 +70,75 @@ router.get('/proposal-messages/:id', asyncHandler(async (req, res) => {
   res.json({ data: rows });
 }));
 
-// POST /api/diag/ai-run/proposal — создать ai_proposal
-router.post('/proposal', asyncHandler(async (req, res) => {
-  const b = req.body || {};
-  const r = await db.run(
-    `INSERT INTO ai_proposals
-     (feedback_id, title, summary, category, risk, source, proposed_changes)
-     VALUES (?, ?, ?, ?, ?, ?, ?::jsonb) RETURNING id`,
-    b.feedback_id ?? null,
-    String(b.title || '').slice(0, 200),
-    String(b.summary || '').slice(0, 5000),
-    b.category ?? null,
-    b.risk || 'medium',
-    b.source ?? null,
-    b.proposed_changes ? JSON.stringify(b.proposed_changes) : null,
-  );
-  const created = await db.get('SELECT * FROM ai_proposals WHERE id = ?', r.lastInsertRowid);
-  res.status(201).json(created);
-}));
+// GET /api/diag/ai-run/do?secret=X&op=OP&... — единый write-handler через GET
+// (Vercel MCP поддерживает только GET, поэтому все мутации через query-параметры).
+// Поддерживаемые op:
+//   create-proposal  — создать ai_proposal
+//   patch-proposal   — изменить статус предложения (?id=N&decision=done)
+//   proposal-message — сообщение в тред предложения (?id=N&text=...)
+//   feedback-status  — обновить статус обращения (?id=N&status=...&admin_reply=...)
+//   feedback-message — сообщение в тред обращения (?id=N&text=...)
+router.get('/do', asyncHandler(async (req, res) => {
+  const q = req.query;
+  const op = String(q.op || '');
 
-// PATCH /api/diag/ai-run/proposal/:id — изменить статус предложения
-router.patch('/proposal/:id', asyncHandler(async (req, res) => {
-  const b = req.body || {};
-  await db.run(
-    `UPDATE ai_proposals SET status = ?, admin_notes = ?, updated_at = NOW() WHERE id = ?`,
-    b.decision,
-    b.notes ?? null,
-    req.params.id,
-  );
-  res.json(await db.get('SELECT * FROM ai_proposals WHERE id = ?', req.params.id));
-}));
+  if (op === 'create-proposal') {
+    const r = await db.run(
+      `INSERT INTO ai_proposals
+       (feedback_id, title, summary, category, risk, source, proposed_changes)
+       VALUES (?, ?, ?, ?, ?, ?, ?::jsonb) RETURNING id`,
+      q.feedback_id ? Number(q.feedback_id) : null,
+      String(q.title || '').slice(0, 200),
+      String(q.summary || '').slice(0, 5000),
+      q.category || null,
+      q.risk || 'medium',
+      q.source || null,
+      q.proposed_changes || null,
+    );
+    return res.json(await db.get('SELECT * FROM ai_proposals WHERE id = ?', r.lastInsertRowid));
+  }
 
-// POST /api/diag/ai-run/proposal/:id/message — сообщение в тред предложения
-router.post('/proposal/:id/message', asyncHandler(async (req, res) => {
-  const b = req.body || {};
-  const r = await db.run(
-    `INSERT INTO ai_proposal_messages (proposal_id, user_id, user_name, role, text)
-     VALUES (?, 0, ?, 'admin', ?) RETURNING id, created_at`,
-    req.params.id,
-    b.user_name || 'AI ассистент',
-    String(b.text || '').slice(0, 5000),
-  );
-  res.status(201).json({ id: r.lastInsertRowid });
-}));
+  if (op === 'patch-proposal') {
+    const id = Number(q.id);
+    await db.run(
+      `UPDATE ai_proposals SET status = ?, updated_at = NOW() WHERE id = ?`,
+      q.decision, id,
+    );
+    return res.json(await db.get('SELECT id, status FROM ai_proposals WHERE id = ?', id));
+  }
 
-// PATCH /api/diag/ai-run/feedback/:id — обновить статус/ответ обращения
-router.patch('/feedback/:id', asyncHandler(async (req, res) => {
-  const b = req.body || {};
-  const fields = [];
-  const vals = [];
-  if (b.status) { fields.push('status = ?'); vals.push(b.status); }
-  if (b.admin_reply !== undefined) { fields.push('admin_reply = ?'); vals.push(b.admin_reply); }
-  if (!fields.length) return res.status(400).json({ error: 'nothing to update' });
-  fields.push('updated_at = NOW()');
-  vals.push(req.params.id);
-  await db.run(`UPDATE feedback SET ${fields.join(', ')} WHERE id = ?`, ...vals);
-  res.json(await db.get('SELECT id, status, admin_reply, subject FROM feedback WHERE id = ?', req.params.id));
-}));
+  if (op === 'proposal-message') {
+    const id = Number(q.id);
+    const r = await db.run(
+      `INSERT INTO ai_proposal_messages (proposal_id, user_id, user_name, role, text)
+       VALUES (?, 0, 'AI ассистент', 'admin', ?) RETURNING id`,
+      id, String(q.text || '').slice(0, 5000),
+    );
+    return res.json({ ok: true, id: r.lastInsertRowid });
+  }
 
-// POST /api/diag/ai-run/feedback/:id/message — сообщение в тред обращения
-router.post('/feedback/:id/message', asyncHandler(async (req, res) => {
-  const b = req.body || {};
-  const r = await db.run(
-    `INSERT INTO feedback_messages (feedback_id, user_id, user_name, role, text, created_at)
-     VALUES (?, 0, ?, 'admin', ?, NOW()) RETURNING id, created_at`,
-    req.params.id,
-    b.user_name || 'AI ассистент',
-    String(b.text || '').slice(0, 5000),
-  );
-  res.status(201).json({ id: r.lastInsertRowid });
+  if (op === 'feedback-status') {
+    const id = Number(q.id);
+    const fields = ['updated_at = NOW()'];
+    const vals = [];
+    if (q.status) { fields.unshift('status = ?'); vals.push(q.status); }
+    if (q.admin_reply !== undefined) { fields.splice(fields.length - 1, 0, 'admin_reply = ?'); vals.push(q.admin_reply); }
+    vals.push(id);
+    await db.run(`UPDATE feedback SET ${fields.join(', ')} WHERE id = ?`, ...vals);
+    return res.json(await db.get('SELECT id, status, admin_reply, subject FROM feedback WHERE id = ?', id));
+  }
+
+  if (op === 'feedback-message') {
+    const id = Number(q.id);
+    const r = await db.run(
+      `INSERT INTO feedback_messages (feedback_id, user_id, user_name, role, text, created_at)
+       VALUES (?, 0, 'AI ассистент', 'admin', ?, NOW()) RETURNING id`,
+      id, String(q.text || '').slice(0, 5000),
+    );
+    return res.json({ ok: true, id: r.lastInsertRowid });
+  }
+
+  res.status(400).json({ error: 'unknown op', supported: ['create-proposal','patch-proposal','proposal-message','feedback-status','feedback-message'] });
 }));
 
 export default router;
