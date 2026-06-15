@@ -131,8 +131,8 @@ router.get('/do', asyncHandler(async (req, res) => {
   if (op === 'feedback-message') {
     const id = Number(q.id);
     const r = await db.run(
-      `INSERT INTO feedback_messages (feedback_id, user_id, user_name, role, text, created_at)
-       VALUES (?, 0, 'AI ассистент', 'admin', ?, NOW()) RETURNING id`,
+      `INSERT INTO feedback_messages (feedback_id, user_id, user_name, role, text, attachments)
+       VALUES (?, NULL, 'AI ассистент', 'admin', ?, NULL) RETURNING id`,
       id, String(q.text || '').slice(0, 5000),
     );
     return res.json({ ok: true, id: r.lastInsertRowid });
