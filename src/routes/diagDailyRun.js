@@ -33,9 +33,9 @@ router.get('/', asyncHandler(async (req, res) => {
            FROM ai_proposals p
            LEFT JOIN feedback f ON f.id = p.feedback_id
            LEFT JOIN users fu ON fu.id = f.user_id
-           WHERE p.status = $1
+           WHERE p.status = ?
            ORDER BY p.created_at DESC`,
-          [status],
+          status,
         )
       : await db.all(
           `SELECT p.*, f.subject AS feedback_subject, f.user_id AS feedback_user_id,
@@ -48,9 +48,9 @@ router.get('/', asyncHandler(async (req, res) => {
     const withThreads = await Promise.all(rows.map(async (p) => {
       const msgs = await db.all(
         `SELECT id, user_id, user_name, role, text, created_at
-         FROM ai_proposal_messages WHERE proposal_id = $1
+         FROM ai_proposal_messages WHERE proposal_id = ?
          ORDER BY created_at ASC, id ASC`,
-        [p.id],
+        p.id,
       );
       return { ...p, messages: msgs };
     }));
@@ -68,9 +68,9 @@ router.get('/', asyncHandler(async (req, res) => {
     const withThreads = await Promise.all(rows.map(async (fb) => {
       const msgs = await db.all(
         `SELECT id, user_id, user_name, role, text, created_at
-         FROM feedback_messages WHERE feedback_id = $1
+         FROM feedback_messages WHERE feedback_id = ?
          ORDER BY created_at ASC, id ASC`,
-        [fb.id],
+        fb.id,
       );
       return { ...fb, messages: msgs };
     }));
@@ -83,10 +83,10 @@ router.get('/', asyncHandler(async (req, res) => {
     const notes = req.query.notes ? String(req.query.notes) : null;
     if (!id || !status) return res.status(400).json({ error: 'id and status required' });
     await db.run(
-      `UPDATE ai_proposals SET status = $1, admin_notes = COALESCE($2, admin_notes), updated_at = NOW() WHERE id = $3`,
-      [status, notes, id],
+      `UPDATE ai_proposals SET status = ?, admin_notes = COALESCE(?, admin_notes), updated_at = NOW() WHERE id = ?`,
+      status, notes, id,
     );
-    const row = await db.get('SELECT id, status, title FROM ai_proposals WHERE id = $1', [id]);
+    const row = await db.get('SELECT id, status, title FROM ai_proposals WHERE id = ?', id);
     return res.json({ ok: true, proposal: row });
   }
 
@@ -106,9 +106,9 @@ router.get('/', asyncHandler(async (req, res) => {
     const r = await db.get(
       `INSERT INTO ai_proposals
        (feedback_id, title, summary, category, risk, source, proposed_changes)
-       VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`,
-      [feedbackId, title, summary, category, risk, source,
-       changes ? JSON.stringify(changes) : null],
+       VALUES (?, ?, ?, ?, ?, ?, ?::jsonb) RETURNING id`,
+      feedbackId, title, summary, category, risk, source,
+      changes ? JSON.stringify(changes) : null,
     );
     return res.status(201).json({ ok: true, id: r.id });
   }
@@ -117,12 +117,12 @@ router.get('/', asyncHandler(async (req, res) => {
     const id = Number(req.query.id);
     const text = String(req.query.text || '');
     if (!id || !text) return res.status(400).json({ error: 'id and text required' });
-    const cur = await db.get('SELECT id FROM ai_proposals WHERE id = $1', [id]);
+    const cur = await db.get('SELECT id FROM ai_proposals WHERE id = ?', id);
     if (!cur) return res.status(404).json({ error: 'not found' });
     const r = await db.get(
       `INSERT INTO ai_proposal_messages (proposal_id, user_id, user_name, role, text)
-       VALUES ($1, 0, 'AI ассистент', 'admin', $2) RETURNING id`,
-      [id, text],
+       VALUES (?, 0, 'AI ассистент', 'admin', ?) RETURNING id`,
+      id, text,
     );
     return res.json({ ok: true, id: r.id });
   }
@@ -131,12 +131,12 @@ router.get('/', asyncHandler(async (req, res) => {
     const id = Number(req.query.id);
     const text = String(req.query.text || '');
     if (!id || !text) return res.status(400).json({ error: 'id and text required' });
-    const fb = await db.get('SELECT id FROM feedback WHERE id = $1', [id]);
+    const fb = await db.get('SELECT id FROM feedback WHERE id = ?', id);
     if (!fb) return res.status(404).json({ error: 'not found' });
     const r = await db.get(
       `INSERT INTO feedback_messages (feedback_id, user_id, user_name, role, text)
-       VALUES ($1, 0, 'AI ассистент', 'admin', $2) RETURNING id`,
-      [id, text],
+       VALUES (?, 0, 'AI ассистент', 'admin', ?) RETURNING id`,
+      id, text,
     );
     return res.json({ ok: true, id: r.id });
   }
@@ -146,18 +146,18 @@ router.get('/', asyncHandler(async (req, res) => {
     const status = req.query.status ? String(req.query.status) : null;
     const reply = req.query.reply ? String(req.query.reply) : null;
     if (!id || (!status && !reply)) return res.status(400).json({ error: 'id and status/reply required' });
-    const cur = await db.get('SELECT * FROM feedback WHERE id = $1', [id]);
+    const cur = await db.get('SELECT * FROM feedback WHERE id = ?', id);
     if (!cur) return res.status(404).json({ error: 'not found' });
     const newStatus = status ?? cur.status;
     await db.run(
       `UPDATE feedback SET
-         status = $1,
-         admin_reply = COALESCE($2, admin_reply),
+         status = ?,
+         admin_reply = COALESCE(?, admin_reply),
          updated_at = NOW()
-       WHERE id = $3`,
-      [newStatus, reply, id],
+       WHERE id = ?`,
+      newStatus, reply, id,
     );
-    const row = await db.get('SELECT id, status, subject FROM feedback WHERE id = $1', [id]);
+    const row = await db.get('SELECT id, status, subject FROM feedback WHERE id = ?', id);
     return res.json({ ok: true, feedback: row });
   }
 
