@@ -453,7 +453,7 @@ export const db = {
 // БАМПАЙ ПРИ КАЖДОМ ДОБАВЛЕНИИ МИГРАЦИИ. Текущие миграции прогоняются
 // только если запись в app_settings.schema_version отличается. Это экономит
 // ~500-2000мс на каждом холодном старте serverless-лямбды.
-const SCHEMA_VERSION = 28;
+const SCHEMA_VERSION = 29;
 
 export async function ensureInitialized() {
   if (globalThis.__crmInitialized) return;
@@ -1113,6 +1113,11 @@ export async function ensureInitialized() {
       await pool.query(
         `ALTER TABLE processing_plan_items ADD COLUMN IF NOT EXISTS sizes JSONB`,
       );
+
+      // ===== Склад пользователя (SCHEMA_VERSION 29) =====
+      // Для роли «склад»: привязка к конкретному складу отгрузки (orders.warehouse).
+      // Без этого поля пользователь «склад» видит все заказы всех складов.
+      await pool.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS warehouse TEXT');
 
       // Маркер успешно прогнанных миграций — следующие холодные старты пропустят DDL.
       await pool.query(

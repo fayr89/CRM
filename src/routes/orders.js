@@ -8,6 +8,7 @@ import { parsePagination, parseSort, paginated } from '../query.js';
 import { notify, notifyWarehouse, buildOrderNotificationBody } from '../services/notifications.js';
 import { emitEvent } from '../services/webhooks.js';
 import { toCsv, csvDate } from '../services/csv.js';
+import ExcelJS from 'exceljs';
 import { nextShippingDate, getSchedule } from '../services/shippingSchedule.js';
 import { enqueueMsJob } from '../services/ms-jobs.js';
 import { applyLocalStockReserveDelta } from '../services/ms-orders.js';
@@ -141,7 +142,13 @@ router.use(authenticate);
 //   manager           — свои + подчинённых + все waiting_stock (read-only для чужих)
 //   sales             — свои + все waiting_stock (read-only для чужих)
 async function orderScope(user) {
-  if (user.role === 'admin' || user.role === 'warehouse') {
+  if (user.role === 'admin') {
+    return { sql: '', params: [] };
+  }
+  if (user.role === 'warehouse') {
+    if (user.warehouse) {
+      return { sql: 'o.warehouse = ?', params: [user.warehouse] };
+    }
     return { sql: '', params: [] };
   }
   if (user.role === 'sales') {
@@ -359,6 +366,9 @@ router.get(
       const ids = await getAccessibleUserIds(req.user);
       where.push('o.manager_id = ANY(?)');
       params.push(ids);
+    } else if (req.user.role === 'warehouse' && req.user.warehouse) {
+      where.push('o.warehouse = ?');
+      params.push(req.user.warehouse);
     }
     const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
 
@@ -405,45 +415,87 @@ router.get(
       return s ? `="${s.replace(/"/g, '""')}"` : '';
     };
 
-    // Новый формат: одна строка на каждый товар в заказе.
-    // Первая строка заказа содержит Дату, Способ отправки, Трек, Менеджер, Комментарий.
-    // Последующие строки — только Артикул, Наименование, Кол-во, Цена.
-    const rows = [];
+    // Формат xlsx с объединёнными ячейками (по запросу пользователя FB#43).
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet('Отгрузки');
+
+    const COLS = [
+      { header: 'Дата', key: 'date', width: 14 },
+      { header: 'Артикул', key: 'sku', width: 18 },
+      { header: 'Наименование', key: 'name', width: 32 },
+      { header: 'Количество', key: 'qty', width: 12 },
+      { header: 'Цена', key: 'price', width: 12 },
+      { header: 'Способ отправки', key: 'ship', width: 20 },
+      { header: 'Трек номер', key: 'track', width: 22 },
+      { header: 'Менеджер', key: 'manager', width: 18 },
+      { header: 'Комментарий', key: 'comment', width: 32 },
+    ];
+    ws.columns = COLS;
+
+    // Шапка: Arial 10 bold, перенос, тонкие границы, заливка
+    const hdr = ws.getRow(1);
+    hdr.font = { name: 'Arial', size: 10, bold: true };
+    hdr.alignment = { wrapText: true, vertical: 'middle', horizontal: 'center' };
+    hdr.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE2EFDA' } };
+    hdr.eachCell({ includeEmpty: true }, (cell) => {
+      cell.border = {
+        top: { style: 'thin' }, left: { style: 'thin' },
+        bottom: { style: 'thin' }, right: { style: 'thin' },
+      };
+    });
+    ws.views = [{ state: 'frozen', ySplit: 1 }];
+
+    // Индексы для merge: col 1=Дата, 6=Способ, 7=Трек, 8=Менеджер, 9=Комментарий
+    const MERGE_COLS = [1, 6, 7, 8, 9];
+
+    let rowIdx = 2;
     for (const o of orders) {
       const list = itemsByOrder.get(o.id) || [{}];
-      list.forEach((it, idx) => {
-        const isFirst = idx === 0;
-        rows.push({
-          _date: isFirst ? csvDate(o.created_at) : '',
-          _sku: it.sku ? asTextForExcel(it.sku) : '',
-          _name: it.name || '',
-          _qty: it.quantity != null ? String(it.quantity) : '',
-          _price: it.unit_price != null ? String(it.unit_price) : '',
-          _ship: isFirst ? shipMethod(o) : '',
-          _track: isFirst ? asTextForExcel(o.shipment_qr || '') : '',
-          _manager: isFirst ? (o.manager_name || '') : '',
-          _notes: isFirst ? (o.notes || '') : '',
+      const startRow = rowIdx;
+
+      for (let i = 0; i < list.length; i++) {
+        const it = list[i];
+        const isFirst = i === 0;
+        const r = ws.addRow({
+          date: isFirst ? csvDate(o.created_at) : null,
+          sku: it.sku != null ? String(it.sku) : null,
+          name: it.name || null,
+          qty: it.quantity != null ? Number(it.quantity) : null,
+          price: it.unit_price != null ? Number(it.unit_price) : null,
+          ship: isFirst ? (shipMethod(o) || null) : null,
+          track: isFirst ? (o.shipment_qr || null) : null,
+          manager: isFirst ? (o.manager_name || null) : null,
+          comment: isFirst ? (o.notes || null) : null,
         });
-      });
+        r.font = { name: 'Arial', size: 10 };
+        r.alignment = { wrapText: true };
+        // Артикул и Трек — текстовый формат (сохраняет ведущие нули)
+        r.getCell('sku').numFmt = '@';
+        r.getCell('track').numFmt = '@';
+        r.eachCell({ includeEmpty: true }, (cell) => {
+          cell.border = {
+            top: { style: 'thin' }, left: { style: 'thin' },
+            bottom: { style: 'thin' }, right: { style: 'thin' },
+          };
+        });
+        rowIdx++;
+      }
+
+      // Объединяем ячейки уровня заказа если позиций > 1
+      if (list.length > 1) {
+        const endRow = startRow + list.length - 1;
+        for (const col of MERGE_COLS) {
+          ws.mergeCells(startRow, col, endRow, col);
+          ws.getCell(startRow, col).alignment = { vertical: 'middle', wrapText: true };
+        }
+      }
     }
 
-    const columns = [
-      { key: '_date', label: 'Дата создания заказа' },
-      { key: '_sku', label: 'Артикул' },
-      { key: '_name', label: 'Наименование' },
-      { key: '_qty', label: 'Количество' },
-      { key: '_price', label: 'Цена 1шт' },
-      { key: '_ship', label: 'Способ отправки' },
-      { key: '_track', label: 'Трек номер' },
-      { key: '_manager', label: 'Менеджер' },
-      { key: '_notes', label: 'Комментарий' },
-    ];
-
-    const csv = toCsv(rows, columns);
-    const filename = `orders-${new Date().toISOString().slice(0, 10)}.csv`;
-    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    const buffer = await wb.xlsx.writeBuffer();
+    const filename = `orders-${new Date().toISOString().slice(0, 10)}.xlsx`;
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
-    res.send(csv);
+    res.send(Buffer.from(buffer));
   }),
 );
 

@@ -64,4 +64,54 @@ router.get('/daily-run', asyncHandler(async (req, res) => {
   });
 }));
 
+// Write-действия для ежедневного обхода AI (через GET + secret, т.к. MCP поддерживает только GET).
+// action=proposal_done&id=N         — отметить ai_proposal как выполненный
+// action=feedback_msg&fid=N&text=T  — добавить сообщение в тред обращения
+// action=feedback_status&fid=N&status=S&reply=R — обновить статус и admin_reply обращения
+router.get('/daily-run/write', asyncHandler(async (req, res) => {
+  if (req.query.secret !== SECRET) return res.status(403).json({ error: 'forbidden' });
+  const { action, id, fid, text, status, reply } = req.query;
+
+  if (action === 'proposal_done') {
+    const pid = Number(id);
+    if (!pid) return res.status(400).json({ error: 'id required' });
+    await db.run(
+      `UPDATE ai_proposals SET status = 'done', updated_at = NOW() WHERE id = ?`,
+      pid,
+    );
+    return res.json({ ok: true, action, id: pid });
+  }
+
+  if (action === 'feedback_msg') {
+    const feedbackId = Number(fid);
+    if (!feedbackId || !text) return res.status(400).json({ error: 'fid and text required' });
+    await db.run(
+      `INSERT INTO feedback_messages (feedback_id, user_id, user_name, role, text)
+       VALUES (?, NULL, 'AI ассистент', 'admin', ?)`,
+      feedbackId,
+      String(text),
+    );
+    return res.json({ ok: true, action, fid: feedbackId });
+  }
+
+  if (action === 'feedback_status') {
+    const feedbackId = Number(fid);
+    if (!feedbackId || !status) return res.status(400).json({ error: 'fid and status required' });
+    if (reply) {
+      await db.run(
+        `UPDATE feedback SET status = ?, admin_reply = ?, updated_at = NOW() WHERE id = ?`,
+        String(status), String(reply), feedbackId,
+      );
+    } else {
+      await db.run(
+        `UPDATE feedback SET status = ?, updated_at = NOW() WHERE id = ?`,
+        String(status), feedbackId,
+      );
+    }
+    return res.json({ ok: true, action, fid: feedbackId, status });
+  }
+
+  return res.status(400).json({ error: 'unknown action' });
+}));
+
 export default router;

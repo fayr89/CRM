@@ -31,6 +31,7 @@ const updateSchema = z.object({
   password: z.string().min(6).optional(),
   active: z.boolean().optional(),
   access_blocks: z.string().optional().nullable(),
+  warehouse: z.string().max(100).nullable().optional(),
 });
 
 router.use(authenticate);
@@ -43,7 +44,7 @@ router.get(
     const scopeSql = ids === null ? '' : 'WHERE id = ANY(?)';
     const scopeParams = ids === null ? [] : [ids];
     const rows = await db.all(
-      `SELECT id, email, name, role, active, manager_id, access_blocks, created_at, updated_at
+      `SELECT id, email, name, role, active, manager_id, access_blocks, warehouse, created_at, updated_at
        FROM users ${scopeSql} ORDER BY id ASC LIMIT ? OFFSET ?`,
       ...scopeParams,
       limit,
@@ -63,7 +64,7 @@ router.get(
     const id = Number(req.params.id);
     if (!(await canAccessUser(req.user, id))) throw Forbidden('Нет доступа к этому пользователю');
     const user = await db.get(
-      `SELECT id, email, name, role, active, manager_id, access_blocks, created_at, updated_at
+      `SELECT id, email, name, role, active, manager_id, access_blocks, warehouse, created_at, updated_at
        FROM users WHERE id = ?`,
       id,
     );
@@ -176,12 +177,17 @@ router.patch(
       updates.push('access_blocks = ?');
       params.push(data.access_blocks || null);
     }
+    if (data.warehouse !== undefined) {
+      if (!isAdmin) throw Forbidden('Привязку к складу может менять только админ');
+      updates.push('warehouse = ?');
+      params.push(data.warehouse || null);
+    }
     if (!updates.length) return res.json(existing);
     updates.push('updated_at = NOW()');
     params.push(id);
     await db.run(`UPDATE users SET ${updates.join(', ')} WHERE id = ?`, ...params);
     const updated = await db.get(
-      `SELECT id, email, name, role, active, manager_id, access_blocks, created_at, updated_at FROM users WHERE id = ?`,
+      `SELECT id, email, name, role, active, manager_id, access_blocks, warehouse, created_at, updated_at FROM users WHERE id = ?`,
       id,
     );
     // Не пишем «password» в details — секрет даже в маркере «изменено» не нужен.

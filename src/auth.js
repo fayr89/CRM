@@ -32,7 +32,7 @@ export async function authenticate(req, _res, next) {
   try {
     const payload = verifyToken(token);
     const user = await db.get(
-      'SELECT id, email, name, role, active FROM users WHERE id = ?',
+      'SELECT id, email, name, role, active, warehouse FROM users WHERE id = ?',
       payload.sub,
     );
     if (!user || !user.active) return next(Unauthorized('User not found or disabled'));
