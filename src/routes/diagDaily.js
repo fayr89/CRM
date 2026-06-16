@@ -16,19 +16,23 @@ router.use((req, res, next) => {
 // GET /api/diag/daily?s= — все данные для обхода
 router.get('/', async (req, res) => {
   try {
-    // feedback в статусах open и awaiting_approval
+    // feedback в статусах open и awaiting_approval (без blob-вложений)
     const feedback = await db.all(
-      `SELECT f.*, u.name AS user_name, u.email AS user_email, u.role AS user_role
+      `SELECT f.id, f.user_id, f.category, f.subject, f.message, f.context,
+              f.status, f.resolved_by, f.resolved_at, f.admin_reply,
+              f.created_at, f.updated_at,
+              u.name AS user_name, u.email AS user_email, u.role AS user_role
        FROM feedback f LEFT JOIN users u ON u.id = f.user_id
        WHERE f.status IN ('open','awaiting_approval','in_progress')
        ORDER BY f.created_at DESC`,
     );
-    // threads для каждого обращения
+    // threads для каждого обращения (без blob-вложений)
     const fbIds = feedback.map((f) => f.id);
     let fbMessages = [];
     if (fbIds.length) {
       fbMessages = await db.all(
-        `SELECT * FROM feedback_messages
+        `SELECT id, feedback_id, user_id, user_name, role, text, created_at
+         FROM feedback_messages
          WHERE feedback_id = ANY(?::int[])
          ORDER BY created_at ASC, id ASC`,
         fbIds,
