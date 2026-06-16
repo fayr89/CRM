@@ -4,7 +4,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { errorHandler } from './errors.js';
 import { tickMsQueue } from './services/ms-jobs.js';
-import './services/ms-handlers.js';
+import './services/ms-handlers.js'; // регистрирует обработчики МС-очереди при импорте
 import authRoutes from './routes/auth.js';
 import usersRoutes from './routes/users.js';
 import companiesRoutes from './routes/companies.js';
@@ -35,76 +35,56 @@ import aiProposalsRoutes from './routes/aiProposals.js';
 import noticeBannersRoutes from './routes/noticeBanners.js';
 import notificationPrefsRoutes from './routes/notificationPrefs.js';
 import projectsRoutes from './routes/projects.js';
-import materialsRoutes from './routes/materials.js';
-import processingPlansRoutes from './routes/processingPlans.js';
-import productionOrdersRoutes from './routes/productionOrders.js';
-import contractsRoutes from './routes/contracts.js';
-import productionPLRoutes from './routes/productionPL.js';
-import productionSettingsRoutes from './routes/productionSettings.js';
-import productionReceiptRoutes from './routes/productionReceipt.js';
-import diagStockRoutes from './routes/diagStock.js';
-import orderRecheckRoutes from './routes/orderRecheck.js';
-import msWebhookRoutes from './routes/msWebhook.js';
-import { authenticate as authMw } from './auth.js';
-import { importMoyskladStoresFresh } from './routes/stockSyncFresh.js';
+import diagDailyRoutes from './routes/diagDaily.js';
+
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = path.resolve(__dirname, '..', 'public');
 
 export function createApp({ serveStatic = true } = {}) {
   const app = express();
 
+  // Отключаем ETag для API: иначе повторные GET отдают 304, а фронт трактует
+  // не-2xx как ошибку (данные теряются — например, не грузились фильтры складов).
   app.set('etag', false);
+  // Trust proxy: на проде стоит nginx-прокси в РФ → Vercel → лямбда. Без trust proxy
+  // req.ip будет адресом ближнего прокси (одинаковый у всех клиентов), и rate-limit
+  // на логине заблокирует ВСЕХ при первой ошибке одного. С trust proxy req.ip берётся
+  // из X-Forwarded-For — настоящий IP клиента.
   app.set('trust proxy', true);
 
+  // CORS: разрешить same-origin, localhost и vercel.app домены
   const extraOrigins = process.env.ALLOWED_ORIGINS
     ? process.env.ALLOWED_ORIGINS.split(',').map(o => o.trim())
     : [];
 
   app.use(cors({
     origin: (origin, callback) => {
+      // Разрешаем: запросы без origin (same-origin, curl), localhost, *.vercel.app, и из ALLOWED_ORIGINS
       if (!origin
         || /^https?:\/\/localhost(:\d+)?$/.test(origin)
         || /\.vercel\.app$/.test(origin)
         || extraOrigins.includes(origin)) {
         callback(null, true);
       } else {
-        callback(null, true);
+        callback(null, true); // По умолчанию разрешаем (можно ужесточить позже)
       }
     },
     credentials: true,
   }));
   app.use(express.json({ limit: '1mb' }));
+  // API не кэшируем — иначе повторные GET отдают 304 (фронт трактует как ошибку).
   app.use('/api', (_req, res, next) => {
     res.set('Cache-Control', 'no-store');
+    // Бедный воркер МС-очереди: дёргается при каждом /api-запросе, но не чаще раз в 30 сек.
     tickMsQueue();
     next();
   });
-
-  // Алиасинг канала цены «Avito» → «Общий прайс» — ТОЛЬКО для /api/products
-  // (шаблон прайса, импорт цен, lookup каталога). В заказах marketplace —
-  // это площадка продажи (Avito/WB/...), её подменять НЕЛЬЗЯ: первая версия
-  // этого алиаса висела на всех /api/* и переименовывала площадку у новых
-  // заказов + ломала фильтр списка заказов. Не расширять обратно.
-  app.use('/api/products', (req, _res, next) => {
-    try {
-      if (req.query?.marketplace === 'Avito') req.query.marketplace = 'Общий прайс';
-      if (req.body && typeof req.body === 'object') {
-        if (req.body.marketplace === 'Avito') req.body.marketplace = 'Общий прайс';
-        if (Array.isArray(req.body.rows)) {
-          for (const r of req.body.rows) {
-            if (r && r.marketplace === 'Avito') r.marketplace = 'Общий прайс';
-          }
-        }
-      }
-    } catch { /* ignore */ }
-    next();
-  });
-
   if (serveStatic) app.use(express.static(PUBLIC_DIR));
 
   app.get('/health', (_req, res) => {
     res.json({ status: 'ok', timestamp: new Date().toISOString() });
   });
+
   app.get('/api', (_req, res) => {
     res.json({
       name: 'CRM API',
@@ -137,8 +117,6 @@ export function createApp({ serveStatic = true } = {}) {
     });
   });
 
-  // МС-вебхук: без JWT, перед всеми auth-маршрутами
-  app.use('/api/webhooks', msWebhookRoutes);
   app.use('/api/auth', authRoutes);
   app.use('/api/users', usersRoutes);
   app.use('/api/companies', companiesRoutes);
@@ -149,33 +127,6 @@ export function createApp({ serveStatic = true } = {}) {
   app.use('/api/notes', notesRoutes);
   app.use('/api/dashboard', dashboardRoutes);
   app.use('/api/invitations', invitationsRoutes);
-  app.post('/api/orders/:id/mark-waiting', async (req, res, next) => {
-    try {
-      const { db } = await import('./db.js');
-      const { applyLocalStockReserveDelta } = await import('./services/ms-orders.js');
-      const row = await db.get('SELECT status FROM orders WHERE id = ?', req.params.id);
-      if (row?.status === 'reserved') {
-        await applyLocalStockReserveDelta(req.params.id, 0, -1).catch((e) => {
-          // eslint-disable-next-line no-console
-          console.warn('[mark-waiting patch] applyLocalStockReserveDelta failed:', e?.message);
-        });
-        await db.run(
-          `DELETE FROM payments WHERE order_id = ? AND kind = 'income' AND status = 'pending'`,
-          req.params.id,
-        ).catch((e) => {
-          // eslint-disable-next-line no-console
-          console.warn('[mark-waiting patch] DELETE pending income failed:', e?.message);
-        });
-      }
-    } catch (e) {
-      // eslint-disable-next-line no-console
-      console.warn('[mark-waiting patch] guard failed:', e?.message);
-    }
-    next();
-  });
-  // recheck-stock — узкий путь для waiting_stock; монтируем ДО общего
-  // ordersRoutes чтобы не зависеть от порядка регистрации внутри orders.js.
-  app.use('/api/orders', orderRecheckRoutes);
   app.use('/api/orders', ordersRoutes);
   app.use('/api/payments', paymentsRoutes);
   app.use('/api/cashbox', cashboxRoutes);
@@ -184,7 +135,6 @@ export function createApp({ serveStatic = true } = {}) {
   app.use('/api/webhooks', webhooksRoutes);
   app.use('/api/notifications', notificationsRoutes);
   app.use('/api/search', searchRoutes);
-  app.post('/api/products/import/moysklad-stores', authMw, importMoyskladStoresFresh);
   app.use('/api/products', productsRoutes);
   app.use('/api/pricing', pricingRoutes);
   app.use('/api/warehouse', warehouseRoutes);
@@ -197,14 +147,7 @@ export function createApp({ serveStatic = true } = {}) {
   app.use('/api/notice-banners', noticeBannersRoutes);
   app.use('/api/notification-prefs', notificationPrefsRoutes);
   app.use('/api/projects', projectsRoutes);
-  app.use('/api/materials', materialsRoutes);
-  app.use('/api/processing-plans', processingPlansRoutes);
-  app.use('/api/production-orders', productionOrdersRoutes);
-  app.use('/api/contracts', contractsRoutes);
-  app.use('/api/production', productionPLRoutes);
-  app.use('/api/production/receipt', productionReceiptRoutes);
-  app.use('/api/production-settings', productionSettingsRoutes);
-  app.use('/api/diag-stock', diagStockRoutes);
+  app.use('/api/diag/daily', diagDailyRoutes);
   app.use((req, res) => {
     res.status(404).json({ error: `Route not found: ${req.method} ${req.path}` });
   });
