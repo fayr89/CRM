@@ -52,84 +52,92 @@ router.get('/data', asyncHandler(async (_req, res) => {
   res.json({ proposals, proposalMessages, feedback, feedbackMessages });
 }));
 
-// POST /feedback-message — вставить сообщение от «AI ассистент» в тред обращения
-router.post('/feedback-message', asyncHandler(async (req, res) => {
-  const { feedback_id, text } = req.body || {};
-  if (!feedback_id || !text) return res.status(400).json({ error: 'feedback_id and text required' });
-  const r = await db.run(
-    `INSERT INTO feedback_messages (feedback_id, user_id, user_name, role, text)
-     VALUES (?, 0, 'AI ассистент', 'admin', ?) RETURNING id`,
-    feedback_id,
-    text,
-  );
-  res.status(201).json({ id: r.lastInsertRowid });
-}));
+// GET /op — универсальный write-endpoint через GET (MCP-среда без POST).
+// Параметры: op=<операция> + доп. query params.
+// Операции:
+//   feedback-message?feedback_id=N&text=...
+//   feedback-status?feedback_id=N&status=...&admin_reply=...
+//   proposal?title=...&summary=...&category=...&risk=...&source=...&feedback_id=...
+//   proposal-done?proposal_id=N
+//   proposal-message?proposal_id=N&text=...
+router.get('/op', asyncHandler(async (req, res) => {
+  const { op } = req.query;
 
-// PATCH /feedback-status — сменить статус обращения (+ опциональный admin_reply)
-router.patch('/feedback-status', asyncHandler(async (req, res) => {
-  const { feedback_id, status, admin_reply } = req.body || {};
-  if (!feedback_id || !status) return res.status(400).json({ error: 'feedback_id and status required' });
-  const cur = await db.get('SELECT * FROM feedback WHERE id = ?', feedback_id);
-  if (!cur) return res.status(404).json({ error: 'not found' });
-  const justResolved = (status === 'awaiting_approval' || status === 'closed')
-    && cur.status !== 'awaiting_approval' && cur.status !== 'closed';
-  await db.run(
-    `UPDATE feedback SET status = ?, admin_reply = COALESCE(?, admin_reply),
-     resolved_by = CASE WHEN ? THEN 0 ELSE resolved_by END,
-     resolved_at = CASE WHEN ? THEN NOW() ELSE resolved_at END,
-     updated_at = NOW() WHERE id = ?`,
-    status,
-    admin_reply ?? null,
-    justResolved,
-    justResolved,
-    feedback_id,
-  );
-  res.json({ ok: true });
-}));
+  if (op === 'feedback-message') {
+    const feedback_id = Number(req.query.feedback_id);
+    const text = String(req.query.text || '');
+    if (!feedback_id || !text) return res.status(400).json({ error: 'feedback_id and text required' });
+    const r = await db.run(
+      `INSERT INTO feedback_messages (feedback_id, user_id, user_name, role, text)
+       VALUES (?, 0, 'AI ассистент', 'admin', ?) RETURNING id`,
+      feedback_id, text,
+    );
+    return res.json({ ok: true, id: r.lastInsertRowid });
+  }
 
-// POST /proposal — создать ai_proposal (от AI)
-router.post('/proposal', asyncHandler(async (req, res) => {
-  const { title, summary, category, risk, source, feedback_id, proposed_changes } = req.body || {};
-  if (!title || !summary) return res.status(400).json({ error: 'title and summary required' });
-  const r = await db.run(
-    `INSERT INTO ai_proposals (feedback_id, title, summary, category, risk, source, proposed_changes)
-     VALUES (?, ?, ?, ?, ?, ?, ?::jsonb) RETURNING id`,
-    feedback_id ?? null,
-    title,
-    summary,
-    category ?? null,
-    risk || 'medium',
-    source ?? null,
-    proposed_changes ? JSON.stringify(proposed_changes) : null,
-  );
-  res.status(201).json({ id: r.lastInsertRowid });
-}));
+  if (op === 'feedback-status') {
+    const feedback_id = Number(req.query.feedback_id);
+    const status = String(req.query.status || '');
+    const admin_reply = req.query.admin_reply ? String(req.query.admin_reply) : null;
+    if (!feedback_id || !status) return res.status(400).json({ error: 'feedback_id and status required' });
+    const cur = await db.get('SELECT * FROM feedback WHERE id = ?', feedback_id);
+    if (!cur) return res.status(404).json({ error: 'not found' });
+    const justResolved = (status === 'awaiting_approval' || status === 'closed')
+      && cur.status !== 'awaiting_approval' && cur.status !== 'closed';
+    await db.run(
+      `UPDATE feedback SET status = ?, admin_reply = COALESCE(?, admin_reply),
+       resolved_by = CASE WHEN ? THEN 0 ELSE resolved_by END,
+       resolved_at = CASE WHEN ? THEN NOW() ELSE resolved_at END,
+       updated_at = NOW() WHERE id = ?`,
+      status, admin_reply, justResolved, justResolved, feedback_id,
+    );
+    return res.json({ ok: true });
+  }
 
-// PATCH /proposal/:id — обновить статус proposal (decision + опциональные notes)
-router.patch('/proposal/:id', asyncHandler(async (req, res) => {
-  const { decision, notes } = req.body || {};
-  if (!decision) return res.status(400).json({ error: 'decision required' });
-  await db.run(
-    `UPDATE ai_proposals SET status = ?, admin_notes = COALESCE(?, admin_notes),
-     admin_decision_at = NOW(), updated_at = NOW() WHERE id = ?`,
-    decision,
-    notes ?? null,
-    req.params.id,
-  );
-  res.json({ ok: true });
-}));
+  if (op === 'proposal') {
+    const { title, summary, category, risk, source } = req.query;
+    const feedback_id = req.query.feedback_id ? Number(req.query.feedback_id) : null;
+    const proposed_changes = req.query.proposed_changes
+      ? JSON.parse(String(req.query.proposed_changes)) : null;
+    if (!title || !summary) return res.status(400).json({ error: 'title and summary required' });
+    const r = await db.run(
+      `INSERT INTO ai_proposals (feedback_id, title, summary, category, risk, source, proposed_changes)
+       VALUES (?, ?, ?, ?, ?, ?, ?::jsonb) RETURNING id`,
+      feedback_id,
+      String(title),
+      String(summary),
+      category ? String(category) : null,
+      risk ? String(risk) : 'medium',
+      source ? String(source) : null,
+      proposed_changes ? JSON.stringify(proposed_changes) : null,
+    );
+    return res.status(201).json({ ok: true, id: r.lastInsertRowid });
+  }
 
-// POST /proposal-message — вставить сообщение в тред ai_proposal от «AI ассистент»
-router.post('/proposal-message', asyncHandler(async (req, res) => {
-  const { proposal_id, text } = req.body || {};
-  if (!proposal_id || !text) return res.status(400).json({ error: 'proposal_id and text required' });
-  const r = await db.run(
-    `INSERT INTO ai_proposal_messages (proposal_id, user_id, user_name, role, text)
-     VALUES (?, 0, 'AI ассистент', 'admin', ?) RETURNING id`,
-    proposal_id,
-    text,
-  );
-  res.status(201).json({ id: r.lastInsertRowid });
+  if (op === 'proposal-done') {
+    const proposal_id = Number(req.query.proposal_id);
+    if (!proposal_id) return res.status(400).json({ error: 'proposal_id required' });
+    await db.run(
+      `UPDATE ai_proposals SET status = 'done', admin_decision_at = NOW(), updated_at = NOW()
+       WHERE id = ?`,
+      proposal_id,
+    );
+    return res.json({ ok: true });
+  }
+
+  if (op === 'proposal-message') {
+    const proposal_id = Number(req.query.proposal_id);
+    const text = String(req.query.text || '');
+    if (!proposal_id || !text) return res.status(400).json({ error: 'proposal_id and text required' });
+    const r = await db.run(
+      `INSERT INTO ai_proposal_messages (proposal_id, user_id, user_name, role, text)
+       VALUES (?, 0, 'AI ассистент', 'admin', ?) RETURNING id`,
+      proposal_id, text,
+    );
+    return res.json({ ok: true, id: r.lastInsertRowid });
+  }
+
+  return res.status(400).json({ error: `unknown op: ${op}` });
 }));
 
 export default router;
