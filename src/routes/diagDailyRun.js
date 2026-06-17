@@ -69,7 +69,7 @@ router.get('/op', asyncHandler(async (req, res) => {
     if (!feedback_id || !text) return res.status(400).json({ error: 'feedback_id and text required' });
     const r = await db.run(
       `INSERT INTO feedback_messages (feedback_id, user_id, user_name, role, text)
-       VALUES (?, 0, 'AI ассистент', 'admin', ?) RETURNING id`,
+       VALUES (?, NULL, 'AI ассистент', 'admin', ?) RETURNING id`,
       feedback_id, text,
     );
     return res.json({ ok: true, id: r.lastInsertRowid });
@@ -131,7 +131,7 @@ router.get('/op', asyncHandler(async (req, res) => {
     if (!proposal_id || !text) return res.status(400).json({ error: 'proposal_id and text required' });
     const r = await db.run(
       `INSERT INTO ai_proposal_messages (proposal_id, user_id, user_name, role, text)
-       VALUES (?, 0, 'AI ассистент', 'admin', ?) RETURNING id`,
+       VALUES (?, NULL, 'AI ассистент', 'admin', ?) RETURNING id`,
       proposal_id, text,
     );
     return res.json({ ok: true, id: r.lastInsertRowid });
