@@ -24,7 +24,7 @@ router.get(
     // ──────────────────────────────────────────────────
     // READ: ai-proposals list
     if (action === 'get-proposals') {
-      const where = status ? 'WHERE status = $1' : '';
+      const where = status ? 'WHERE p.status = ?' : '';
       const params = status ? [status] : [];
       const rows = await db.all(
         `SELECT p.*, f.subject AS feedback_subject, f.status AS feedback_status,
