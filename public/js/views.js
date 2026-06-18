@@ -2602,7 +2602,7 @@ async function openOrderImportModal(onDone, opts = {}) {
     statusEl.textContent = '⏳ Разбираю файл…';
     try {
       const text = await file.text();
-      const result = await api.post('orders/import', { csv: text, dry_run: true, b2b });
+      const result = await api.create('orders/import', { csv: text, dry_run: true, b2b });
       parsedPreview = result;
       statusEl.textContent = '';
       if (!result.orders_to_create) {
@@ -2677,7 +2677,7 @@ async function openOrderImportModal(onDone, opts = {}) {
       if (!file) { toast('Файл не выбран', 'error'); return false; }
       try {
         const text = await file.text();
-        const result = await api.post('orders/import', { csv: text, dry_run: false, b2b });
+        const result = await api.create('orders/import', { csv: text, dry_run: false, b2b });
         toast(`Создано заказов: ${result.created}`, 'success');
         onDone?.();
       } catch (e) {
