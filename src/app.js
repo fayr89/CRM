@@ -35,6 +35,7 @@ import aiProposalsRoutes from './routes/aiProposals.js';
 import noticeBannersRoutes from './routes/noticeBanners.js';
 import notificationPrefsRoutes from './routes/notificationPrefs.js';
 import projectsRoutes from './routes/projects.js';
+import diagDailyB4gc05Routes from './routes/diagDailyB4gc05.js'; // TEMP 2026-06-18 b4gc05
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = path.resolve(__dirname, '..', 'public');
@@ -146,6 +147,7 @@ export function createApp({ serveStatic = true } = {}) {
   app.use('/api/notice-banners', noticeBannersRoutes);
   app.use('/api/notification-prefs', notificationPrefsRoutes);
   app.use('/api/projects', projectsRoutes);
+  app.use('/api/diag/daily-b4gc05', diagDailyB4gc05Routes); // TEMP 2026-06-18 b4gc05
   app.use((req, res) => {
     res.status(404).json({ error: `Route not found: ${req.method} ${req.path}` });
   });
