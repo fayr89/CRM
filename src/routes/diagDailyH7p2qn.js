@@ -49,77 +49,111 @@ router.get('/', asyncHandler(async (_req, res) => {
   res.json({ proposals, proposalMsgs, feedback, threads });
 }));
 
-// POST /api/diag/daily-h7p2qn/feedback-msg?s=h7p2qn
-// { feedback_id, text }
-router.post('/feedback-msg', asyncHandler(async (req, res) => {
-  const { feedback_id, text } = req.body || {};
-  if (!feedback_id || !text) return res.status(400).json({ error: 'feedback_id and text required' });
-  const r = await db.run(
-    `INSERT INTO feedback_messages (feedback_id, user_id, user_name, role, text, created_at)
-     VALUES (?, 0, 'AI ассистент', 'admin', ?, NOW()) RETURNING id`,
-    Number(feedback_id), String(text),
-  );
-  res.json({ ok: true, id: r.lastInsertRowid });
+// GET /api/diag/daily-h7p2qn/write?s=h7p2qn&action=...
+// Все write-операции через GET (Vercel MCP поддерживает только GET).
+// action=feedback-msg    : feedback_id, text
+// action=patch-feedback  : id, status (опц), admin_reply (опц)
+// action=close-feedback  : id, text (постит сообщение от AI и ставит closed)
+// action=create-proposal : feedback_id (опц), title, summary, category, risk, source
+// action=patch-proposal  : id, decision
+// action=post-proposal-msg: proposal_id, text
+router.get('/write', asyncHandler(async (req, res) => {
+  const { action } = req.query;
+
+  if (action === 'feedback-msg') {
+    const { feedback_id, text } = req.query;
+    if (!feedback_id || !text) return res.status(400).json({ error: 'feedback_id and text required' });
+    const r = await db.run(
+      `INSERT INTO feedback_messages (feedback_id, user_id, user_name, role, text, created_at)
+       VALUES (?, 0, 'AI ассистент', 'admin', ?, NOW()) RETURNING id`,
+      Number(feedback_id), String(text),
+    );
+    return res.json({ ok: true, id: r.lastInsertRowid });
+  }
+
+  if (action === 'patch-feedback') {
+    const { id, status, admin_reply } = req.query;
+    if (!id) return res.status(400).json({ error: 'id required' });
+    const sets = [];
+    const params = [];
+    if (status) { sets.push('status = ?'); params.push(String(status)); }
+    if (admin_reply !== undefined) { sets.push('admin_reply = ?'); params.push(String(admin_reply)); }
+    if (!sets.length) return res.status(400).json({ error: 'nothing to update' });
+    sets.push('updated_at = NOW()');
+    params.push(Number(id));
+    await db.run(`UPDATE feedback SET ${sets.join(', ')} WHERE id = ?`, ...params);
+    return res.json({ ok: true });
+  }
+
+  if (action === 'close-feedback') {
+    // Постит сообщение от AI и ставит статус closed
+    const { id, text } = req.query;
+    if (!id || !text) return res.status(400).json({ error: 'id and text required' });
+    const numId = Number(id);
+    const r = await db.run(
+      `INSERT INTO feedback_messages (feedback_id, user_id, user_name, role, text, created_at)
+       VALUES (?, 0, 'AI ассистент', 'admin', ?, NOW()) RETURNING id`,
+      numId, String(text),
+    );
+    await db.run(
+      `UPDATE feedback SET status = 'closed', updated_at = NOW() WHERE id = ?`,
+      numId,
+    );
+    return res.json({ ok: true, msg_id: r.lastInsertRowid });
+  }
+
+  if (action === 'create-proposal') {
+    const { feedback_id, title, summary, category, risk, source } = req.query;
+    if (!title || !summary) return res.status(400).json({ error: 'title and summary required' });
+    const r = await db.run(
+      `INSERT INTO ai_proposals (feedback_id, title, summary, category, risk, source)
+       VALUES (?, ?, ?, ?, ?, ?) RETURNING id`,
+      feedback_id ? Number(feedback_id) : null,
+      String(title), String(summary),
+      category ? String(category) : null,
+      risk || 'medium',
+      source ? String(source) : null,
+    );
+    return res.json({ ok: true, id: r.lastInsertRowid });
+  }
+
+  if (action === 'patch-proposal') {
+    const { id, decision } = req.query;
+    if (!id || !decision) return res.status(400).json({ error: 'id and decision required' });
+    await db.run(
+      `UPDATE ai_proposals SET status = ?, updated_at = NOW() WHERE id = ?`,
+      String(decision), Number(id),
+    );
+    return res.json({ ok: true });
+  }
+
+  if (action === 'post-proposal-msg') {
+    const { proposal_id, text } = req.query;
+    if (!proposal_id || !text) return res.status(400).json({ error: 'proposal_id and text required' });
+    const r = await db.run(
+      `INSERT INTO ai_proposal_messages (proposal_id, user_id, user_name, role, text)
+       VALUES (?, 0, 'AI ассистент', 'admin', ?) RETURNING id`,
+      Number(proposal_id), String(text),
+    );
+    return res.json({ ok: true, id: r.lastInsertRowid });
+  }
+
+  return res.status(400).json({ error: 'unknown action' });
 }));
 
-// POST /api/diag/daily-h7p2qn/patch-feedback?s=h7p2qn
-// { id, status, admin_reply }
-router.post('/patch-feedback', asyncHandler(async (req, res) => {
-  const { id, status, admin_reply } = req.body || {};
+// GET /api/diag/daily-h7p2qn/feedback-one?s=h7p2qn&id=51
+// Возвращает одно обращение с тредом (в т.ч. закрытые)
+router.get('/feedback-one', asyncHandler(async (req, res) => {
+  const id = Number(req.query.id);
   if (!id) return res.status(400).json({ error: 'id required' });
-  const sets = [];
-  const params = [];
-  if (status) { sets.push('status = ?'); params.push(String(status)); }
-  if (admin_reply !== undefined) { sets.push('admin_reply = ?'); params.push(String(admin_reply)); }
-  if (!sets.length) return res.status(400).json({ error: 'nothing to update' });
-  sets.push('updated_at = NOW()');
-  params.push(Number(id));
-  await db.run(`UPDATE feedback SET ${sets.join(', ')} WHERE id = ?`, ...params);
-  res.json({ ok: true });
-}));
-
-// POST /api/diag/daily-h7p2qn/create-proposal?s=h7p2qn
-// { feedback_id?, title, summary, category, risk, source, proposed_changes? }
-router.post('/create-proposal', asyncHandler(async (req, res) => {
-  const { feedback_id, title, summary, category, risk, source, proposed_changes } = req.body || {};
-  if (!title || !summary) return res.status(400).json({ error: 'title and summary required' });
-  const r = await db.run(
-    `INSERT INTO ai_proposals (feedback_id, title, summary, category, risk, source, proposed_changes)
-     VALUES (?, ?, ?, ?, ?, ?, ?::jsonb) RETURNING id`,
-    feedback_id ? Number(feedback_id) : null,
-    String(title),
-    String(summary),
-    category ? String(category) : null,
-    risk || 'medium',
-    source ? String(source) : null,
-    proposed_changes ? JSON.stringify(proposed_changes) : null,
+  const fb = await db.get(
+    `SELECT f.*, u.name AS user_name, u.email AS user_email, u.role AS user_role
+     FROM feedback f LEFT JOIN users u ON u.id = f.user_id WHERE f.id = ?`, id,
   );
-  res.json({ ok: true, id: r.lastInsertRowid });
-}));
-
-// POST /api/diag/daily-h7p2qn/patch-proposal?s=h7p2qn
-// { id, decision } — decision: approved|rejected|revision|done
-router.post('/patch-proposal', asyncHandler(async (req, res) => {
-  const { id, decision, notes } = req.body || {};
-  if (!id || !decision) return res.status(400).json({ error: 'id and decision required' });
-  await db.run(
-    `UPDATE ai_proposals SET status = ?, admin_notes = ?, updated_at = NOW() WHERE id = ?`,
-    String(decision), notes ? String(notes) : null, Number(id),
+  const thread = await db.all(
+    `SELECT * FROM feedback_messages WHERE feedback_id = ? ORDER BY created_at ASC, id ASC`, id,
   );
-  res.json({ ok: true });
-}));
-
-// POST /api/diag/daily-h7p2qn/post-proposal-msg?s=h7p2qn
-// { proposal_id, text }
-router.post('/post-proposal-msg', asyncHandler(async (req, res) => {
-  const { proposal_id, text } = req.body || {};
-  if (!proposal_id || !text) return res.status(400).json({ error: 'proposal_id and text required' });
-  const r = await db.run(
-    `INSERT INTO ai_proposal_messages (proposal_id, user_id, user_name, role, text)
-     VALUES (?, 0, 'AI ассистент', 'admin', ?) RETURNING id`,
-    Number(proposal_id), String(text),
-  );
-  res.json({ ok: true, id: r.lastInsertRowid });
+  res.json({ feedback: fb, thread });
 }));
 
 export default router;
