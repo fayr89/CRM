@@ -12,6 +12,21 @@ router.use((req, res, next) => {
   next();
 });
 
+// GET /api/diag/daily-run/write-proposal-msg?s=...&id=47&text=... — записать сообщение в тред предложения (GET-only MCP env)
+router.get('/write-proposal-msg', asyncHandler(async (req, res) => {
+  const id = Number(req.query.id);
+  const text = String(req.query.text || '').trim();
+  if (!id || !text) return res.status(400).json({ error: 'id and text required' });
+  const prop = await db.get('SELECT id FROM ai_proposals WHERE id = ?', id);
+  if (!prop) return res.status(404).json({ error: 'proposal not found' });
+  const r = await db.run(
+    `INSERT INTO ai_proposal_messages (proposal_id, user_id, user_name, role, text)
+     VALUES (?, NULL, 'AI ассистент', 'admin', ?) RETURNING id, created_at`,
+    id, text,
+  );
+  res.json({ ok: true, msg_id: r.lastInsertRowid });
+}));
+
 // GET /api/diag/daily-run?s=... — все нужные данные для AI-обхода
 router.get('/', asyncHandler(async (_req, res) => {
   const [approved, revision, rejected, pending, feedbackOpen] = await Promise.all([
