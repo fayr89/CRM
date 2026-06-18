@@ -66,7 +66,25 @@ router.get('/feedback-full', guard, async (req, res) => {
   }
 });
 
-// Выполнение действий: patch proposal, post feedback_message, patch feedback status
+// GET-based write actions (Vercel MCP поддерживает только GET)
+// GET /api/diag/patch-feedback?secret=...&id=51&status=closed
+router.get('/patch-feedback', guard, async (req, res) => {
+  try {
+    const id = Number(req.query.id);
+    if (!id) return res.status(400).json({ error: 'id required' });
+    const sets = ['updated_at=NOW()'];
+    const vals = [];
+    if (req.query.status) { sets.unshift('status=?'); vals.push(req.query.status); }
+    if (req.query.admin_reply !== undefined) { sets.unshift('admin_reply=?'); vals.push(req.query.admin_reply); }
+    vals.push(id);
+    await db.run(`UPDATE feedback SET ${sets.join(',')} WHERE id=?`, ...vals);
+    res.json({ ok: true, id });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// POST actions endpoint (kept for completeness)
 router.post('/actions', guard, async (req, res) => {
   try {
     const { actions } = req.body;
