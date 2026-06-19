@@ -125,8 +125,13 @@ POST в тред: `POST /api/ai-proposals/:id/messages { text, user_name: 'AI а
 - Не трогать `касса/cashbox`, `payments` (деньги) без явного запроса.
 - Никаких destructive операций без подтверждения через ai_proposal.
 - Все DDL — идемпотентные, через `ensureInitialized()` и SCHEMA_VERSION-бамп.
-- Деплой только через ветки: dev `claude/creation-command-failure-HrDNn` →
-  ff-merge в прод `claude/build-crm-system-JzCP9` → push обеих.
+- Деплой только через прод-ветку `claude/build-crm-system-JzCP9`.
+  Dev-ветка задаётся в session-specific задании (меняется каждую сессию).
+  Порядок: `git checkout claude/build-crm-system-JzCP9` →
+  **`git fetch origin claude/build-crm-system-JzCP9`** (обязательно! прод может
+  быть force-pushed другой сессией) → `git reset --hard origin/claude/build-crm-system-JzCP9`
+  (если локальная отстала) → `git merge --ff-only <dev-ветка>` → push обеих.
+  Если ff-merge не выходит — попробуй `git cherry-pick <commit>` в прод-ветку.
 
 ## Аварийные ситуации — СТОП, не выкручиваться
 
