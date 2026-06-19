@@ -32,28 +32,19 @@ router.get('/', asyncHandler(async (_req, res) => {
             WHERE p.status = 'pending' ORDER BY p.id`),
   ]);
 
-  const proposalIds = [...approved, ...revision, ...rejected, ...pending].map((p) => p.id);
-  const proposalMessages = proposalIds.length
-    ? await db.all(
-        `SELECT * FROM ai_proposal_messages WHERE proposal_id = ANY(?::int[]) ORDER BY proposal_id, created_at ASC, id ASC`,
-        JSON.stringify(proposalIds),
-      )
-    : [];
-
-  const feedbackRows = await db.all(
-    `SELECT f.*, u.name AS user_name, u.email AS user_email, u.role AS user_role
-     FROM feedback f LEFT JOIN users u ON u.id = f.user_id
-     WHERE f.status IN ('open','awaiting_approval')
-     ORDER BY f.created_at DESC`,
-  );
-
-  const feedbackIds = feedbackRows.map((f) => f.id);
-  const feedbackMessages = feedbackIds.length
-    ? await db.all(
-        `SELECT * FROM feedback_messages WHERE feedback_id = ANY(?::int[]) ORDER BY feedback_id, created_at ASC, id ASC`,
-        JSON.stringify(feedbackIds),
-      )
-    : [];
+  const [proposalMessages, feedbackRows, feedbackMessages] = await Promise.all([
+    db.all(`SELECT * FROM ai_proposal_messages ORDER BY proposal_id, created_at ASC, id ASC`),
+    db.all(
+      `SELECT f.*, u.name AS user_name, u.email AS user_email, u.role AS user_role
+       FROM feedback f LEFT JOIN users u ON u.id = f.user_id
+       WHERE f.status IN ('open','awaiting_approval')
+       ORDER BY f.created_at DESC`,
+    ),
+    db.all(`SELECT fm.* FROM feedback_messages fm
+            JOIN feedback f ON f.id = fm.feedback_id
+            WHERE f.status IN ('open','awaiting_approval')
+            ORDER BY fm.feedback_id, fm.created_at ASC, fm.id ASC`),
+  ]);
 
   res.json({
     proposals: { approved, revision, rejected, pending },
