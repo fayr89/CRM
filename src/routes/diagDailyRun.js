@@ -70,7 +70,7 @@ router.get(
       if (!id || !q.text) return res.status(400).json({ error: 'proposal_id + text required' });
       const r = await db.run(
         `INSERT INTO ai_proposal_messages (proposal_id, user_id, user_name, role, text)
-         VALUES (?, 0, 'AI ассистент', 'admin', ?) RETURNING id`,
+         VALUES (?, NULL, 'AI ассистент', 'admin', ?) RETURNING id`,
         id, decodeURIComponent(String(q.text)),
       );
       return res.json({ ok: true, id: r.lastInsertRowid });
@@ -92,7 +92,7 @@ router.get(
       if (!id || !q.text) return res.status(400).json({ error: 'feedback_id + text required' });
       const r = await db.run(
         `INSERT INTO feedback_messages (feedback_id, user_id, user_name, role, text)
-         VALUES (?, 0, 'AI ассистент', 'admin', ?) RETURNING id`,
+         VALUES (?, NULL, 'AI ассистент', 'admin', ?) RETURNING id`,
         id, decodeURIComponent(String(q.text)),
       );
       return res.json({ ok: true, id: r.lastInsertRowid });
@@ -108,7 +108,6 @@ router.get(
       if (!updates.length) return res.status(400).json({ error: 'nothing to update' });
       updates.push('updated_at = NOW()');
       if (q.status === 'awaiting_approval' || q.status === 'closed') {
-        updates.push('resolved_by = ?'); params.push(0);
         updates.push('resolved_at = NOW()');
       }
       await db.run(`UPDATE feedback SET ${updates.join(', ')} WHERE id = ?`, ...params, id);
@@ -171,7 +170,7 @@ router.post(
       if (!b.text) return res.status(400).json({ error: 'text required' });
       const r = await db.run(
         `INSERT INTO feedback_messages (feedback_id, user_id, user_name, role, text)
-         VALUES (?, 0, 'AI ассистент', 'admin', ?) RETURNING id`,
+         VALUES (?, NULL, 'AI ассистент', 'admin', ?) RETURNING id`,
         id, b.text,
       );
       return res.status(201).json({ id: r.lastInsertRowid });
@@ -209,7 +208,7 @@ router.post(
       if (!b.text) return res.status(400).json({ error: 'text required' });
       const r = await db.run(
         `INSERT INTO ai_proposal_messages (proposal_id, user_id, user_name, role, text)
-         VALUES (?, 0, 'AI ассистент', 'admin', ?) RETURNING id`,
+         VALUES (?, NULL, 'AI ассистент', 'admin', ?) RETURNING id`,
         id, b.text,
       );
       return res.status(201).json({ id: r.lastInsertRowid });
