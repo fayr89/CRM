@@ -57,6 +57,84 @@ router.get(
   }),
 );
 
+// GET /api/diag/daily-run/write?secret=...&action=...&...params
+// Специальный маршрут для write-операций через GET (для MCP-клиентов без POST).
+router.get(
+  '/write',
+  asyncHandler(async (req, res) => {
+    const action = String(req.query.action || '');
+    const q = req.query;
+
+    if (action === 'post_prop_msg') {
+      const id = Number(q.proposal_id);
+      if (!id || !q.text) return res.status(400).json({ error: 'proposal_id + text required' });
+      const r = await db.run(
+        `INSERT INTO ai_proposal_messages (proposal_id, user_id, user_name, role, text)
+         VALUES (?, 0, 'AI ассистент', 'admin', ?) RETURNING id`,
+        id, decodeURIComponent(String(q.text)),
+      );
+      return res.json({ ok: true, id: r.lastInsertRowid });
+    }
+
+    if (action === 'patch_proposal') {
+      const id = Number(q.id);
+      const decision = String(q.decision || '');
+      if (!id || !decision) return res.status(400).json({ error: 'id + decision required' });
+      await db.run(
+        `UPDATE ai_proposals SET status = ?, admin_decision_at = NOW(), updated_at = NOW() WHERE id = ?`,
+        decision, id,
+      );
+      return res.json({ ok: true });
+    }
+
+    if (action === 'post_fb_message') {
+      const id = Number(q.feedback_id);
+      if (!id || !q.text) return res.status(400).json({ error: 'feedback_id + text required' });
+      const r = await db.run(
+        `INSERT INTO feedback_messages (feedback_id, user_id, user_name, role, text)
+         VALUES (?, 0, 'AI ассистент', 'admin', ?) RETURNING id`,
+        id, decodeURIComponent(String(q.text)),
+      );
+      return res.json({ ok: true, id: r.lastInsertRowid });
+    }
+
+    if (action === 'patch_feedback') {
+      const id = Number(q.id);
+      if (!id) return res.status(400).json({ error: 'id required' });
+      const updates = [];
+      const params = [];
+      if (q.status) { updates.push('status = ?'); params.push(q.status); }
+      if (q.admin_reply) { updates.push('admin_reply = ?'); params.push(decodeURIComponent(String(q.admin_reply))); }
+      if (!updates.length) return res.status(400).json({ error: 'nothing to update' });
+      updates.push('updated_at = NOW()');
+      if (q.status === 'awaiting_approval' || q.status === 'closed') {
+        updates.push('resolved_by = ?'); params.push(0);
+        updates.push('resolved_at = NOW()');
+      }
+      await db.run(`UPDATE feedback SET ${updates.join(', ')} WHERE id = ?`, ...params, id);
+      return res.json({ ok: true });
+    }
+
+    if (action === 'post_proposal') {
+      const r = await db.run(
+        `INSERT INTO ai_proposals
+         (feedback_id, title, summary, category, risk, source, proposed_changes)
+         VALUES (?, ?, ?, ?, ?, ?, ?::jsonb) RETURNING id`,
+        q.feedback_id ? Number(q.feedback_id) : null,
+        decodeURIComponent(String(q.title || '')),
+        decodeURIComponent(String(q.summary || '')),
+        q.category || null,
+        q.risk || 'medium',
+        q.source || null,
+        null,
+      );
+      return res.json({ ok: true, id: r.lastInsertRowid });
+    }
+
+    return res.status(400).json({ error: `unknown action: ${action}` });
+  }),
+);
+
 // POST /api/diag/daily-run?secret=...&action=...
 // Поддерживаемые действия:
 //   patch_feedback   { id, status, admin_reply }
