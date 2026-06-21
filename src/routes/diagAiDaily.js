@@ -7,7 +7,7 @@ import { asyncHandler } from '../errors.js';
 
 const router = Router();
 
-const SECRET = 'daily-run-9zL5wP2mX8vQ';
+const SECRET = 'daily-run-Qr7nK3mZ9xJ2';
 
 router.use((req, res, next) => {
   if (req.query?.secret !== SECRET) {
