@@ -671,6 +671,11 @@ const RESOURCES = {
         ],
       },
       {
+        name: 'warehouse',
+        label: 'Склад (для роли «Склад», основной)',
+        type: 'text',
+      },
+      {
         name: 'access_blocks',
         label: 'Блоки доступа (для роли «Менеджер»)',
         type: 'select',
@@ -3548,10 +3553,14 @@ async function showOrderDetails(order, reload) {
   const me = JSON.parse(localStorage.getItem('crm_user') || '{}');
   const canEdit =
     (me.role === 'admin' || me.id === order.manager_id) && order.status === 'new';
-  // Отменять может: админ/склад (любой активный статус), менеджер-владелец (только новый).
+  // Отменять может: админ (включая выполненные), склад (кроме выполненных/отменённых), менеджер-владелец (только новый).
   const canCancel =
-    !['completed', 'cancelled'].includes(order.status) &&
-    (['admin', 'warehouse'].includes(me.role) || (me.id === order.manager_id && ['new', 'reserved', 'waiting_stock'].includes(order.status)));
+    order.status !== 'cancelled' &&
+    (
+      (me.role === 'admin') ||
+      (me.role === 'warehouse' && order.status !== 'completed') ||
+      (me.id === order.manager_id && ['new', 'reserved', 'waiting_stock'].includes(order.status))
+    );
   // Разделять можно из 'new' и 'reserved' — владелец/админ. Минимум 2 штуки товара суммарно
   // (один SKU с qty=2 тоже считается делимым).
   const totalUnits = (order.items || []).reduce((s, i) => s + (i.quantity || 0), 0);
@@ -3573,6 +3582,11 @@ async function showOrderDetails(order, reload) {
   // Откат ошибочной отгрузки.
   const canUnship =
     order.status === 'shipped' && ['admin', 'warehouse'].includes(me.role);
+  // Подтвердить отгрузку (менеджер/владелец/админ для reserved или shipped).
+  const canConfirmShipping =
+    ['reserved', 'shipped'].includes(order.status) &&
+    !order.manager_shipping_confirmed &&
+    (me.role === 'admin' || me.id === order.manager_id);
   // Per-item действия: «Ждём товар» / «Отменить» — для new/reserved при суммарно ≥ 2 шт.
   const canExtractItems =
     ['new', 'reserved'].includes(order.status) &&
@@ -3709,7 +3723,7 @@ async function showOrderDetails(order, reload) {
     canRepeat
       ? el('div', { style: { marginBottom: '12px', display: 'flex', gap: '8px', flexWrap: 'wrap' } }, repeatBtn)
       : null,
-    (canCancel || canSplit || canMarkReady || canMarkWaitingFromReserved || canUnreserve || canUnship)
+    (canCancel || canSplit || canMarkReady || canMarkWaitingFromReserved || canUnreserve || canUnship || canConfirmShipping)
       ? el('div', { style: { marginBottom: '12px', display: 'flex', gap: '8px', flexWrap: 'wrap' } },
           canMarkReady
             ? el('button', {
@@ -3795,6 +3809,18 @@ async function showOrderDetails(order, reload) {
                 onClick: () => openCancelDialog(order.id, () => { reload?.(); }),
               }, '🚫 Отменить заказ')
             : null,
+          canConfirmShipping
+            ? el('button', {
+                class: 'btn btn-sm btn-primary',
+                onClick: async () => {
+                  try {
+                    await api.confirmShipping(order.id);
+                    toast('Отгрузка подтверждена', 'success');
+                    reload?.();
+                  } catch (e) { toast(e.message, 'error'); }
+                },
+              }, '✅ Подтвердить отгрузку')
+            : null,
         )
       : null,
     el(
@@ -3818,6 +3844,8 @@ async function showOrderDetails(order, reload) {
       el('div', {}, order.manager_name || '—'),
       el('div', { class: 'k' }, 'Склад'),
       el('div', {}, order.warehouse_user_name || '—'),
+      order.manager_shipping_confirmed ? el('div', { class: 'k' }, 'Отгрузка подтверждена') : null,
+      order.manager_shipping_confirmed ? el('div', { style: { color: '#15803d' } }, `✅ ${order.manager_shipping_confirmed_at ? fmtDateTime(order.manager_shipping_confirmed_at) : 'да'}`) : null,
       el('div', { class: 'k' }, 'Сумма'),
       el('div', {}, fmtMoney(order.total_amount, order.currency)),
       order.price_deviation != null && Math.abs(order.price_deviation) >= 1
@@ -8417,13 +8445,37 @@ export async function renderShipping(main) {
       : null,
   );
 
+  // Фильтр по складу (только для admin)
+  let warehouseFilter = '';
+  let warehouseOptions = [];
+  if (me.role === 'admin') {
+    try {
+      const wRes = await api.warehousesList();
+      warehouseOptions = (wRes.warehouses || wRes || []);
+    } catch (_) { /* ignore */ }
+  }
+
+  const filterBar = me.role === 'admin' && warehouseOptions.length > 0
+    ? (() => {
+        const sel = el('select', { class: 'form-select', style: { display: 'inline-block', width: 'auto', marginRight: '8px' } },
+          el('option', { value: '' }, 'Все склады'),
+          ...warehouseOptions.map((w) => el('option', { value: w }, w)),
+        );
+        sel.addEventListener('change', () => { warehouseFilter = sel.value; load(); });
+        return el('div', { style: { marginBottom: '12px' } }, el('label', { style: { marginRight: '6px' } }, 'Склад:'), sel);
+      })()
+    : null;
+
+  if (filterBar) main.append(filterBar);
+
   const container = el('div');
   main.append(container);
 
   async function load() {
     container.replaceChildren(el('div', { class: 'loading' }, 'Загрузка…'));
     try {
-      const [schedule, readyList] = await Promise.all([api.warehouseSchedule(), api.readyToShip()]);
+      const params = warehouseFilter ? { warehouse: warehouseFilter } : undefined;
+      const [schedule, readyList] = await Promise.all([api.warehouseSchedule(), api.readyToShip(params)]);
       renderContent(container, schedule, readyList, canEdit, load);
     } catch (e) {
       container.replaceChildren(el('div', { class: 'empty' }, `Ошибка: ${e.message}`));
@@ -8553,6 +8605,9 @@ function renderContent(container, schedule, readyList, canEdit, reload) {
 
   // Список заказов готовых к отгрузке
   const orders = readyList.data || [];
+  const FLAT_KEY = 'shipping_flat_list';
+  let flatMode = localStorage.getItem(FLAT_KEY) === '1';
+
   if (orders.length > 0) {
     const selected = new Set();
 
@@ -8732,46 +8787,76 @@ function renderContent(container, schedule, readyList, canEdit, reload) {
       );
     }
 
-    const card = el('div', { class: 'card' });
-    card.append(actions);
-
-    if (pastOrders.length > 0) {
-      const details = el('details', {});
-      details.append(
-        el('summary', { style: { cursor: 'pointer', padding: '8px 0', fontWeight: '600', color: 'var(--muted)' } },
-          `Прошедшие даты (${pastOrders.length} заказов)`),
-        makeGroupTable(pastOrders),
-      );
-      card.append(details);
-    }
-
-    for (const g of sortedGroups) {
-      const label = new Intl.DateTimeFormat('ru-RU', {
-        weekday: 'short', day: 'numeric', month: 'long', timeZone: 'Europe/Moscow',
-      }).format(g.date);
-      card.append(
-        el('div', { style: { fontWeight: '600', padding: '12px 0 6px', borderTop: pastOrders.length || sortedGroups.indexOf(g) > 0 ? '1px solid var(--border)' : 'none' } },
-          `${label} — ${g.orders.length} заказов`),
-        makeGroupTable(g.orders),
-      );
-    }
-
-    if (noDateOrders.length > 0) {
-      card.append(
-        el('div', { style: { fontWeight: '600', padding: '12px 0 6px', borderTop: '1px solid var(--border)' } },
-          `Без даты отгрузки — ${noDateOrders.length} заказов`),
-        makeGroupTable(noDateOrders),
-      );
-    }
-
-    if (pastOrders.length === 0 && sortedGroups.length === 0 && noDateOrders.length === 0) {
-      card.append(makeGroupTable(orders));
-    }
-
-    container.append(
-      el('h3', { style: { marginTop: '20px' } }, `Заказы к отгрузке (${orders.length})`),
-      card,
+    // Кнопка переключения плоский/группированный список
+    const toggleBtn = el('button', { class: 'btn btn-sm', style: { marginLeft: 'auto' } },
+      flatMode ? '📋 По датам' : '📄 Плоский список',
     );
+    toggleBtn.addEventListener('click', () => {
+      flatMode = !flatMode;
+      localStorage.setItem(FLAT_KEY, flatMode ? '1' : '0');
+      buildOrdersCard();
+    });
+
+    const titleRow = el('div', { style: { display: 'flex', alignItems: 'center', gap: '8px', marginTop: '20px', marginBottom: '4px' } },
+      el('h3', { style: { margin: '0', flex: '1' } }, `Заказы к отгрузке (${orders.length})`),
+      toggleBtn,
+    );
+
+    const card = el('div', { class: 'card' });
+
+    function buildOrdersCard() {
+      card.replaceChildren(actions);
+      toggleBtn.textContent = flatMode ? '📋 По датам' : '📄 Плоский список';
+
+      if (flatMode) {
+        // Плоский список, отсортированный по дате отгрузки (без даты — в конце)
+        const sortedFlat = [...orders].sort((a, b) => {
+          if (!a.shipping_date && !b.shipping_date) return 0;
+          if (!a.shipping_date) return 1;
+          if (!b.shipping_date) return -1;
+          return new Date(a.shipping_date) - new Date(b.shipping_date);
+        });
+        card.append(makeGroupTable(sortedFlat));
+        return;
+      }
+
+      if (pastOrders.length > 0) {
+        const details = el('details', {});
+        details.append(
+          el('summary', { style: { cursor: 'pointer', padding: '8px 0', fontWeight: '600', color: 'var(--muted)' } },
+            `Прошедшие даты (${pastOrders.length} заказов)`),
+          makeGroupTable(pastOrders),
+        );
+        card.append(details);
+      }
+
+      for (const g of sortedGroups) {
+        const label = new Intl.DateTimeFormat('ru-RU', {
+          weekday: 'short', day: 'numeric', month: 'long', timeZone: 'Europe/Moscow',
+        }).format(g.date);
+        card.append(
+          el('div', { style: { fontWeight: '600', padding: '12px 0 6px', borderTop: pastOrders.length || sortedGroups.indexOf(g) > 0 ? '1px solid var(--border)' : 'none' } },
+            `${label} — ${g.orders.length} заказов`),
+          makeGroupTable(g.orders),
+        );
+      }
+
+      if (noDateOrders.length > 0) {
+        card.append(
+          el('div', { style: { fontWeight: '600', padding: '12px 0 6px', borderTop: '1px solid var(--border)' } },
+            `Без даты отгрузки — ${noDateOrders.length} заказов`),
+          makeGroupTable(noDateOrders),
+        );
+      }
+
+      if (pastOrders.length === 0 && sortedGroups.length === 0 && noDateOrders.length === 0) {
+        card.append(makeGroupTable(orders));
+      }
+    }
+
+    buildOrdersCard();
+
+    container.append(titleRow, card);
   }
 
   // Архив отгрузок (lazy — грузится при раскрытии)

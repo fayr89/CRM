@@ -32,6 +32,7 @@ const updateSchema = z.object({
   active: z.boolean().optional(),
   access_blocks: z.string().optional().nullable(),
   warehouse: z.string().max(100).nullable().optional(),
+  warehouses: z.array(z.string().max(100)).nullable().optional(),
 });
 
 router.use(authenticate);
@@ -44,7 +45,7 @@ router.get(
     const scopeSql = ids === null ? '' : 'WHERE id = ANY(?)';
     const scopeParams = ids === null ? [] : [ids];
     const rows = await db.all(
-      `SELECT id, email, name, role, active, manager_id, access_blocks, warehouse, created_at, updated_at
+      `SELECT id, email, name, role, active, manager_id, access_blocks, warehouse, warehouses, created_at, updated_at
        FROM users ${scopeSql} ORDER BY id ASC LIMIT ? OFFSET ?`,
       ...scopeParams,
       limit,
@@ -64,7 +65,7 @@ router.get(
     const id = Number(req.params.id);
     if (!(await canAccessUser(req.user, id))) throw Forbidden('Нет доступа к этому пользователю');
     const user = await db.get(
-      `SELECT id, email, name, role, active, manager_id, access_blocks, warehouse, created_at, updated_at
+      `SELECT id, email, name, role, active, manager_id, access_blocks, warehouse, warehouses, created_at, updated_at
        FROM users WHERE id = ?`,
       id,
     );
@@ -181,6 +182,11 @@ router.patch(
       if (!isAdmin) throw Forbidden('Привязку к складу может менять только админ');
       updates.push('warehouse = ?');
       params.push(data.warehouse || null);
+    }
+    if (data.warehouses !== undefined) {
+      if (!isAdmin) throw Forbidden('Привязку к складам может менять только админ');
+      updates.push('warehouses = ?::jsonb');
+      params.push(data.warehouses && data.warehouses.length > 0 ? JSON.stringify(data.warehouses) : null);
     }
     if (!updates.length) return res.json(existing);
     updates.push('updated_at = NOW()');

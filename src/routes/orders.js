@@ -146,6 +146,12 @@ async function orderScope(user) {
     return { sql: '', params: [] };
   }
   if (user.role === 'warehouse') {
+    const whs = user.warehouses
+      ? (Array.isArray(user.warehouses) ? user.warehouses : JSON.parse(user.warehouses))
+      : null;
+    if (whs && whs.length > 0) {
+      return { sql: 'o.warehouse = ANY(?)', params: [whs] };
+    }
     if (user.warehouse) {
       return { sql: 'o.warehouse = ?', params: [user.warehouse] };
     }
@@ -662,16 +668,30 @@ router.get(
   asyncHandler(async (req, res) => {
     const schedule = await getSchedule();
     const next = schedule ? nextShippingDate(schedule.days, schedule.cutoff_time) : null;
+    // Фильтр по складу: для роли «склад» — автоматически, для админа — по ?warehouse=.
+    const whFilterParam = (() => {
+      if (req.user.role === 'warehouse') {
+        const whs = req.user.warehouses
+          ? (Array.isArray(req.user.warehouses) ? req.user.warehouses : JSON.parse(req.user.warehouses))
+          : null;
+        if (whs && whs.length > 0) return { sql: ' AND o.warehouse = ANY(?)', params: [whs] };
+        if (req.user.warehouse) return { sql: ' AND o.warehouse = ?', params: [req.user.warehouse] };
+      } else if (req.user.role === 'admin' && req.query.warehouse) {
+        return { sql: ' AND o.warehouse = ?', params: [String(req.query.warehouse)] };
+      }
+      return { sql: '', params: [] };
+    })();
     const orders = await db.all(
       `SELECT o.id, o.reference_number, o.marketplace, o.client_name,
               o.total_amount, o.currency, o.manager_id, o.reserved_at,
-              o.payment_method, o.shipment_qr,
+              o.payment_method, o.shipment_qr, o.warehouse,
               u.name AS manager_name,
               (SELECT COUNT(*)::int FROM order_items WHERE order_id = o.id) AS items_count
        FROM orders o
        LEFT JOIN users u ON u.id = o.manager_id
-       WHERE o.status = 'reserved'
+       WHERE o.status = 'reserved'${whFilterParam.sql}
        ORDER BY o.reserved_at ASC`,
+      ...whFilterParam.params,
     );
     // Вычисляем дату отгрузки для каждого заказа по дате его резервации.
     for (const o of orders) {
@@ -1006,12 +1026,12 @@ router.get(
       return /[;\"\n\r]/.test(s) ? `"${s.replace(/\"/g, '""')}"` : s;
     };
     const bom = '﻿';
-    const headers = ['Артикул', 'Кол-во', 'Цена', 'Способ отправки', 'Трек номер', '', 'Допустимые способы отправки'];
-    const example = ['12345678', '1', '999', methods[0] || 'Авито доставка', '60912345678', '', methods[0] || ''];
+    const headers = ['Артикул', 'Кол-во', 'Цена', 'Способ отправки', 'Трек номер', 'Склад', '', 'Допустимые способы отправки'];
+    const example = ['12345678', '1', '999', methods[0] || 'Авито доставка', '60912345678', '', '', methods[0] || ''];
 
     const lines = [headers.map(esc).join(';'), example.map(esc).join(';')];
     for (let i = 1; i < methods.length; i++) {
-      lines.push(['', '', '', '', '', '', methods[i]].map(esc).join(';'));
+      lines.push(['', '', '', '', '', '', '', methods[i]].map(esc).join(';'));
     }
 
     res.setHeader('Content-Type', 'text/csv; charset=utf-8');
@@ -1039,14 +1059,14 @@ router.get(
       return /[;\"\n\r]/.test(s) ? `"${s.replace(/\"/g, '""')}"` : s;
     };
     const bom = '﻿';
-    // Артикул | Кол-во | Цена | Клиент | Телефон | Способ отправки | Трек номер
+    // Артикул | Кол-во | Цена | Клиент | Телефон | Способ отправки | Трек номер | Склад
     // (+ справа справочник способов отправки).
-    const headers = ['Артикул', 'Кол-во', 'Цена', 'Клиент', 'Телефон', 'Способ отправки', 'Трек номер', '', 'Допустимые способы отправки'];
-    const example = ['12345678', '1', '999', 'ООО Ромашка', '+79001234567', methods[0] || 'СДЭК', '', '', methods[0] || ''];
+    const headers = ['Артикул', 'Кол-во', 'Цена', 'Клиент', 'Телефон', 'Способ отправки', 'Трек номер', 'Склад', '', 'Допустимые способы отправки'];
+    const example = ['12345678', '1', '999', 'ООО Ромашка', '+79001234567', methods[0] || 'СДЭК', '', '', '', methods[0] || ''];
 
     const lines = [headers.map(esc).join(';'), example.map(esc).join(';')];
     for (let i = 1; i < methods.length; i++) {
-      lines.push(['', '', '', '', '', '', '', '', methods[i]].map(esc).join(';'));
+      lines.push(['', '', '', '', '', '', '', '', '', methods[i]].map(esc).join(';'));
     }
 
     res.setHeader('Content-Type', 'text/csv; charset=utf-8');
@@ -1564,6 +1584,31 @@ router.post(
   }),
 );
 
+// Подтверждение факта отгрузки менеджером — только флаг, статус не меняется.
+// Доступно: manager (владелец заказа) или admin. Статусы: reserved, shipped.
+router.post(
+  '/:id/confirm-shipping',
+  asyncHandler(async (req, res) => {
+    const order = await db.get('SELECT * FROM orders WHERE id = ?', req.params.id);
+    if (!order) throw NotFound('Заказ не найден');
+    const isAdminOrOwner = req.user.role === 'admin' || req.user.id === order.manager_id;
+    if (!isAdminOrOwner) throw Forbidden('Только владелец заказа или администратор могут подтвердить отгрузку');
+    if (!['reserved', 'shipped'].includes(order.status)) {
+      throw BadRequest('Подтвердить отгрузку можно только для зарезервированного или отгруженного заказа');
+    }
+    if (order.manager_shipping_confirmed) {
+      return res.json({ ok: true, already_confirmed: true });
+    }
+    await db.run(
+      `UPDATE orders SET manager_shipping_confirmed = TRUE,
+       manager_shipping_confirmed_at = NOW(), updated_at = NOW() WHERE id = ?`,
+      order.id,
+    );
+    await logAction(req, { action: 'order.manager_shipping_confirmed', entity_type: 'order', entity_id: order.id });
+    res.json({ ok: true, confirmed_at: new Date().toISOString() });
+  }),
+);
+
 router.post(
   '/:id/cancel',
   asyncHandler(async (req, res) => {
@@ -1574,15 +1619,18 @@ router.post(
     // Отменять может: админ, склад (любой статус), менеджер-владелец (новый или зарезервированный).
     const isAdminOrWarehouse = ['admin', 'warehouse'].includes(req.user.role);
     if (!isAdminOrWarehouse && !(await canAccessOrder(req.user, order))) throw Forbidden();
-    if (['completed', 'cancelled'].includes(order.status)) {
-      throw BadRequest('Заказ уже закрыт');
+    if (order.status === 'cancelled') {
+      throw BadRequest('Заказ уже отменён');
+    }
+    if (order.status === 'completed' && req.user.role !== 'admin') {
+      throw BadRequest('Завершённый заказ может отменить только администратор');
     }
     if (!isAdminOrWarehouse && !['new', 'reserved', 'waiting_stock', 'shipped'].includes(order.status)) {
       throw BadRequest('Этот заказ уже нельзя отменить');
     }
-    // Если товар был зарезервирован/отгружён — заказ попадает в «Возвраты» на обработку складом.
+    // Если товар был зарезервирован/отгружён/завершён — заказ попадает в «Возвраты».
     // Для waiting_stock и new возврата нет — товар не списывался.
-    const needsReturn = ['reserved', 'shipped'].includes(order.status);
+    const needsReturn = ['reserved', 'shipped', 'completed'].includes(order.status);
     // Смена статуса + компенсирующая кассовая транзакция — в одной БД-транзакции.
     await db.withTransaction(async (tx) => {
       await tx.run(
@@ -2013,6 +2061,7 @@ router.post(
     // чтобы все строки одного клиента сложились в один заказ.
     const iClient = colIdx(['клиент', 'компания', 'client', 'company']);
     const iPhone = colIdx(['телефон', 'phone', 'тел.']);
+    const iWarehouseCol = colIdx(['склад', 'warehouse', 'склад отгрузки']);
 
     if (iSku === -1 || iQty === -1 || iPrice === -1) {
       throw BadRequest('Не найдены обязательные колонки: Артикул, Кол-во, Цена. Скачайте шаблон.');
@@ -2035,13 +2084,14 @@ router.post(
       const payment = (iPayment !== -1 ? cols[iPayment] : '').trim() || (b2b ? 'rs_no_vat' : 'avito_delivery');
       const client = (iClient !== -1 ? cols[iClient] : '').trim() || null;
       const phone = (iPhone !== -1 ? cols[iPhone] : '').trim() || null;
+      const rowWarehouse = (iWarehouseCol !== -1 ? cols[iWarehouseCol] : '').trim() || null;
 
       if (!sku && !name) continue; // пустая строка
       if (!sku) { errors.push({ row: li + 1, message: `Нет артикула — строка пропущена` }); continue; }
       if (qty <= 0) { errors.push({ row: li + 1, message: `Артикул ${sku}: некорректное количество` }); continue; }
 
       skuSet.add(sku);
-      rawRows.push({ li, sku, name, qty, price, delivery, track, payment, client, phone });
+      rawRows.push({ li, sku, name, qty, price, delivery, track, payment, client, phone, rowWarehouse });
     }
 
     // Подтягиваем product_id и имя из каталога. Если в файле имя не указано —
@@ -2074,6 +2124,7 @@ router.post(
           payment: r.payment,
           client: r.client,
           phone: r.phone,
+          rowWarehouse: r.rowWarehouse,
           items: [],
         });
       }
@@ -2088,6 +2139,7 @@ router.post(
         payment: g.payment,
         client: g.client,
         phone: g.phone,
+        rowWarehouse: g.rowWarehouse,
         items: g.items,
         total: g.items.reduce((s, i) => s + i.qty * i.price, 0),
       });
@@ -2123,7 +2175,7 @@ router.post(
         g.payment || null,
         g.delivery,
         g.track,
-        warehouse || null,
+        g.rowWarehouse || warehouse || null,
         null,
       );
       const orderId = r.lastInsertRowid;

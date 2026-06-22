@@ -87,6 +87,7 @@ export const api = {
   splitOrder: (id, body) => request('POST', `/api/orders/${id}/split`, { body }),
   extractItem: (id, itemId, body) => request('POST', `/api/orders/${id}/items/${itemId}/extract`, { body }),
   unshipOrder: (id) => request('POST', `/api/orders/${id}/unship`),
+  confirmShipping: (id) => request('POST', `/api/orders/${id}/confirm-shipping`),
   refreshProductStocks: (product_ids) => request('POST', '/api/products/refresh-stocks', { body: { product_ids } }),
   downloadLabelsPdf: async (ids) => {
     const token = getToken();
@@ -284,7 +285,7 @@ export const api = {
   // Расписание отгрузок
   warehouseSchedule: () => request('GET', '/api/warehouse/schedule'),
   updateWarehouseSchedule: (body) => request('PUT', '/api/warehouse/schedule', { body }),
-  readyToShip: () => request('GET', '/api/orders/ready-to-ship'),
+  readyToShip: (params) => request('GET', '/api/orders/ready-to-ship', { query: params }),
   shippedArchive: () => request('GET', '/api/orders/shipped-archive'),
 
   // Аналитика для руководства

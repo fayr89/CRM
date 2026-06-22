@@ -453,7 +453,7 @@ export const db = {
 // БАМПАЙ ПРИ КАЖДОМ ДОБАВЛЕНИИ МИГРАЦИИ. Текущие миграции прогоняются
 // только если запись в app_settings.schema_version отличается. Это экономит
 // ~500-2000мс на каждом холодном старте serverless-лямбды.
-const SCHEMA_VERSION = 29;
+const SCHEMA_VERSION = 30;
 
 export async function ensureInitialized() {
   if (globalThis.__crmInitialized) return;
@@ -1118,6 +1118,14 @@ export async function ensureInitialized() {
       // Для роли «склад»: привязка к конкретному складу отгрузки (orders.warehouse).
       // Без этого поля пользователь «склад» видит все заказы всех складов.
       await pool.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS warehouse TEXT');
+
+      // ===== Подтверждение отгрузки менеджером + мультисклад (SCHEMA_VERSION 30) =====
+      // manager_shipping_confirmed: менеджер отмечает факт отгрузки без смены фин.статуса.
+      await pool.query('ALTER TABLE orders ADD COLUMN IF NOT EXISTS manager_shipping_confirmed BOOLEAN DEFAULT FALSE');
+      await pool.query('ALTER TABLE orders ADD COLUMN IF NOT EXISTS manager_shipping_confirmed_at TIMESTAMPTZ');
+      // warehouses: JSON-массив складов для роли «склад» (мультисклад).
+      // Если задан — фильтрует заказы по ANY(warehouses). Иначе — по warehouse (одиночный).
+      await pool.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS warehouses JSONB DEFAULT NULL');
 
       // Маркер успешно прогнанных миграций — следующие холодные старты пропустят DDL.
       await pool.query(
