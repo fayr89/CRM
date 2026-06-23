@@ -26,7 +26,6 @@ router.get('/', asyncHandler(async (_req, res) => {
     ORDER BY f.created_at ASC
   `);
 
-  // Thread-сообщения для каждого обращения
   const feedbackIds = feedback.map(f => f.id);
   let messages = [];
   if (feedbackIds.length) {
@@ -44,7 +43,6 @@ router.get('/', asyncHandler(async (_req, res) => {
   }
   const feedbackWithThreads = feedback.map(f => ({ ...f, thread: msgByFeedback[f.id] || [] }));
 
-  // ai_proposals по статусам
   const proposals = await db.all(`
     SELECT p.*, u.name AS admin_decision_by_name
     FROM ai_proposals p
@@ -54,7 +52,6 @@ router.get('/', asyncHandler(async (_req, res) => {
              p.created_at DESC
   `);
 
-  // Треды для proposals
   const propIds = proposals.map(p => p.id);
   let propMessages = [];
   if (propIds.length) {
@@ -79,13 +76,22 @@ router.get('/', asyncHandler(async (_req, res) => {
   });
 }));
 
-// POST /api/diag/daily-run-v4/ops?secret= — все операции записи
-// op: feedback_message | feedback_status | ai_proposal_create | ai_proposal_update | ai_proposal_message
-router.post('/ops', asyncHandler(async (req, res) => {
-  const { op, ...data } = req.body || {};
+// Все write-операции через GET с base64-кодированным JSON телом (параметр d=)
+// Это нужно потому что Vercel MCP-tool поддерживает только GET.
+// Формат: GET /api/diag/daily-run-v4/w?secret=...&d=<base64(JSON)>
+// JSON: { op, ...params }
+router.get('/w', asyncHandler(async (req, res) => {
+  const raw = req.query.d;
+  if (!raw) return res.status(400).json({ error: 'd param required (base64 JSON)' });
+  let body;
+  try {
+    body = JSON.parse(Buffer.from(raw, 'base64').toString('utf-8'));
+  } catch {
+    return res.status(400).json({ error: 'invalid base64 JSON' });
+  }
+  const { op, ...data } = body;
 
   if (op === 'feedback_message') {
-    // Добавить сообщение в feedback thread. user_name = 'AI ассистент'
     const { feedback_id, text } = data;
     if (!feedback_id || !text) return res.status(400).json({ error: 'feedback_id + text required' });
     const fb = await db.get('SELECT id FROM feedback WHERE id = ?', feedback_id);
@@ -99,7 +105,6 @@ router.post('/ops', asyncHandler(async (req, res) => {
   }
 
   if (op === 'feedback_status') {
-    // Обновить статус обращения
     const { feedback_id, status, admin_reply } = data;
     if (!feedback_id || !status) return res.status(400).json({ error: 'feedback_id + status required' });
     const valid = ['open', 'in_progress', 'awaiting_approval', 'closed'];
@@ -121,14 +126,14 @@ router.post('/ops', asyncHandler(async (req, res) => {
       `INSERT INTO ai_proposals (feedback_id, title, summary, category, risk, source, proposed_changes)
        VALUES (?, ?, ?, ?, ?, ?, ?::jsonb) RETURNING id`,
       feedback_id ?? null, title, summary,
-      category ?? 'feature', risk ?? 'medium', source ?? `daily-run-${new Date().toISOString().slice(0,10)}`,
+      category ?? 'feature', risk ?? 'medium',
+      source ?? `daily-run-${new Date().toISOString().slice(0, 10)}`,
       proposed_changes ? JSON.stringify(proposed_changes) : null,
     );
     return res.json({ ok: true, id: r.lastInsertRowid });
   }
 
   if (op === 'ai_proposal_update') {
-    // Сменить статус предложения (обычно → 'done')
     const { proposal_id, status } = data;
     if (!proposal_id || !status) return res.status(400).json({ error: 'proposal_id + status required' });
     await db.run(
@@ -139,7 +144,6 @@ router.post('/ops', asyncHandler(async (req, res) => {
   }
 
   if (op === 'ai_proposal_message') {
-    // Добавить сообщение в тред предложения
     const { proposal_id, text } = data;
     if (!proposal_id || !text) return res.status(400).json({ error: 'proposal_id + text required' });
     const prop = await db.get('SELECT id FROM ai_proposals WHERE id = ?', proposal_id);
