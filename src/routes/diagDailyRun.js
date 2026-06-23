@@ -1,0 +1,158 @@
+// TEMPORARY — ежедневный AI-обход. Снести сразу после использования.
+// Секрет: разовый, только для этой сессии.
+import { Router } from 'express';
+import { db } from '../db.js';
+import { asyncHandler } from '../errors.js';
+
+const router = Router();
+const SECRET = 'd4a9f2c7b83e';
+
+function checkSecret(req, res, next) {
+  if (req.query.secret !== SECRET) return res.status(403).json({ error: 'forbidden' });
+  next();
+}
+
+router.use(checkSecret);
+
+// GET /api/diag/daily-run-v4?secret= — всё нужное для ежедневного обхода
+router.get('/', asyncHandler(async (_req, res) => {
+  const feedback = await db.all(`
+    SELECT f.id, f.status, f.category, f.subject, f.message, f.admin_reply,
+           f.created_at, f.updated_at,
+           u.name AS user_name, u.email AS user_email, u.role AS user_role
+    FROM feedback f
+    LEFT JOIN users u ON u.id = f.user_id
+    WHERE f.status IN ('open','awaiting_approval')
+    ORDER BY f.created_at ASC
+  `);
+
+  // Thread-сообщения для каждого обращения
+  const feedbackIds = feedback.map(f => f.id);
+  let messages = [];
+  if (feedbackIds.length) {
+    messages = await db.all(`
+      SELECT feedback_id, id, user_id, user_name, role, text, created_at
+      FROM feedback_messages
+      WHERE feedback_id = ANY(ARRAY[${feedbackIds.join(',')}]::int[])
+      ORDER BY created_at ASC, id ASC
+    `);
+  }
+  const msgByFeedback = {};
+  for (const m of messages) {
+    if (!msgByFeedback[m.feedback_id]) msgByFeedback[m.feedback_id] = [];
+    msgByFeedback[m.feedback_id].push(m);
+  }
+  const feedbackWithThreads = feedback.map(f => ({ ...f, thread: msgByFeedback[f.id] || [] }));
+
+  // ai_proposals по статусам
+  const proposals = await db.all(`
+    SELECT p.*, u.name AS admin_decision_by_name
+    FROM ai_proposals p
+    LEFT JOIN users u ON u.id = p.admin_decision_by
+    WHERE p.status IN ('approved','rejected','revision','pending')
+    ORDER BY (CASE p.status WHEN 'approved' THEN 0 WHEN 'revision' THEN 1 WHEN 'pending' THEN 2 ELSE 3 END),
+             p.created_at DESC
+  `);
+
+  // Треды для proposals
+  const propIds = proposals.map(p => p.id);
+  let propMessages = [];
+  if (propIds.length) {
+    propMessages = await db.all(`
+      SELECT proposal_id, id, user_id, user_name, role, text, created_at
+      FROM ai_proposal_messages
+      WHERE proposal_id = ANY(ARRAY[${propIds.join(',')}]::int[])
+      ORDER BY created_at ASC, id ASC
+    `);
+  }
+  const propMsgById = {};
+  for (const m of propMessages) {
+    if (!propMsgById[m.proposal_id]) propMsgById[m.proposal_id] = [];
+    propMsgById[m.proposal_id].push(m);
+  }
+  const proposalsWithThreads = proposals.map(p => ({ ...p, thread: propMsgById[p.id] || [] }));
+
+  res.json({
+    feedback: feedbackWithThreads,
+    proposals: proposalsWithThreads,
+    generated_at: new Date().toISOString(),
+  });
+}));
+
+// POST /api/diag/daily-run-v4/ops?secret= — все операции записи
+// op: feedback_message | feedback_status | ai_proposal_create | ai_proposal_update | ai_proposal_message
+router.post('/ops', asyncHandler(async (req, res) => {
+  const { op, ...data } = req.body || {};
+
+  if (op === 'feedback_message') {
+    // Добавить сообщение в feedback thread. user_name = 'AI ассистент'
+    const { feedback_id, text } = data;
+    if (!feedback_id || !text) return res.status(400).json({ error: 'feedback_id + text required' });
+    const fb = await db.get('SELECT id FROM feedback WHERE id = ?', feedback_id);
+    if (!fb) return res.status(404).json({ error: 'feedback not found' });
+    const r = await db.run(
+      `INSERT INTO feedback_messages (feedback_id, user_id, user_name, role, text)
+       VALUES (?, 0, 'AI ассистент', 'admin', ?) RETURNING id`,
+      feedback_id, text,
+    );
+    return res.json({ ok: true, id: r.lastInsertRowid });
+  }
+
+  if (op === 'feedback_status') {
+    // Обновить статус обращения
+    const { feedback_id, status, admin_reply } = data;
+    if (!feedback_id || !status) return res.status(400).json({ error: 'feedback_id + status required' });
+    const valid = ['open', 'in_progress', 'awaiting_approval', 'closed'];
+    if (!valid.includes(status)) return res.status(400).json({ error: 'invalid status' });
+    await db.run(
+      `UPDATE feedback SET status = ?,
+         admin_reply = COALESCE(?, admin_reply),
+         updated_at = NOW()
+       WHERE id = ?`,
+      status, admin_reply ?? null, feedback_id,
+    );
+    return res.json({ ok: true });
+  }
+
+  if (op === 'ai_proposal_create') {
+    const { title, summary, category, risk, source, feedback_id, proposed_changes } = data;
+    if (!title || !summary) return res.status(400).json({ error: 'title + summary required' });
+    const r = await db.run(
+      `INSERT INTO ai_proposals (feedback_id, title, summary, category, risk, source, proposed_changes)
+       VALUES (?, ?, ?, ?, ?, ?, ?::jsonb) RETURNING id`,
+      feedback_id ?? null, title, summary,
+      category ?? 'feature', risk ?? 'medium', source ?? `daily-run-${new Date().toISOString().slice(0,10)}`,
+      proposed_changes ? JSON.stringify(proposed_changes) : null,
+    );
+    return res.json({ ok: true, id: r.lastInsertRowid });
+  }
+
+  if (op === 'ai_proposal_update') {
+    // Сменить статус предложения (обычно → 'done')
+    const { proposal_id, status } = data;
+    if (!proposal_id || !status) return res.status(400).json({ error: 'proposal_id + status required' });
+    await db.run(
+      `UPDATE ai_proposals SET status = ?, updated_at = NOW() WHERE id = ?`,
+      status, proposal_id,
+    );
+    return res.json({ ok: true });
+  }
+
+  if (op === 'ai_proposal_message') {
+    // Добавить сообщение в тред предложения
+    const { proposal_id, text } = data;
+    if (!proposal_id || !text) return res.status(400).json({ error: 'proposal_id + text required' });
+    const prop = await db.get('SELECT id FROM ai_proposals WHERE id = ?', proposal_id);
+    if (!prop) return res.status(404).json({ error: 'proposal not found' });
+    const r = await db.run(
+      `INSERT INTO ai_proposal_messages (proposal_id, user_id, user_name, role, text)
+       VALUES (?, 0, 'AI ассистент', 'admin', ?) RETURNING id`,
+      proposal_id, text,
+    );
+    return res.json({ ok: true, id: r.lastInsertRowid });
+  }
+
+  return res.status(400).json({ error: `unknown op: ${op}` });
+}));
+
+export default router;
