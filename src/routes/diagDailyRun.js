@@ -14,66 +14,77 @@ function checkSecret(req, res, next) {
 
 router.use(checkSecret);
 
-// GET /api/diag/daily-run-v4?secret= — всё нужное для ежедневного обхода
-router.get('/', asyncHandler(async (_req, res) => {
-  const feedback = await db.all(`
-    SELECT f.id, f.status, f.category, f.subject, f.message, f.admin_reply,
-           f.created_at, f.updated_at,
-           u.name AS user_name, u.email AS user_email, u.role AS user_role
-    FROM feedback f
-    LEFT JOIN users u ON u.id = f.user_id
-    WHERE f.status IN ('open','awaiting_approval')
-    ORDER BY f.created_at ASC
-  `);
+// GET /api/diag/daily-run-v5?secret=&part=feedback|proposals — данные для обхода
+// part=feedback — обращения с тредами; part=proposals — предложения с тредами
+router.get('/', asyncHandler(async (req, res) => {
+  const part = req.query.part || 'feedback';
 
-  const feedbackIds = feedback.map(f => f.id);
-  let messages = [];
-  if (feedbackIds.length) {
-    messages = await db.all(`
-      SELECT feedback_id, id, user_id, user_name, role, text, created_at
-      FROM feedback_messages
-      WHERE feedback_id = ANY(ARRAY[${feedbackIds.join(',')}]::int[])
-      ORDER BY created_at ASC, id ASC
+  if (part === 'feedback') {
+    const feedback = await db.all(`
+      SELECT f.id, f.status, f.category, f.subject, f.message, f.admin_reply,
+             f.created_at, f.updated_at,
+             u.name AS user_name, u.email AS user_email, u.role AS user_role
+      FROM feedback f
+      LEFT JOIN users u ON u.id = f.user_id
+      WHERE f.status IN ('open','awaiting_approval')
+      ORDER BY f.created_at ASC
     `);
+    const feedbackIds = feedback.map(f => f.id);
+    let messages = [];
+    if (feedbackIds.length) {
+      messages = await db.all(`
+        SELECT feedback_id, id, user_id, user_name, role, text, created_at
+        FROM feedback_messages
+        WHERE feedback_id = ANY(ARRAY[${feedbackIds.join(',')}]::int[])
+        ORDER BY created_at ASC, id ASC
+      `);
+    }
+    const msgByFeedback = {};
+    for (const m of messages) {
+      if (!msgByFeedback[m.feedback_id]) msgByFeedback[m.feedback_id] = [];
+      msgByFeedback[m.feedback_id].push(m);
+    }
+    return res.json({
+      part: 'feedback',
+      feedback: feedback.map(f => ({ ...f, thread: msgByFeedback[f.id] || [] })),
+      generated_at: new Date().toISOString(),
+    });
   }
-  const msgByFeedback = {};
-  for (const m of messages) {
-    if (!msgByFeedback[m.feedback_id]) msgByFeedback[m.feedback_id] = [];
-    msgByFeedback[m.feedback_id].push(m);
-  }
-  const feedbackWithThreads = feedback.map(f => ({ ...f, thread: msgByFeedback[f.id] || [] }));
 
-  const proposals = await db.all(`
-    SELECT p.*, u.name AS admin_decision_by_name
-    FROM ai_proposals p
-    LEFT JOIN users u ON u.id = p.admin_decision_by
-    WHERE p.status IN ('approved','rejected','revision','pending')
-    ORDER BY (CASE p.status WHEN 'approved' THEN 0 WHEN 'revision' THEN 1 WHEN 'pending' THEN 2 ELSE 3 END),
-             p.created_at DESC
-  `);
-
-  const propIds = proposals.map(p => p.id);
-  let propMessages = [];
-  if (propIds.length) {
-    propMessages = await db.all(`
-      SELECT proposal_id, id, user_id, user_name, role, text, created_at
-      FROM ai_proposal_messages
-      WHERE proposal_id = ANY(ARRAY[${propIds.join(',')}]::int[])
-      ORDER BY created_at ASC, id ASC
+  if (part === 'proposals') {
+    const proposals = await db.all(`
+      SELECT p.id, p.feedback_id, p.title, p.summary, p.category, p.risk,
+             p.source, p.status, p.admin_notes, p.created_at, p.updated_at,
+             u.name AS admin_decision_by_name
+      FROM ai_proposals p
+      LEFT JOIN users u ON u.id = p.admin_decision_by
+      WHERE p.status IN ('approved','rejected','revision','pending')
+      ORDER BY (CASE p.status WHEN 'approved' THEN 0 WHEN 'revision' THEN 1 WHEN 'pending' THEN 2 ELSE 3 END),
+               p.created_at DESC
     `);
+    const propIds = proposals.map(p => p.id);
+    let propMessages = [];
+    if (propIds.length) {
+      propMessages = await db.all(`
+        SELECT proposal_id, id, user_id, user_name, role, text, created_at
+        FROM ai_proposal_messages
+        WHERE proposal_id = ANY(ARRAY[${propIds.join(',')}]::int[])
+        ORDER BY created_at ASC, id ASC
+      `);
+    }
+    const propMsgById = {};
+    for (const m of propMessages) {
+      if (!propMsgById[m.proposal_id]) propMsgById[m.proposal_id] = [];
+      propMsgById[m.proposal_id].push(m);
+    }
+    return res.json({
+      part: 'proposals',
+      proposals: proposals.map(p => ({ ...p, thread: propMsgById[p.id] || [] })),
+      generated_at: new Date().toISOString(),
+    });
   }
-  const propMsgById = {};
-  for (const m of propMessages) {
-    if (!propMsgById[m.proposal_id]) propMsgById[m.proposal_id] = [];
-    propMsgById[m.proposal_id].push(m);
-  }
-  const proposalsWithThreads = proposals.map(p => ({ ...p, thread: propMsgById[p.id] || [] }));
 
-  res.json({
-    feedback: feedbackWithThreads,
-    proposals: proposalsWithThreads,
-    generated_at: new Date().toISOString(),
-  });
+  return res.status(400).json({ error: 'part must be feedback or proposals' });
 }));
 
 // Все write-операции через GET с base64-кодированным JSON телом (параметр d=)
