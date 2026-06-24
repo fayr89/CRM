@@ -34,9 +34,9 @@ router.get(
       proposalMessages = await db.all(
         `SELECT proposal_id, id, user_id, user_name, role, text, created_at
          FROM ai_proposal_messages
-         WHERE proposal_id = ANY(?::int[])
+         WHERE proposal_id = ANY(?)
          ORDER BY created_at ASC, id ASC`,
-        JSON.stringify(proposalIds),
+        proposalIds,
       );
     }
 
@@ -56,9 +56,9 @@ router.get(
       feedbackMessages = await db.all(
         `SELECT feedback_id, id, user_id, user_name, role, text, created_at
          FROM feedback_messages
-         WHERE feedback_id = ANY(?::int[])
+         WHERE feedback_id = ANY(?)
          ORDER BY created_at ASC, id ASC`,
-        JSON.stringify(feedbackIds),
+        feedbackIds,
       );
     }
 
