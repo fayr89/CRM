@@ -5,7 +5,7 @@ import { db } from '../db.js';
 import { asyncHandler } from '../errors.js';
 
 const router = Router();
-const SECRET = 'v20_k8m2p5w1y6';
+const SECRET = 'v21_x9r3t7q1m5';
 
 function checkSecret(req, res, next) {
   if (req.query.secret !== SECRET) return res.status(403).json({ error: 'forbidden' });
