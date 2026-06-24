@@ -1823,28 +1823,51 @@ async function openOrderForm(order, onSaved, opts = {}) {
   });
   const currencyI = el('input', { type: 'text', value: cur.currency || 'RUB', maxlength: '3', style: { width: '80px' } });
   const notesI = el('textarea', {}, cur.notes || '');
-  // Commission UX: base sale amount × % → commission amount
-  const commissionSaleI = el('input', { type: 'number', min: '0', step: '0.01', value: cur.total_amount != null ? cur.total_amount : '', placeholder: 'Сумма продажи' });
-  const commissionPctI = el('select', {},
-    el('option', { value: '' }, '—'),
-    el('option', { value: '5' }, '5%'),
-    el('option', { value: '7' }, '7%'),
-    el('option', { value: '15' }, '15%'),
-  );
-  const commissionAmountI = el('input', { type: 'number', min: '0', step: '0.01', value: cur.commission != null ? cur.commission : '', placeholder: '0' });
-  // Pre-select % if it matches a known rate
+  // Commission UX: 4 linked fields — Сумма транзакции / % / Р / Сумма с комиссией
+  // Любое поле → остальные пересчитываются. Аналог «+ комиссию» в кассе.
+  const commissionTxnI = el('input', { type: 'number', min: '0', step: '0.01', value: cur.total_amount != null ? cur.total_amount : '', placeholder: 'Сумма транзакции' });
+  const commissionPctI = el('input', { type: 'number', min: '0', max: '100', step: '0.01', value: '', placeholder: '%' });
+  const commissionRubI = el('input', { type: 'number', min: '0', step: '0.01', value: cur.commission != null ? cur.commission : '', placeholder: '0' });
+  const commissionNetI = el('input', { type: 'number', min: '0', step: '0.01', value: '', placeholder: 'Сумма с комиссией' });
+  // Pre-fill % and net if commission is already saved
   if (cur.commission != null && cur.total_amount) {
-    const pct = Math.round(cur.commission / cur.total_amount * 100);
-    if ([5, 7, 15].includes(pct)) commissionPctI.value = String(pct);
+    const txn = Number(cur.total_amount);
+    const rub = Number(cur.commission);
+    if (txn > 0) {
+      commissionPctI.value = (rub / txn * 100).toFixed(2);
+      commissionNetI.value = (txn - rub).toFixed(2);
+    }
   }
-  function recalcCommission() {
-    const base = Number(commissionSaleI.value);
-    const pct = Number(commissionPctI.value);
-    if (base > 0 && pct > 0) commissionAmountI.value = (base * pct / 100).toFixed(2);
+  function recalcCommission(changed) {
+    const txn = Number(commissionTxnI.value) || 0;
+    const pct = Number(commissionPctI.value) || 0;
+    const rub = Number(commissionRubI.value) || 0;
+    const net = Number(commissionNetI.value) || 0;
+    if (changed === 'txn' || changed === 'pct') {
+      if (txn > 0 && pct > 0) {
+        const r = txn * pct / 100;
+        commissionRubI.value = r.toFixed(2);
+        commissionNetI.value = (txn - r).toFixed(2);
+      }
+    } else if (changed === 'rub') {
+      if (txn > 0) {
+        commissionPctI.value = (rub / txn * 100).toFixed(2);
+        commissionNetI.value = (txn - rub).toFixed(2);
+      }
+    } else if (changed === 'net') {
+      if (txn > 0) {
+        const r = txn - net;
+        if (r >= 0) {
+          commissionRubI.value = r.toFixed(2);
+          commissionPctI.value = (r / txn * 100).toFixed(2);
+        }
+      }
+    }
   }
-  commissionSaleI.addEventListener('input', recalcCommission);
-  commissionPctI.addEventListener('change', recalcCommission);
-  commissionAmountI.addEventListener('input', () => { commissionPctI.value = ''; });
+  commissionTxnI.addEventListener('input', () => recalcCommission('txn'));
+  commissionPctI.addEventListener('input', () => recalcCommission('pct'));
+  commissionRubI.addEventListener('input', () => recalcCommission('rub'));
+  commissionNetI.addEventListener('input', () => recalcCommission('net'));
 
   const projectI = el(
     'select',
@@ -2201,13 +2224,23 @@ async function openOrderForm(order, onSaved, opts = {}) {
         el('label', {}, '🔒 Заметка для менеджеров'), managerNoteI) : null,
       el('div', { class: 'form-row', style: { gridColumn: '1 / -1' } },
         el('label', {}, 'Комиссия площадки'),
-        el('div', { style: { display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' } },
-          commissionSaleI,
-          el('span', { style: { color: 'var(--muted)' } }, '×'),
-          commissionPctI,
-          el('span', { style: { color: 'var(--muted)' } }, '='),
-          commissionAmountI,
-          el('span', { style: { color: 'var(--muted)', fontSize: '13px' } }, '₽'),
+        el('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '8px' } },
+          el('div', {},
+            el('div', { style: { fontSize: '11px', color: 'var(--muted)', marginBottom: '2px' } }, 'Сумма транзакции'),
+            commissionTxnI,
+          ),
+          el('div', {},
+            el('div', { style: { fontSize: '11px', color: 'var(--muted)', marginBottom: '2px' } }, 'Комиссия %'),
+            commissionPctI,
+          ),
+          el('div', {},
+            el('div', { style: { fontSize: '11px', color: 'var(--muted)', marginBottom: '2px' } }, 'Комиссия, ₽'),
+            commissionRubI,
+          ),
+          el('div', {},
+            el('div', { style: { fontSize: '11px', color: 'var(--muted)', marginBottom: '2px' } }, 'Сумма с комиссией'),
+            commissionNetI,
+          ),
         ),
       ),
       CACHE.projects.length && meEmail === 'andrreysirko@gmail.com' ? el('div', { class: 'form-row' }, el('label', {}, 'Проект'), projectI) : null,
@@ -2304,7 +2337,7 @@ async function openOrderForm(order, onSaved, opts = {}) {
         delivery_method: deliveryI.value || null,
         avito_dialog_url: isB2B ? null : (avitoDialogI.value.trim() || null),
         warehouse: warehouseI.value || null,
-        commission: commissionAmountI.value !== '' ? Number(commissionAmountI.value) : null,
+        commission: commissionRubI.value !== '' ? Number(commissionRubI.value) : null,
         project_id: projectI.value ? Number(projectI.value) : null,
         ...(statusI ? { status: statusI.value } : {}),
       };
