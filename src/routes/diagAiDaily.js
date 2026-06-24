@@ -28,9 +28,9 @@ router.get('/', checkSecret, asyncHandler(async (_req, res) => {
   if (proposalIds.length) {
     proposalMessages = await db.all(
       `SELECT * FROM ai_proposal_messages
-       WHERE proposal_id = ANY(?::int[])
+       WHERE proposal_id = ANY(?)
        ORDER BY created_at ASC, id ASC`,
-      JSON.stringify(proposalIds),
+      proposalIds,
     );
   }
 
@@ -46,9 +46,9 @@ router.get('/', checkSecret, asyncHandler(async (_req, res) => {
   if (feedbackIds.length) {
     feedbackMessages = await db.all(
       `SELECT * FROM feedback_messages
-       WHERE feedback_id = ANY(?::int[])
+       WHERE feedback_id = ANY(?)
        ORDER BY created_at ASC, id ASC`,
-      JSON.stringify(feedbackIds),
+      feedbackIds,
     );
   }
 
