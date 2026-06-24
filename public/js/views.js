@@ -8876,6 +8876,22 @@ function renderContent(container, schedule, readyList, canEdit, reload) {
           archiveBody.replaceChildren(el('div', { class: 'empty' }, 'Нет отгруженных заказов'));
           return;
         }
+
+        const archiveSelected = new Set();
+
+        const archiveActions = el('div', { style: { display: 'flex', gap: '8px', marginBottom: '12px', flexWrap: 'wrap' } },
+          el('button', { class: 'btn', onClick: async () => {
+            const ids = archiveSelected.size ? [...archiveSelected] : shipped.map((o) => o.id);
+            if (!ids.length) { toast('Нет заказов для печати', 'error'); return; }
+            try { await api.downloadLabelsPdf(ids); toast(`Этикетки сохранены (${ids.length} шт)`, 'success'); }
+            catch (e2) { toast(e2.message || 'Не удалось сгенерировать PDF', 'error'); }
+          } }, '🏷 Этикетки PDF'),
+          el('button', { class: 'btn', onClick: async () => {
+            try { await api.downloadOrdersCsv({ status: 'completed' }); toast('Excel-файл сохранён', 'success'); }
+            catch (e2) { toast(e2.message, 'error'); }
+          } }, '⬇ Выгрузить в Excel'),
+        );
+
         // Group by shipped_at date
         const groups = new Map();
         for (const o of shipped) {
@@ -8884,30 +8900,51 @@ function renderContent(container, schedule, readyList, canEdit, reload) {
           if (!groups.has(key)) groups.set(key, []);
           groups.get(key).push(o);
         }
+
         const wrap = el('div');
+        wrap.append(archiveActions);
         for (const [dateLabel, list] of groups) {
+          const selectAll = el('input', { type: 'checkbox', title: 'Выбрать все в группе' });
           const tbl = el('table', { class: 'data' },
             el('thead', {}, el('tr', {},
+              el('th', { style: { width: '36px' } }, selectAll),
               el('th', {}, '№'), el('th', {}, 'Площадка'), el('th', {}, 'Клиент'),
               el('th', {}, 'Трек-номер'), el('th', {}, 'Менеджер'), el('th', {}, 'Сумма'),
             )),
             el('tbody', {},
-              ...list.map((o) => el('tr', {
-                style: { cursor: 'pointer' },
-                onClick: async (e) => {
-                  if (e.target.closest('button, input, a')) return;
-                  try { const full = await api.get('orders', o.id); await showOrderDetails(full, () => {}); } catch (err) { toast(err.message, 'error'); }
+              ...list.map((o) => {
+                const cb = el('input', { type: 'checkbox', class: 'archive-row-cb' });
+                cb.dataset.id = String(o.id);
+                cb.addEventListener('change', () => {
+                  if (cb.checked) archiveSelected.add(o.id);
+                  else archiveSelected.delete(o.id);
+                });
+                return el('tr', {
+                  style: { cursor: 'pointer' },
+                  onClick: async (e) => {
+                    if (e.target.closest('button, input, a')) return;
+                    try { const full = await api.get('orders', o.id); await showOrderDetails(full, () => {}); } catch (err) { toast(err.message, 'error'); }
+                  },
                 },
-              },
-                el('td', {}, '#' + o.id),
-                el('td', {}, o.marketplace || '—'),
-                el('td', {}, o.client_name || '—'),
-                el('td', {}, o.shipment_qr || '—'),
-                el('td', {}, o.manager_name || '—'),
-                el('td', {}, fmtMoney(o.total_amount, o.currency)),
-              )),
+                  el('td', {}, cb),
+                  el('td', {}, '#' + o.id),
+                  el('td', {}, o.marketplace || '—'),
+                  el('td', {}, o.client_name || '—'),
+                  el('td', {}, o.shipment_qr || '—'),
+                  el('td', {}, o.manager_name || '—'),
+                  el('td', {}, fmtMoney(o.total_amount, o.currency)),
+                );
+              }),
             ),
           );
+          selectAll.addEventListener('change', () => {
+            tbl.querySelectorAll('.archive-row-cb').forEach((cb) => {
+              cb.checked = selectAll.checked;
+              const id = Number(cb.dataset.id);
+              if (selectAll.checked) archiveSelected.add(id);
+              else archiveSelected.delete(id);
+            });
+          });
           wrap.append(
             el('div', { style: { fontWeight: '600', padding: '10px 0 4px', borderTop: '1px solid var(--border)' } }, dateLabel),
             el('div', { class: 'table-wrap' }, tbl),
