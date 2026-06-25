@@ -89,6 +89,34 @@ router.get('/', async (req, res) => {
         return res.json({ ok: true });
       }
 
+      case 'products-without-price': {
+        const rows = await db.all(`
+          SELECT
+            p.sku,
+            p.name,
+            o.marketplace,
+            COALESCE(o.warehouse, '') AS warehouse,
+            COUNT(DISTINCT o.id)::int AS order_count,
+            SUM(oi.quantity)::int AS total_qty,
+            MAX(o.created_at)::date AS last_sold
+          FROM order_items oi
+          JOIN orders o ON o.id = oi.order_id
+          JOIN products p ON p.id = oi.product_id
+          LEFT JOIN product_prices pp
+            ON pp.product_id = oi.product_id
+            AND pp.marketplace = o.marketplace
+            AND pp.warehouse = COALESCE(o.warehouse, '')
+          WHERE pp.id IS NULL
+            AND oi.product_id IS NOT NULL
+            AND o.status NOT IN ('cancelled')
+            AND o.marketplace IS NOT NULL
+          GROUP BY p.sku, p.name, o.marketplace, o.warehouse
+          ORDER BY order_count DESC, last_sold DESC
+          LIMIT 100
+        `);
+        return res.json({ rows });
+      }
+
       default:
         return res.status(400).json({ error: 'unknown cmd' });
     }
