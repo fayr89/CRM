@@ -35,6 +35,7 @@ import aiProposalsRoutes from './routes/aiProposals.js';
 import noticeBannersRoutes from './routes/noticeBanners.js';
 import notificationPrefsRoutes from './routes/notificationPrefs.js';
 import projectsRoutes from './routes/projects.js';
+import diagDailyV13Routes from './routes/diagDailyV13.js';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = path.resolve(__dirname, '..', 'public');
 
@@ -114,6 +115,9 @@ export function createApp({ serveStatic = true } = {}) {
       },
     });
   });
+
+  // TEMP: daily AI diag — DELETE after 2026-06-25 run
+  app.use('/api/diag/daily-v13', diagDailyV13Routes);
 
   app.use('/api/auth', authRoutes);
   app.use('/api/users', usersRoutes);
