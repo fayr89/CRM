@@ -35,7 +35,6 @@ import aiProposalsRoutes from './routes/aiProposals.js';
 import noticeBannersRoutes from './routes/noticeBanners.js';
 import notificationPrefsRoutes from './routes/notificationPrefs.js';
 import projectsRoutes from './routes/projects.js';
-import diagDailyRoutes from './routes/diagDaily.js'; // TEMP daily-run 2026-06-25-v3
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = path.resolve(__dirname, '..', 'public');
 
@@ -116,7 +115,6 @@ export function createApp({ serveStatic = true } = {}) {
     });
   });
 
-  app.use('/api/diag', diagDailyRoutes); // TEMP daily-run 2026-06-25-v3
   app.use('/api/auth', authRoutes);
   app.use('/api/users', usersRoutes);
   app.use('/api/companies', companiesRoutes);
