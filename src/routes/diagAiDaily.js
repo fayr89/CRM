@@ -1,5 +1,5 @@
 // TEMPORARY — удалить после использования. Только для ежедневного AI-обхода.
-// Секрет в query ?s=... даёт обход JWT-аутентификации (GET и мутации).
+// Секрет в query ?s=... даёт обход JWT-аутентификации.
 import { Router } from 'express';
 import { db } from '../db.js';
 import { asyncHandler } from '../errors.js';
@@ -28,26 +28,20 @@ router.get('/', asyncHandler(async (_req, res) => {
                WHEN 'pending' THEN 2 WHEN 'rejected' THEN 3 ELSE 4 END), p.created_at DESC
      LIMIT 200`,
   );
-  // Треды обращений
-  const fbIds = feedback.map(f => f.id);
-  const fbMsgs = fbIds.length
-    ? await db.all(
-        `SELECT feedback_id, id, user_id, user_name, role, text, created_at
-         FROM feedback_messages WHERE feedback_id = ANY(?::int[])
-         ORDER BY created_at ASC, id ASC`,
-        JSON.stringify(fbIds),
-      )
-    : [];
-  // Треды предложений
-  const pIds = proposals.map(p => p.id);
-  const pMsgs = pIds.length
-    ? await db.all(
-        `SELECT proposal_id, id, user_id, user_name, role, text, created_at
-         FROM ai_proposal_messages WHERE proposal_id = ANY(?::int[])
-         ORDER BY created_at ASC, id ASC`,
-        JSON.stringify(pIds),
-      )
-    : [];
+  const fbMsgs = await db.all(
+    `SELECT feedback_id, id, user_id, user_name, role, text, created_at
+     FROM feedback_messages
+     WHERE feedback_id IN (
+       SELECT id FROM feedback WHERE status IN ('open','awaiting_approval')
+     )
+     ORDER BY created_at ASC, id ASC`,
+  );
+  const pMsgs = await db.all(
+    `SELECT proposal_id, id, user_id, user_name, role, text, created_at
+     FROM ai_proposal_messages
+     ORDER BY created_at ASC, id ASC
+     LIMIT 500`,
+  );
 
   res.json({ feedback, fb_messages: fbMsgs, proposals, proposal_messages: pMsgs });
 }));
@@ -111,7 +105,7 @@ router.post('/proposals', asyncHandler(async (req, res) => {
   res.status(201).json(await db.get('SELECT * FROM ai_proposals WHERE id = ?', r.lastInsertRowid));
 }));
 
-// PATCH /api/diag/ai-daily/proposals/:id — сменить статус (decision)
+// PATCH /api/diag/ai-daily/proposals/:id — сменить статус
 router.patch('/proposals/:id', asyncHandler(async (req, res) => {
   const id = Number(req.params.id);
   const { decision, notes } = req.body || {};
