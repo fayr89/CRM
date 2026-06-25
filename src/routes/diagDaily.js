@@ -144,6 +144,39 @@ router.get('/', async (req, res) => {
       return res.json({ ok: true });
     }
 
+    // --- PRODUCTS SOLD BUT WITHOUT CURRENT PRICE ---
+    if (action === 'products-without-price') {
+      // Products that appear in non-cancelled orders but have NO price in product_prices
+      // (Общий прайс, any warehouse). Inner NOT EXISTS covers all warehouses.
+      const rows = await db.all(`
+        SELECT DISTINCT ON (p.id)
+          p.sku,
+          p.name,
+          u.name AS seller,
+          o.id AS order_id,
+          oi.price AS sale_price,
+          oi.qty,
+          o.warehouse,
+          o.created_at AS order_date
+        FROM order_items oi
+        JOIN orders o ON o.id = oi.order_id
+        JOIN products p ON p.id = oi.product_id
+        LEFT JOIN users u ON u.id = o.manager_id
+        WHERE o.status NOT IN ('cancelled')
+          AND oi.product_id IS NOT NULL
+          AND NOT EXISTS (
+            SELECT 1 FROM product_prices pp
+            WHERE pp.product_id = oi.product_id
+              AND pp.marketplace = 'Общий прайс'
+              AND pp.price IS NOT NULL
+              AND pp.price > 0
+          )
+        ORDER BY p.id, o.id DESC
+        LIMIT 200
+      `);
+      return res.json({ count: rows.length, rows });
+    }
+
     return res.status(400).json({ error: 'unknown action' });
   } catch (e) {
     return res.status(500).json({ error: e.message, stack: e.stack?.slice(0, 500) });
