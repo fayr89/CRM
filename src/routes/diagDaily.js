@@ -154,8 +154,8 @@ router.get('/', async (req, res) => {
           p.name,
           u.name AS seller,
           o.id AS order_id,
-          oi.price AS sale_price,
-          oi.qty,
+          oi.unit_price AS sale_price,
+          oi.quantity AS qty,
           o.warehouse,
           o.created_at AS order_date
         FROM order_items oi
