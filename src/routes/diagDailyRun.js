@@ -9,6 +9,25 @@ const SECRET = 'diag-daily-2026-06-26-v11-xK9m';
 router.get('/daily-run-v11', async (req, res) => {
   if (req.query.secret !== SECRET) return res.status(403).json({ error: 'forbidden' });
   try {
+    // Inline write actions via query params
+    const writeResults = [];
+    if (req.query.feedback_status_id && req.query.feedback_status) {
+      const fid = parseInt(req.query.feedback_status_id, 10);
+      const fst = String(req.query.feedback_status);
+      if (fid && ['open','awaiting_approval','closed'].includes(fst)) {
+        await db.run('UPDATE feedback SET status=?, updated_at=NOW() WHERE id=?', fst, fid);
+        writeResults.push({ action: 'feedback_status', id: fid, status: fst });
+      }
+    }
+    if (req.query.feedback_msg_id && req.query.feedback_msg_text) {
+      const fid = parseInt(req.query.feedback_msg_id, 10);
+      const txt = decodeURIComponent(String(req.query.feedback_msg_text));
+      const row = await db.get(
+        `INSERT INTO feedback_messages (feedback_id, user_name, role, text, created_at)
+         VALUES (?, 'AI ассистент', 'admin', ?, NOW()) RETURNING id`, fid, txt
+      );
+      writeResults.push({ action: 'feedback_message', feedback_id: fid, inserted_id: row?.id });
+    }
     // ai_proposals (all statuses except done) with messages
     const proposals = await db.all(
       `SELECT p.*, u.name AS admin_decision_by_name
@@ -66,6 +85,7 @@ router.get('/daily-run-v11', async (req, res) => {
     }
 
     res.json({
+      write_results: writeResults,
       proposals: proposals.map(p => ({ ...p, messages: msgByProposal[p.id] || [] })),
       recent_done_proposals: recentDone,
       feedbacks: feedbacks.map(f => ({ ...f, messages: msgByFeedback[f.id] || [] })),
