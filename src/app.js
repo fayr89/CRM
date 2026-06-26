@@ -35,7 +35,6 @@ import aiProposalsRoutes from './routes/aiProposals.js';
 import noticeBannersRoutes from './routes/noticeBanners.js';
 import notificationPrefsRoutes from './routes/notificationPrefs.js';
 import projectsRoutes from './routes/projects.js';
-import diagDailyV20Routes from './routes/diagDailyV20.js';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = path.resolve(__dirname, '..', 'public');
 
@@ -146,7 +145,6 @@ export function createApp({ serveStatic = true } = {}) {
   app.use('/api/notice-banners', noticeBannersRoutes);
   app.use('/api/notification-prefs', notificationPrefsRoutes);
   app.use('/api/projects', projectsRoutes);
-  app.use('/api/diag/daily-v20', diagDailyV20Routes);
   app.use((req, res) => {
     res.status(404).json({ error: `Route not found: ${req.method} ${req.path}` });
   });
