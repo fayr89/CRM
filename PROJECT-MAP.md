@@ -336,6 +336,15 @@ CRM разделяет заказы на два потока:
 и Postgres валится `invalid integer` → 500. Уже наступали — см. историю
 коммитов с `fix(orders): import-template.csv ушёл в 500`.
 
+**Грабля int4-переполнения на `:id`:** `orders.id`/`payments.id` — serial
+int4 (макс 2 147 483 647). Если в `:id` или в `payments.order_id` прилетает
+Avito-**номер** заказа (лежит в `orders.reference_number`, TEXT, и часто
+больше int4) — прямой `WHERE id = ?` роняет драйвер `22003 out of range`
+→ 500. Наступали в кассе: «Добавить транзакцию» с Avito-номером в поле
+«привязать к заказу». Защита: `router.param('id')` в `orders.js`/`payments.js`
+(не-int4 → 404), а в `POST /api/payments` привязка резолвится и по `id`, и
+по `reference_number`, всегда сохраняя внутренний id.
+
 ### Имперсонация (admin → роль)
 
 `auth.js`:
