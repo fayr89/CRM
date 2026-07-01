@@ -68,7 +68,7 @@
 | `notes.js` | `/api/notes` | заметки |
 | `dashboard.js` | `/api/dashboard` | агрегаты для главной |
 | `invitations.js` | `/api/invitations` | приглашения |
-| `orders.js` | `/api/orders` | **БОЛЬШОЙ** — заказы, импорт CSV, экспорт CSV (одна строка на товар), лист сборки, возвраты, потери, recent-items, `/shipped-archive` (последние 200 отгруженных, для архива на странице Отгрузок) |
+| `orders.js` | `/api/orders` | **БОЛЬШОЙ** — заказы, импорт CSV, экспорт CSV (одна строка на товар, поддерживает `ids=`/`shipped_from`/`shipped_to`), лист сборки, возвраты, потери, recent-items, `/shipped-archive` (по умолчанию последние 200 отгруженных; с `shipped_from`/`shipped_to` — весь диапазон без лимита, для архива на странице Отгрузок) |
 | `payments.js` | `/api/payments` | платежи / подтверждение / отклонение |
 | `cashbox.js` | `/api/cashbox` | касса менеджера |
 | `external.js` | `/api/external/...` | приём заявок снаружи по API-токену (лиды + заказы) |
@@ -162,7 +162,7 @@
 | `renderResource(main, key, opts)` | `#/leads`, `#/contacts`, `#/companies`, `#/deals`, `#/activities`, `#/users` | универсальный CRUD-список ресурса (`RESOURCES[key]` — конфиг) |
 | `renderOrders(main, opts)` | `#/orders` | продажи с площадок. **directMode=false** в коде = «не B2B» |
 | `renderDirectOrders` | `#/direct-orders` | B2B-заказы. Прокси `renderOrders(main, {..., directMode: true})` |
-| `renderShipping` | `#/shipping` | график отгрузок для склада. Для admin/warehouse внизу — lazy-loaded «Архив отгрузок» (`api.shippedArchive()`), сгруппированный по `shipped_at` |
+| `renderShipping` | `#/shipping` | график отгрузок для склада. Для admin/warehouse внизу — lazy-loaded «Архив отгрузок» (`api.shippedArchive({shipped_from, shipped_to})`), сгруппированный по `shipped_at`, с фильтром по диапазону дат отгрузки и выгрузкой (Excel/PDF-этикетки) только выделенных строк (или всех по текущему фильтру, если ничего не выделено) — fb#59 |
 | `renderReturns` | `#/returns` | возвраты, обработка складом |
 | `renderLostGoods` | `#/lost-goods` | потерянные товары + аннулирование |
 | `renderProducts` | `#/products` | каталог + прайсы + импорт МойСклад |
@@ -186,7 +186,11 @@
 **Внутренние helper-функции в `views.js`** (не экспортируются, но важные):
 - `openOrderForm(order, onSaved, opts)` — модал создания/редактирования заказа.
   `opts.b2b=true` или `!order.marketplace` → b2b-режим (см. секцию «Доменные решения»).
-  Комиссия: 3 поля (`commissionSaleI × commissionPctI% = commissionAmountI`), в БД пишется только `commissionAmountI`.
+  Комиссия: 4 связанных поля (`commissionTxnI` Сумма транзакции / `commissionPctI` % /
+  `commissionRubI` ₽ / `commissionNetI` Сумма с комиссией), правка любого пересчитывает
+  остальные (`recalcCommission`). В БД на сохранении пишется только `commission: commissionRubI.value`.
+  `commissionTxnI` — **read-only**, синхронизируется в `renderPricingPanel()` из суммы позиций
+  заказа (`p.actualTotal`) при каждом изменении состава товаров, вручную не редактируется (fb#35).
   Поле «Проект»: видимо только если `meEmail === 'andrreysirko@gmail.com'`.
 - `showOrderDetails(order, reload)` — модал с деталями заказа.
 - `openOrderImportModal(onDone, opts)` — модал импорта CSV. `opts.b2b=true` → b2b-шаблон.
