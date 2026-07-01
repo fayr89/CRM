@@ -286,7 +286,7 @@ export const api = {
   warehouseSchedule: () => request('GET', '/api/warehouse/schedule'),
   updateWarehouseSchedule: (body) => request('PUT', '/api/warehouse/schedule', { body }),
   readyToShip: (params) => request('GET', '/api/orders/ready-to-ship', { query: params }),
-  shippedArchive: () => request('GET', '/api/orders/shipped-archive'),
+  shippedArchive: (params = {}) => request('GET', '/api/orders/shipped-archive', { query: params }),
 
   // Аналитика для руководства
   analyticsRevenue: (days) => request('GET', '/api/analytics/revenue', { query: { days } }),

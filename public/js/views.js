@@ -1825,7 +1825,12 @@ async function openOrderForm(order, onSaved, opts = {}) {
   const notesI = el('textarea', {}, cur.notes || '');
   // Commission UX: 4 linked fields — Сумма транзакции / % / Р / Сумма с комиссией
   // Любое поле → остальные пересчитываются. Аналог «+ комиссию» в кассе.
-  const commissionTxnI = el('input', { type: 'number', min: '0', step: '0.01', value: cur.total_amount != null ? cur.total_amount : '', placeholder: 'Сумма транзакции' });
+  // Сумма транзакции — всегда сумма позиций заказа, автосинхронизируется в renderPricingPanel().
+  const commissionTxnI = el('input', {
+    type: 'number', min: '0', step: '0.01', value: cur.total_amount != null ? cur.total_amount : '',
+    placeholder: 'Сумма транзакции', readonly: true,
+    style: { background: 'var(--bg-muted, #f3f4f6)', cursor: 'not-allowed' },
+  });
   const commissionPctI = el('input', { type: 'number', min: '0', max: '100', step: '0.01', value: '', placeholder: '%' });
   const commissionRubI = el('input', { type: 'number', min: '0', step: '0.01', value: cur.commission != null ? cur.commission : '', placeholder: '0' });
   const commissionNetI = el('input', { type: 'number', min: '0', step: '0.01', value: '', placeholder: 'Сумма с комиссией' });
@@ -1864,7 +1869,6 @@ async function openOrderForm(order, onSaved, opts = {}) {
       }
     }
   }
-  commissionTxnI.addEventListener('input', () => recalcCommission('txn'));
   commissionPctI.addEventListener('input', () => recalcCommission('pct'));
   commissionRubI.addEventListener('input', () => recalcCommission('rub'));
   commissionNetI.addEventListener('input', () => recalcCommission('net'));
@@ -2014,6 +2018,9 @@ async function openOrderForm(order, onSaved, opts = {}) {
     // items может быть ещё не инициализирован при первом вызове из itemsEditor — безопасно берём [].
     const safeList = list || (items && items.getItems ? items.getItems() : []);
     const p = computePricing(safeList);
+    // Сумма транзакции всегда = сумма позиций заказа (read-only), пересчитываем при каждом изменении состава.
+    commissionTxnI.value = p.actualTotal || '';
+    recalcCommission('txn');
     clear(pricingPanel);
     if (!p.hasRule && !orderTiers.length && !paymentMethods.length) return;
     pricingPanel.append(
@@ -8898,21 +8905,36 @@ function renderContent(container, schedule, readyList, canEdit, reload) {
     const archiveSummary = el('summary', { style: { cursor: 'pointer', fontWeight: '600', fontSize: '16px', padding: '8px 0' } }, 'Архив отгрузок');
     const archiveBody = el('div');
     let archiveLoaded = false;
+    // Диапазон дат отгрузки — по умолчанию не выбран (весь архив, последние 200).
+    const archiveFromI = el('input', { type: 'date' });
+    const archiveToI = el('input', { type: 'date' });
+    let loadArchive = async () => {};
+    archiveFromI.addEventListener('change', () => loadArchive());
+    archiveToI.addEventListener('change', () => loadArchive());
     archiveDetails.addEventListener('toggle', async () => {
       if (!archiveDetails.open || archiveLoaded) return;
       archiveLoaded = true;
+      await loadArchive();
+    });
+    loadArchive = async () => {
       archiveBody.replaceChildren(el('div', { class: 'loading' }, 'Загрузка…'));
       try {
-        const r = await api.shippedArchive();
+        const dateParams = { shipped_from: archiveFromI.value, shipped_to: archiveToI.value };
+        const r = await api.shippedArchive(dateParams);
         const shipped = r.data || [];
         if (!shipped.length) {
-          archiveBody.replaceChildren(el('div', { class: 'empty' }, 'Нет отгруженных заказов'));
+          archiveBody.replaceChildren(
+            el('div', { style: { display: 'flex', gap: '8px', marginBottom: '12px', alignItems: 'center', flexWrap: 'wrap' } },
+              el('label', {}, 'с ', archiveFromI), el('label', {}, 'по ', archiveToI)),
+            el('div', { class: 'empty' }, 'Нет отгруженных заказов'),
+          );
           return;
         }
 
         const archiveSelected = new Set();
 
-        const archiveActions = el('div', { style: { display: 'flex', gap: '8px', marginBottom: '12px', flexWrap: 'wrap' } },
+        const archiveActions = el('div', { style: { display: 'flex', gap: '8px', marginBottom: '12px', alignItems: 'center', flexWrap: 'wrap' } },
+          el('label', {}, 'с ', archiveFromI), el('label', {}, 'по ', archiveToI),
           el('button', { class: 'btn', onClick: async () => {
             const ids = archiveSelected.size ? [...archiveSelected] : shipped.map((o) => o.id);
             if (!ids.length) { toast('Нет заказов для печати', 'error'); return; }
@@ -8920,7 +8942,11 @@ function renderContent(container, schedule, readyList, canEdit, reload) {
             catch (e2) { toast(e2.message || 'Не удалось сгенерировать PDF', 'error'); }
           } }, '🏷 Этикетки PDF'),
           el('button', { class: 'btn', onClick: async () => {
-            try { await api.downloadOrdersCsv({ status: 'completed' }); toast('Excel-файл сохранён', 'success'); }
+            // Выделены строки — выгружаем только их. Иначе — весь текущий (по фильтру дат) архив.
+            const params = archiveSelected.size
+              ? { ids: [...archiveSelected].join(',') }
+              : { status: 'completed', shipped_from: archiveFromI.value, shipped_to: archiveToI.value };
+            try { await api.downloadOrdersCsv(params); toast('Excel-файл сохранён', 'success'); }
             catch (e2) { toast(e2.message, 'error'); }
           } }, '⬇ Выгрузить в Excel'),
         );
@@ -8987,7 +9013,7 @@ function renderContent(container, schedule, readyList, canEdit, reload) {
       } catch (e) {
         archiveBody.replaceChildren(el('div', { class: 'empty' }, `Ошибка: ${e.message}`));
       }
-    });
+    };
     archiveDetails.append(archiveSummary, archiveBody);
     container.append(archiveDetails);
   }

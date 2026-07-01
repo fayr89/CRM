@@ -352,7 +352,15 @@ router.get(
   asyncHandler(async (req, res) => {
     const where = [];
     const params = [];
-    if (req.query.status) {
+    // Выгрузка конкретных выделенных заказов (например, из архива отгрузок) — ids
+    // перекрывает status/marketplace/manager_id, но не видимость (scope ниже).
+    const idsRaw = String(req.query.ids || '').trim();
+    if (idsRaw) {
+      const ids = idsRaw.split(',').map((s) => Number(s.trim())).filter((n) => Number.isFinite(n) && n > 0);
+      if (!ids.length) throw BadRequest('Некорректный параметр ids');
+      where.push('o.id = ANY(?)');
+      params.push(ids);
+    } else if (req.query.status) {
       where.push('o.status = ?');
       params.push(req.query.status);
     }
@@ -371,6 +379,14 @@ router.get(
     if (req.query.date_to) {
       where.push("o.created_at < (?::date + INTERVAL '1 day')");
       params.push(String(req.query.date_to));
+    }
+    if (req.query.shipped_from) {
+      where.push("o.shipped_at >= ?::date");
+      params.push(String(req.query.shipped_from));
+    }
+    if (req.query.shipped_to) {
+      where.push("o.shipped_at < (?::date + INTERVAL '1 day')");
+      params.push(String(req.query.shipped_to));
     }
     if (req.query.direct === '1') {
       where.push('o.marketplace IS NULL');
@@ -729,6 +745,18 @@ router.get(
     if (!['warehouse', 'admin'].includes(req.user.role)) {
       return res.json({ data: [] });
     }
+    // Фильтр по диапазону дат отгрузки (shipped_at). Без дат — последние 200, как раньше.
+    const where = [`o.status = 'shipped'`];
+    const params = [];
+    if (req.query.shipped_from) {
+      where.push('o.shipped_at >= ?::date');
+      params.push(String(req.query.shipped_from));
+    }
+    if (req.query.shipped_to) {
+      where.push("o.shipped_at < (?::date + INTERVAL '1 day')");
+      params.push(String(req.query.shipped_to));
+    }
+    const hasDateFilter = Boolean(req.query.shipped_from || req.query.shipped_to);
     const orders = await db.all(
       `SELECT o.id, o.marketplace, o.client_name,
               o.total_amount, o.currency, o.reserved_at, o.shipped_at,
@@ -736,9 +764,10 @@ router.get(
               u.name AS manager_name
        FROM orders o
        LEFT JOIN users u ON u.id = o.manager_id
-       WHERE o.status = 'shipped'
+       WHERE ${where.join(' AND ')}
        ORDER BY o.shipped_at DESC NULLS LAST
-       LIMIT 200`,
+       ${hasDateFilter ? '' : 'LIMIT 200'}`,
+      ...params,
     );
     res.json({ data: orders });
   }),
