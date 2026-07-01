@@ -4189,7 +4189,7 @@ export async function renderCashbox(main) {
       ),
     );
     const referenceI = el('input', { type: 'text', placeholder: 'Номер транзакции' });
-    const orderI = el('input', { type: 'number', min: '1', step: '1', placeholder: 'ID заказа (необязательно)' });
+    const orderI = el('input', { type: 'number', min: '1', step: '1', placeholder: '№ заказа или внутренний id (необязательно)' });
     const notesI = el('textarea', {});
     const orderDevHint = el('div', { class: 'hint' });
     const hintBlock = el('div', { class: 'hint', style: { marginBottom: '8px' } });
@@ -4229,7 +4229,7 @@ export async function renderCashbox(main) {
       hintBlock,
       el('div', { class: 'form-row' }, el('label', {}, 'Метод'), methodI),
       el('div', { class: 'form-row' }, el('label', {}, 'Номер транзакции'), referenceI),
-      el('div', { class: 'form-row' }, el('label', {}, 'Привязать к заказу (id)'), orderI, orderDevHint),
+      el('div', { class: 'form-row' }, el('label', {}, 'Привязать к заказу (№ или id)'), orderI, orderDevHint),
       el('div', { class: 'form-row' }, el('label', {}, 'Заметки'), notesI),
     );
     updateHint();

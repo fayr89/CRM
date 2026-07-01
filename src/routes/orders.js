@@ -17,6 +17,19 @@ import { logAction } from '../services/audit.js';
 
 const router = Router();
 
+// Защита от переполнения int4: orders.id — serial (макс 2 147 483 647).
+// Если в :id прилетает число больше (например, Avito-номер заказа, ошибочно
+// подставленный в ссылку/поле), драйвер Postgres падает 22003 «out of range»
+// → 500 на любом /:id-роуте. Отдаём аккуратный 404. Литеральные пути
+// (/export.csv, /import-template.csv, /clients/... и т.п.) сюда не попадают —
+// param-callback срабатывает только на реальном совпадении с :id.
+router.param('id', (req, res, next, value) => {
+  if (!/^\d+$/.test(String(value)) || Number(value) > 2147483647) {
+    return res.status(404).json({ error: 'Заказ не найден' });
+  }
+  next();
+});
+
 const SORT_COLUMNS = ['id', 'created_at', 'status', 'total_amount', 'marketplace'];
 const STATUSES = ['waiting_stock', 'new', 'reserved', 'shipped', 'completed', 'cancelled'];
 

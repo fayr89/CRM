@@ -40,6 +40,15 @@ const updateSchema = z.object({
 
 router.use(authenticate);
 
+// payments.id — int4; см. пояснение в orders.js. Большой/нечисловой :id → 404,
+// а не 500 от переполнения int4.
+router.param('id', (req, res, next, value) => {
+  if (!/^\d+$/.test(String(value)) || Number(value) > 2147483647) {
+    return res.status(404).json({ error: 'Платёж не найден' });
+  }
+  next();
+});
+
 // Видимость:
 //   admin — все
 //   manager — свои + подчинённых
@@ -131,9 +140,22 @@ router.post(
       throw Forbidden('Платежи добавляют менеджеры и продажники');
     }
     const data = createSchema.parse(req.body);
-    if (data.order_id) {
-      const order = await db.get('SELECT * FROM orders WHERE id = ?', data.order_id);
+    if (data.order_id != null) {
+      // В поле «привязать к заказу» пользователь мог вписать либо внутренний #id
+      // (orders.id — serial int4), либо Avito-номер заказа (reference_number, TEXT).
+      // Avito-номера часто > 2 147 483 647 → прямой lookup по int4-колонке ронял
+      // Postgres (22003 out of range) → 500. Резолвим оба варианта и ВСЕГДА
+      // сохраняем внутренний id (FK payments.order_id → orders.id).
+      const raw = String(data.order_id);
+      let order = null;
+      if (Number.isInteger(data.order_id) && data.order_id <= 2147483647) {
+        order = await db.get('SELECT * FROM orders WHERE id = ?', data.order_id);
+      }
+      if (!order) {
+        order = await db.get('SELECT * FROM orders WHERE reference_number = ?', raw);
+      }
       if (!order) throw BadRequest('Указанный заказ не найден');
+      data.order_id = order.id;
     }
 
     // Расход с комиссией → две транзакции (вывод + комиссия) в одной БД-транзакции.
