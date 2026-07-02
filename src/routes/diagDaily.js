@@ -137,6 +137,20 @@ router.get('/', async (req, res) => {
       return res.json({ ok: true, data: r });
     }
 
+    if (op === 'post-proposal-message') {
+      const proposal_id = Number(p('proposal_id'));
+      const text = p('text');
+      const user_name = p('user_name') || 'AI ассистент';
+      const role = p('role') || 'admin';
+      if (!proposal_id || !text) return res.json({ ok: false, error: 'proposal_id and text required' });
+      const r = await db.run(
+        `INSERT INTO ai_proposal_messages (proposal_id, user_id, user_name, role, text, created_at)
+         VALUES ($1, NULL, $2, $3, $4, NOW()) RETURNING id`,
+        proposal_id, user_name, role, text,
+      );
+      return res.json({ ok: true, data: r });
+    }
+
     if (op === 'patch-feedback') {
       const id = Number(p('id'));
       const status = p('status');
