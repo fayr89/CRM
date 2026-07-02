@@ -126,12 +126,23 @@ POST в тред: `POST /api/ai-proposals/:id/messages { text, user_name: 'AI а
 - Никаких destructive операций без подтверждения через ai_proposal.
 - Все DDL — идемпотентные, через `ensureInitialized()` и SCHEMA_VERSION-бамп.
 - Деплой только через прод-ветку `claude/build-crm-system-JzCP9`.
-  Dev-ветка задаётся в session-specific задании (меняется каждую сессию).
+  Dev-ветка задаётся в session-specific задании (меняется каждую сессию) и
+  **обычно оказывается orphan-веткой без общего предка с прод-веткой**
+  (`fatal: refusing to merge unrelated histories`) — это норма для этой среды,
+  не баг, не пытаться чинить рёбейзом/force-push. `git merge --ff-only` в
+  таком случае гарантированно упадёт — **не трать на него больше одной
+  попытки**, сразу переходи к cherry-pick.
   Порядок: `git checkout claude/build-crm-system-JzCP9` →
   **`git fetch origin claude/build-crm-system-JzCP9`** (обязательно! прод может
   быть force-pushed другой сессией) → `git reset --hard origin/claude/build-crm-system-JzCP9`
-  (если локальная отстала) → `git merge --ff-only <dev-ветка>` → push обеих.
-  Если ff-merge не выходит — попробуй `git cherry-pick <commit>` в прод-ветку.
+  (если локальная отстала) → попробовать `git merge --ff-only <dev-ветка>`,
+  при unrelated-histories сразу `git cherry-pick <commit(ы) с реальными
+  изменениями>` по одному прямо в прод-ветку → push.
+  (См. ai_proposal #54 от 2026-06-19 — тот же диагноз, помечено done, но
+  проблема продолжала возвращаться минимум до 2026-07-02, т.к. эта заметка
+  была недостаточно явной. Если увидишь очередной цикл failed-ff-merge
+  через несколько дней после этой правки — предложение не прижилось, эскалируй
+  пользователю вместо очередной попытки почитать этот файл ещё раз.)
 
 ## Аварийные ситуации — СТОП, не выкручиваться
 
