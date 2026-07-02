@@ -35,7 +35,6 @@ import aiProposalsRoutes from './routes/aiProposals.js';
 import noticeBannersRoutes from './routes/noticeBanners.js';
 import notificationPrefsRoutes from './routes/notificationPrefs.js';
 import projectsRoutes from './routes/projects.js';
-import diagDailyRoutes from './routes/diagDaily.js';
 import materialsRoutes from './routes/materials.js';
 import processingPlansRoutes from './routes/processingPlans.js';
 import productionOrdersRoutes from './routes/productionOrders.js';
@@ -160,7 +159,6 @@ export function createApp({ serveStatic = true } = {}) {
   app.use('/api/production', productionPLRoutes);
   app.use('/api/production/receipt', productionReceiptRoutes);
   app.use('/api/production-settings', productionSettingsRoutes);
-  app.use('/api/diag/daily-v65', diagDailyRoutes);
   app.use((req, res) => {
     res.status(404).json({ error: `Route not found: ${req.method} ${req.path}` });
   });
