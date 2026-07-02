@@ -69,11 +69,37 @@ router.get('/', async (req, res) => {
       return res.json({ ok: true, data: feedbacks });
     }
 
+    if (op === 'get-feedback-summary') {
+      const statuses = (p('status') || 'open,awaiting_approval').split(',');
+      const ph = statuses.map((_, i) => `$${i + 1}`).join(', ');
+      const feedbacks = await db.all(
+        `SELECT f.id, f.category, f.subject, f.status, f.created_at, f.updated_at,
+                u.name AS user_name, u.role AS user_role
+         FROM feedback f
+         LEFT JOIN users u ON u.id = f.user_id
+         WHERE f.status IN (${ph})
+         ORDER BY f.created_at DESC`,
+        ...statuses,
+      );
+      for (const fb of feedbacks) {
+        const msgs = await db.all(
+          `SELECT role, user_name, created_at FROM feedback_messages WHERE feedback_id = $1 ORDER BY created_at ASC, id ASC`,
+          fb.id,
+        );
+        fb.message_count = msgs.length;
+        fb.last_message = msgs.length ? msgs[msgs.length - 1] : null;
+      }
+      return res.json({ ok: true, data: feedbacks });
+    }
+
     if (op === 'get-feedback-one') {
       const id = Number(p('id'));
       if (!id) return res.json({ ok: false, error: 'id required' });
       const fb = await db.get(
-        `SELECT f.*, u.name AS user_name, u.email AS user_email, u.role AS user_role
+        `SELECT f.id, f.user_id, f.category, f.subject, f.message, f.context, f.status,
+                f.resolved_by, f.resolved_at, f.admin_reply, f.created_at, f.updated_at,
+                (f.attachments IS NOT NULL) AS has_attachments,
+                u.name AS user_name, u.email AS user_email, u.role AS user_role
          FROM feedback f LEFT JOIN users u ON u.id = f.user_id WHERE f.id = $1`,
         id,
       );
