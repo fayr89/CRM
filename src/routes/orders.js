@@ -7,7 +7,7 @@ import { BadRequest, Forbidden, NotFound, asyncHandler } from '../errors.js';
 import { parsePagination, parseSort, paginated } from '../query.js';
 import { notify, notifyWarehouse, buildOrderNotificationBody } from '../services/notifications.js';
 import { emitEvent } from '../services/webhooks.js';
-import { toCsv, csvDate } from '../services/csv.js';
+import { toCsv } from '../services/csv.js';
 import ExcelJS from 'exceljs';
 import { nextShippingDate, getSchedule } from '../services/shippingSchedule.js';
 import { enqueueMsJob } from '../services/ms-jobs.js';
@@ -449,6 +449,14 @@ router.get(
       const s = String(v ?? '').trim();
       return s ? `="${s.replace(/"/g, '""')}"` : '';
     };
+    const ORDER_STATUS_LABELS = {
+      waiting_stock: 'Ожидает товара',
+      new: 'Новый',
+      reserved: 'Зарезервирован',
+      shipped: 'Отгружен',
+      completed: 'Завершён',
+      cancelled: 'Отменён',
+    };
 
     // Формат xlsx с объединёнными ячейками (по запросу пользователя FB#43).
     const wb = new ExcelJS.Workbook();
@@ -464,6 +472,7 @@ router.get(
       { header: 'Трек номер', key: 'track', width: 22 },
       { header: 'Менеджер', key: 'manager', width: 18 },
       { header: 'Комментарий', key: 'comment', width: 32 },
+      { header: 'Статус', key: 'order_status', width: 16 },
     ];
     ws.columns = COLS;
 
@@ -480,8 +489,8 @@ router.get(
     });
     ws.views = [{ state: 'frozen', ySplit: 1 }];
 
-    // Индексы для merge: col 1=Дата, 6=Способ, 7=Трек, 8=Менеджер, 9=Комментарий
-    const MERGE_COLS = [1, 6, 7, 8, 9];
+    // Индексы для merge: col 1=Дата, 6=Способ, 7=Трек, 8=Менеджер, 9=Комментарий, 10=Статус
+    const MERGE_COLS = [1, 6, 7, 8, 9, 10];
 
     let rowIdx = 2;
     for (const o of orders) {
@@ -492,7 +501,7 @@ router.get(
         const it = list[i];
         const isFirst = i === 0;
         const r = ws.addRow({
-          date: isFirst ? csvDate(o.created_at) : null,
+          date: isFirst && o.created_at ? new Date(o.created_at) : null,
           sku: it.sku != null ? String(it.sku) : null,
           name: it.name || null,
           qty: it.quantity != null ? Number(it.quantity) : null,
@@ -501,12 +510,16 @@ router.get(
           track: isFirst ? (o.shipment_qr || null) : null,
           manager: isFirst ? (o.manager_name || null) : null,
           comment: isFirst ? (o.notes || null) : null,
+          order_status: isFirst ? (ORDER_STATUS_LABELS[o.status] || o.status || null) : null,
         });
         r.font = { name: 'Arial', size: 10 };
         r.alignment = { wrapText: true };
         // Артикул и Трек — текстовый формат (сохраняет ведущие нули)
         r.getCell('sku').numFmt = '@';
         r.getCell('track').numFmt = '@';
+        // Дата — настоящее Excel-значение (не текст с запятой), можно менять формат в Excel
+        // (например, на «только дата») через правый клик — Формат ячеек, без перепарсинга.
+        r.getCell('date').numFmt = 'dd.mm.yyyy hh:mm';
         r.eachCell({ includeEmpty: true }, (cell) => {
           cell.border = {
             top: { style: 'thin' }, left: { style: 'thin' },

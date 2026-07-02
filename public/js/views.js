@@ -3492,6 +3492,7 @@ export async function renderOrders(main, opts = {}) {
             await api.downloadOrdersCsv({
               status: state.status,
               marketplace: state.marketplace,
+              manager_id: state.manager_id,
               date_from: state.date_from,
               date_to: state.date_to,
               direct: directMode ? '1' : undefined,
