@@ -1,9 +1,9 @@
-// TEMP diag endpoint for AI daily run 2026-07-03-v82. Remove after use.
+// TEMP diag endpoint for AI daily run 2026-07-03-v83. Remove after use.
 import { Router } from 'express';
 import { db } from '../db.js';
 
 const router = Router();
-const SECRET = 'daily-v82-rTTF9bwqcRi2KCixGsmb7A';
+const SECRET = 'daily-v83-BMbIVhgsFdT9GTl3gosomfbh';
 
 router.use(async (req, res, next) => {
   const secret = req.query.secret || req.body?.secret;
