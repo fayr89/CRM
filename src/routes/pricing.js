@@ -5,10 +5,82 @@ import { z } from 'zod';
 import { authenticate, requireRole } from '../auth.js';
 import { db } from '../db.js';
 import { asyncHandler } from '../errors.js';
+import {
+  currentPriceRevision, getUserPriceAck, isUserPriceCurrent,
+  acknowledgeUserPrice, priceAckRequiredForRole, ensurePriceAckTable,
+  ACK_REQUIRED_ROLES,
+} from '../services/priceRevision.js';
 
 const router = Router();
 
 router.use(authenticate);
+
+// ===== Ревизия прайса и подтверждения (ознакомление менеджеров) =====
+
+// Состояние для текущего пользователя: когда прайс менялся, подтвердил ли он,
+// требуется ли ему подтверждение и заблокирован ли он.
+router.get(
+  '/revision',
+  asyncHandler(async (req, res) => {
+    const [revision, ack, current] = await Promise.all([
+      currentPriceRevision(),
+      getUserPriceAck(req.user.id),
+      isUserPriceCurrent(req.user.id),
+    ]);
+    res.json({
+      revision_at: revision ? revision.toISOString() : null,
+      my_ack_at: ack?.acknowledged_at ?? null,
+      my_ack_revision_at: ack?.acknowledged_revision_at ?? null,
+      is_current: current,
+      requires_ack: priceAckRequiredForRole(req.user.role),
+      // blocked = роль продающая И не ознакомлен с актуальной ревизией
+      blocked: priceAckRequiredForRole(req.user.role) && !current,
+    });
+  }),
+);
+
+// Подтвердить ознакомление с текущим прайсом.
+router.post(
+  '/acknowledge',
+  asyncHandler(async (req, res) => {
+    const revision = await acknowledgeUserPrice(req.user.id);
+    res.json({ ok: true, acknowledged_revision_at: revision ? revision.toISOString() : null });
+  }),
+);
+
+// Для админа/РОПа: кто из продающих ознакомился с актуальным прайсом, кто нет.
+router.get(
+  '/ack-status',
+  requireRole('admin', 'rop', 'aus'),
+  asyncHandler(async (_req, res) => {
+    await ensurePriceAckTable();
+    const revision = await currentPriceRevision();
+    const revMs = revision ? revision.getTime() : null;
+    const rows = await db.all(
+      `SELECT u.id, u.name, u.email, u.role,
+              a.acknowledged_at, a.acknowledged_revision_at
+       FROM users u
+       LEFT JOIN price_acknowledgements a ON a.user_id = u.id
+       WHERE u.role = ANY(?) AND u.active IS NOT FALSE
+       ORDER BY u.name`,
+      ACK_REQUIRED_ROLES,
+    );
+    const managers = rows.map((r) => {
+      const ackMs = r.acknowledged_revision_at ? new Date(r.acknowledged_revision_at).getTime() : null;
+      const is_current = revMs == null ? true : (ackMs != null && ackMs >= revMs);
+      return {
+        id: r.id, name: r.name, email: r.email, role: r.role,
+        acknowledged_at: r.acknowledged_at, is_current,
+      };
+    });
+    res.json({
+      revision_at: revision ? revision.toISOString() : null,
+      total: managers.length,
+      confirmed: managers.filter((m) => m.is_current).length,
+      managers,
+    });
+  }),
+);
 
 const DEFAULT_PAYMENT_METHODS = [
   { key: 'cash_card', label: 'Наличные / Перевод на карту', percent: 0 },

@@ -360,6 +360,11 @@ export const api = {
   pricingSettings: () => request('GET', '/api/pricing/settings'),
   savePricingSettings: (body) => request('PUT', '/api/pricing/settings', { body }),
 
+  // Ревизия прайса + ознакомление менеджеров
+  priceRevision: () => request('GET', '/api/pricing/revision'),
+  acknowledgePrice: () => request('POST', '/api/pricing/acknowledge'),
+  priceAckStatus: () => request('GET', '/api/pricing/ack-status'),
+
   downloadPriceTemplate: async (marketplace, warehouse) => {
     const token = getToken();
     const params = new URLSearchParams();

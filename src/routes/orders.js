@@ -14,6 +14,7 @@ import { enqueueMsJob } from '../services/ms-jobs.js';
 import { applyLocalStockReserveDelta } from '../services/ms-orders.js';
 import { notifyAdmins } from '../services/notifications.js';
 import { logAction } from '../services/audit.js';
+import { assertPriceAcknowledged } from '../services/priceRevision.js';
 
 const router = Router();
 
@@ -1174,6 +1175,9 @@ router.post(
     if (!['manager', 'admin', 'sales'].includes(req.user.role)) {
       throw Forbidden('Создавать заказы могут менеджеры и продажники');
     }
+    // Жёсткий блок: продающий должен ознакомиться с актуальным прайсом.
+    // Fail-open — при ошибке проверки продажи не останавливаем.
+    await assertPriceAcknowledged(req.user, Forbidden);
     const data = createSchema.parse(req.body);
     // Реестр треков: один и тот же shipment_qr не должен быть на двух активных заказах.
     if (data.shipment_qr) {
@@ -1406,6 +1410,8 @@ router.post(
       throw Forbidden('Нет прав на этот заказ');
     }
     if (order.status !== 'new') throw BadRequest('Зарезервировать можно только новый заказ');
+    // Жёсткий блок по прайсу — только для продающих (sales/manager). Fail-open.
+    await assertPriceAcknowledged(req.user, Forbidden);
     // Номер отправления обязателен для маркетплейс-заказов. B2B-заказы (marketplace=NULL)
     // отгружаются напрямую клиенту, у них нет внешнего трека маркетплейса.
     if (order.marketplace && (!order.shipment_qr || !String(order.shipment_qr).trim())) {
