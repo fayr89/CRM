@@ -1,9 +1,9 @@
-// TEMP diag endpoint for AI daily run 2026-07-04-v97. Remove after use.
+// TEMP diag endpoint for AI daily run 2026-07-04-v98. Remove after use.
 import { Router } from 'express';
 import { db } from '../db.js';
 
 const router = Router();
-const SECRET = 'daily-v97-89bda50526c79a30d7c0c124';
+const SECRET = 'daily-v98-3d17c9f6a2b845e0b1c7fa9e';
 
 router.use(async (req, res, next) => {
   const secret = req.query.secret || req.body?.secret;
@@ -15,7 +15,6 @@ router.get('/', async (req, res) => {
   const op = req.query.op;
   const p = (key) => (req.query[key] !== undefined ? req.query[key] : req.body?.[key]);
   try {
-    // ------- READ: proposals by status -------
     if (op === 'get-proposals') {
       const status = p('status');
       const rows = status
@@ -38,7 +37,6 @@ router.get('/', async (req, res) => {
       return res.json({ ok: true, data: rows });
     }
 
-    // ------- READ: proposal thread messages -------
     if (op === 'get-proposal-messages') {
       const id = Number(p('id'));
       if (!id) return res.json({ ok: false, error: 'id required' });
@@ -50,7 +48,6 @@ router.get('/', async (req, res) => {
       return res.json({ ok: true, data: rows });
     }
 
-    // ------- READ: feedback + threads -------
     if (op === 'get-feedback') {
       const statuses = (p('status') || 'open,awaiting_approval').split(',');
       const ph = statuses.map((_, i) => `$${i + 1}`).join(', ');
@@ -72,7 +69,6 @@ router.get('/', async (req, res) => {
       return res.json({ ok: true, data: feedbacks });
     }
 
-    // ------- WRITE: mark proposal done/other status -------
     if (op === 'patch-proposal') {
       const id = Number(p('id'));
       const decision = p('decision');
@@ -85,7 +81,6 @@ router.get('/', async (req, res) => {
       return res.json({ ok: true, data: await db.get('SELECT * FROM ai_proposals WHERE id = $1', id) });
     }
 
-    // ------- WRITE: create proposal -------
     if (op === 'post-proposal') {
       const title = p('title');
       const summary = p('summary');
@@ -112,7 +107,6 @@ router.get('/', async (req, res) => {
       return res.json({ ok: true, data: await db.get('SELECT * FROM ai_proposals WHERE id = $1', r.lastInsertRowid) });
     }
 
-    // ------- WRITE: post message to proposal thread -------
     if (op === 'post-proposal-msg') {
       const id = Number(p('id'));
       const text = p('text');
@@ -126,7 +120,6 @@ router.get('/', async (req, res) => {
       return res.json({ ok: true, data: await db.get('SELECT id, user_name, role, text, created_at FROM ai_proposal_messages WHERE id = $1', r.lastInsertRowid) });
     }
 
-    // ------- WRITE: post message to feedback thread -------
     if (op === 'post-feedback-msg') {
       const feedback_id = Number(p('feedback_id'));
       const text = p('text');
@@ -140,7 +133,6 @@ router.get('/', async (req, res) => {
       return res.json({ ok: true, data: await db.get('SELECT id, user_name, role, text, created_at FROM feedback_messages WHERE id = $1', r.lastInsertRowid) });
     }
 
-    // ------- WRITE: patch feedback status -------
     if (op === 'patch-feedback') {
       const id = Number(p('id'));
       const status = p('status');
