@@ -69,6 +69,26 @@ router.get('/', async (req, res) => {
       return res.json({ ok: true, data: feedbacks });
     }
 
+    if (op === 'orders-window') {
+      const from = p('from');
+      const to = p('to');
+      const rows = await db.all(
+        `SELECT o.id, o.status, o.manager_id, u.role AS manager_role, o.created_at, o.updated_at
+         FROM orders o LEFT JOIN users u ON u.id = o.manager_id
+         WHERE o.created_at BETWEEN $1 AND $2 OR o.updated_at BETWEEN $1 AND $2
+         ORDER BY o.created_at ASC`,
+        from,
+        to,
+      );
+      const audit = await db.all(
+        `SELECT id, user_id, action, entity_type, entity_id, details, created_at
+         FROM audit_log WHERE created_at BETWEEN $1 AND $2 ORDER BY created_at ASC`,
+        from,
+        to,
+      );
+      return res.json({ ok: true, orders: rows, audit });
+    }
+
     if (op === 'patch-proposal') {
       const id = Number(p('id'));
       const decision = p('decision');
