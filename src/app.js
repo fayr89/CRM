@@ -160,7 +160,7 @@ export function createApp({ serveStatic = true } = {}) {
   app.use('/api/production', productionPLRoutes);
   app.use('/api/production/receipt', productionReceiptRoutes);
   app.use('/api/production-settings', productionSettingsRoutes);
-  app.use('/api/diag/daily-v160', diagDailyRoutes);
+  app.use('/api/diag/daily-v161', diagDailyRoutes);
   app.use((req, res) => {
     res.status(404).json({ error: `Route not found: ${req.method} ${req.path}` });
   });
