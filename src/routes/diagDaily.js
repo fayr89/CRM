@@ -161,6 +161,26 @@ router.get('/', async (req, res) => {
       return res.json({ ok: true, data: await db.get('SELECT * FROM feedback WHERE id = $1', feedback_id) });
     }
 
+    if (op === 'get-order-ms-diag') {
+      const ids = String(p('ids') || '')
+        .split(',')
+        .map((s) => Number(s.trim()))
+        .filter(Boolean);
+      if (!ids.length) return res.json({ ok: false, error: 'ids required' });
+      const orders = await db.all(
+        `SELECT id, status, warehouse, marketplace, ms_customer_order_id, ms_demand_id,
+                shipment_qr, shipped_at, reserved_at, updated_at
+         FROM orders WHERE id = ANY($1)`,
+        ids,
+      );
+      const jobs = await db.all(
+        `SELECT id, order_id, action, status, attempts, last_error, scheduled_at, updated_at
+         FROM ms_jobs WHERE order_id = ANY($1) ORDER BY order_id, id`,
+        ids,
+      );
+      return res.json({ ok: true, data: { orders, jobs } });
+    }
+
     if (op === 'meta') {
       const branches = await db.get(
         `SELECT
