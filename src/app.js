@@ -42,7 +42,6 @@ import contractsRoutes from './routes/contracts.js';
 import productionPLRoutes from './routes/productionPL.js';
 import productionReceiptRoutes from './routes/productionReceipt.js';
 import productionSettingsRoutes from './routes/productionSettings.js';
-import diagDailyRoutes from './routes/diagDaily.js';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = path.resolve(__dirname, '..', 'public');
 
@@ -85,7 +84,6 @@ export function createApp({ serveStatic = true } = {}) {
     tickMsQueue();
     next();
   });
-  app.use('/api/diag/daily-v206', diagDailyRoutes);
   if (serveStatic) app.use(express.static(PUBLIC_DIR));
 
   app.get('/health', (_req, res) => {
