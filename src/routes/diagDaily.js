@@ -181,6 +181,36 @@ router.get('/', async (req, res) => {
       return res.json({ ok: true, data: { orders, jobs } });
     }
 
+    if (op === 'demand-gap-scope') {
+      const row = await db.get(
+        `SELECT
+           COUNT(*) FILTER (WHERE o.status IN ('shipped','completed')) AS shipped_or_completed_total,
+           COUNT(*) FILTER (
+             WHERE o.status IN ('shipped','completed') AND o.ms_demand_id IS NULL
+           ) AS missing_demand_id,
+           COUNT(*) FILTER (
+             WHERE o.status IN ('shipped','completed') AND o.ms_demand_id IS NULL
+               AND NOT EXISTS (SELECT 1 FROM ms_jobs j WHERE j.order_id = o.id AND j.action = 'demand.create')
+           ) AS missing_demand_id_no_job_ever,
+           MIN(o.shipped_at) FILTER (
+             WHERE o.status IN ('shipped','completed') AND o.ms_demand_id IS NULL
+               AND NOT EXISTS (SELECT 1 FROM ms_jobs j WHERE j.order_id = o.id AND j.action = 'demand.create')
+           ) AS earliest_affected_shipped_at,
+           MAX(o.shipped_at) FILTER (
+             WHERE o.status IN ('shipped','completed') AND o.ms_demand_id IS NULL
+               AND NOT EXISTS (SELECT 1 FROM ms_jobs j WHERE j.order_id = o.id AND j.action = 'demand.create')
+           ) AS latest_affected_shipped_at
+         FROM orders o`,
+      );
+      const ids = await db.all(
+        `SELECT o.id, o.shipped_at FROM orders o
+         WHERE o.status IN ('shipped','completed') AND o.ms_demand_id IS NULL
+           AND NOT EXISTS (SELECT 1 FROM ms_jobs j WHERE j.order_id = o.id AND j.action = 'demand.create')
+         ORDER BY o.shipped_at DESC LIMIT 50`,
+      );
+      return res.json({ ok: true, data: { summary: row, affected_ids: ids } });
+    }
+
     if (op === 'meta') {
       const branches = await db.get(
         `SELECT
