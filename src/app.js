@@ -39,6 +39,7 @@ import materialsRoutes from './routes/materials.js';
 import processingPlansRoutes from './routes/processingPlans.js';
 import productionOrdersRoutes from './routes/productionOrders.js';
 import contractsRoutes from './routes/contracts.js';
+import diagDailyRoutes from './routes/diagDaily.js';
 import productionPLRoutes from './routes/productionPL.js';
 import productionReceiptRoutes from './routes/productionReceipt.js';
 import productionSettingsRoutes from './routes/productionSettings.js';
@@ -156,6 +157,7 @@ export function createApp({ serveStatic = true } = {}) {
   app.use('/api/processing-plans', processingPlansRoutes);
   app.use('/api/production-orders', productionOrdersRoutes);
   app.use('/api/contracts', contractsRoutes);
+  app.use('/api/diag/daily', diagDailyRoutes);
   app.use('/api/production', productionPLRoutes);
   app.use('/api/production/receipt', productionReceiptRoutes);
   app.use('/api/production-settings', productionSettingsRoutes);
