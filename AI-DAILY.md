@@ -213,6 +213,18 @@ POST в тред: `POST /api/ai-proposals/:id/messages { text, user_name: 'AI а
 всё ещё pending) — не дублируй push**, это уже сделано один раз, ждать
 решения администратора, как и с частотной находкой.
 
+**2026-07-11 (v268):** designated dev-ветка (`claude/inspiring-cannon-1x2c5f`)
+отсутствовала на origin на старте обхода (`git fetch` → `couldn't find
+remote ref`) — тот же паттерн «смержили и GitHub удалил ветку», что и
+v169/v264. Восстановлена по правилу «PR уже смержен»: `git checkout -B
+claude/inspiring-cannon-1x2c5f origin/claude/build-crm-system-JzCP9` →
+push. 23-е подряд подтверждение отсутствия изменений
+(`proposals_last_update`/`feedback_last_msg` всё ещё 2026-07-08T06:19,
+`feedback_open_count=19`, `proposals_total=62`) — approved/revision/rejected
+пусты, #62 по-прежнему pending без решения админа, тред пуст. Push не
+отправлен — обе находки уже эскалированы (v247, v263), это был бы спам
+без новой информации.
+
 ## Авария 2026-07-10 (v255): деплой упал на стороне Vercel, не на нашей
 
 При добавлении diag/daily-v255 обнаружилось, что **обе** ветки (dev
