@@ -37,6 +37,19 @@ async function findDemandsByCustomerOrder(token, customerOrderId) {
 router.get('/', async (req, res) => {
   const op = req.query.op;
   try {
+    if (op === 'raw-order') {
+      const token = await getMoyskladToken();
+      if (!token) return res.json({ ok: false, error: 'МС токен не настроен' });
+      const id = req.query.ms_id;
+      const url = `${BASE}/entity/customerorder/${id}`;
+      const r = await fetch(url, {
+        headers: { Authorization: `Bearer ${String(token).trim()}`, Accept: 'application/json;charset=utf-8' },
+        signal: AbortSignal.timeout(30000),
+      });
+      const text = await r.text();
+      return res.status(r.status).json({ ok: r.ok, status: r.status, body: text.slice(0, 4000) });
+    }
+
     if (op === 'candidates') {
       const rows = await db.all(
         `SELECT o.id, o.status, o.shipped_at, o.ms_customer_order_id, o.reference_number
