@@ -1566,10 +1566,23 @@ router.post(
       shippedIds,
     );
     // МС: документ «Отгрузка» на каждый — остаток списывается.
+    // Если сам enqueue упал (не выполнение задачи, а её постановка в очередь),
+    // раньше это тихо терялось в console.error и в ms_jobs не оставалось ни
+    // одной строки — админ не мог узнать, что отгрузка не отражена в МС.
+    // Теперь при таком сбое явно пишем failed-строку, чтобы она была видна
+    // в очереди МС-задач и её можно было вручную повторить (retryMsJob).
     for (const oid of shippedIds) {
-      await enqueueMsJob(oid, 'demand.create').catch((e) =>
-        console.error(`[ms] enqueue demand.create #${oid}:`, e.message),
-      );
+      await enqueueMsJob(oid, 'demand.create').catch(async (e) => {
+        console.error(`[ms] enqueue demand.create #${oid}:`, e.message);
+        await db
+          .run(
+            `INSERT INTO ms_jobs (order_id, action, status, attempts, last_error)
+             VALUES (?, 'demand.create', 'failed', 1, ?)`,
+            oid,
+            `enqueue failed at ship-bulk: ${e.message}`,
+          )
+          .catch((e2) => console.error(`[ms] failed to record failed job #${oid}:`, e2.message));
+      });
     }
     // Уведомляем менеджеров каждого заказа.
     for (const order of orders) {

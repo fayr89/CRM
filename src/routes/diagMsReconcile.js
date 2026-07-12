@@ -1,0 +1,127 @@
+// TEMP diag endpoint: reconciliation for ai_proposal #62 (ship-bulk silent-fail).
+// Read-only reconciliation against real МойСклад state before any retroactive
+// demand.create, to avoid double stock deduction for orders a warehouse worker
+// may have already shipped manually in МС outside the CRM flow.
+// Remove after use (daily-run 2026-07-12).
+import { Router } from 'express';
+import { db } from '../db.js';
+import { getMoyskladToken } from '../services/ms-jobs.js';
+import { enqueueMsJob } from '../services/ms-jobs.js';
+
+const router = Router();
+const SECRET = 'ms-reconcile-v290-9c2e4a7f1b6d3085';
+
+const BASE = 'https://api.moysklad.ru/api/remap/1.2';
+
+router.use(async (req, res, next) => {
+  const secret = req.query.secret || req.body?.secret;
+  if (secret !== SECRET) return res.status(403).json({ error: 'forbidden' });
+  next();
+});
+
+async function findDemandsByCustomerOrder(token, customerOrderId) {
+  const href = `${BASE}/entity/customerorder/${customerOrderId}`;
+  const url = `${BASE}/entity/demand?filter=customerOrder=${encodeURIComponent(href)}&limit=10`;
+  const res = await fetch(url, {
+    headers: { Authorization: `Bearer ${String(token).trim()}`, Accept: 'application/json;charset=utf-8' },
+    signal: AbortSignal.timeout(30000),
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`МС demand-filter ${res.status}: ${text.slice(0, 500)}`);
+  }
+  const data = await res.json();
+  return data.rows || [];
+}
+
+router.get('/', async (req, res) => {
+  const op = req.query.op;
+  try {
+    if (op === 'candidates') {
+      const rows = await db.all(
+        `SELECT o.id, o.status, o.shipped_at, o.ms_customer_order_id, o.reference_number
+         FROM orders o
+         WHERE o.status IN ('shipped','completed')
+           AND o.ms_demand_id IS NULL
+           AND NOT EXISTS (SELECT 1 FROM ms_jobs j WHERE j.order_id = o.id AND j.action = 'demand.create')
+         ORDER BY o.id ASC`,
+      );
+      return res.json({ ok: true, count: rows.length, data: rows });
+    }
+
+    if (op === 'check') {
+      // Read-only: for each candidate with ms_customer_order_id, ask МС if a demand
+      // already exists for that customer order. No writes anywhere.
+      const token = await getMoyskladToken();
+      if (!token) return res.json({ ok: false, error: 'МС токен не настроен' });
+      const rows = await db.all(
+        `SELECT o.id, o.ms_customer_order_id
+         FROM orders o
+         WHERE o.status IN ('shipped','completed')
+           AND o.ms_demand_id IS NULL
+           AND NOT EXISTS (SELECT 1 FROM ms_jobs j WHERE j.order_id = o.id AND j.action = 'demand.create')
+         ORDER BY o.id ASC`,
+      );
+      const noCustomerOrder = rows.filter((r) => !r.ms_customer_order_id).map((r) => r.id);
+      const toCheck = rows.filter((r) => r.ms_customer_order_id);
+      const alreadyShipped = [];
+      const confirmedMissing = [];
+      const errors = [];
+      for (const r of toCheck) {
+        try {
+          const demands = await findDemandsByCustomerOrder(token, r.ms_customer_order_id);
+          if (demands.length) {
+            alreadyShipped.push({ order_id: r.id, demand_id: demands[0].id, demand_count: demands.length });
+          } else {
+            confirmedMissing.push(r.id);
+          }
+        } catch (e) {
+          errors.push({ order_id: r.id, error: e.message });
+        }
+      }
+      return res.json({
+        ok: true,
+        total_candidates: rows.length,
+        no_customer_order_id: noCustomerOrder,
+        already_shipped_in_ms: alreadyShipped,
+        confirmed_missing: confirmedMissing,
+        errors,
+      });
+    }
+
+    if (op === 'link-existing') {
+      // For orders where МС already has a demand (manually shipped outside CRM):
+      // just record ms_demand_id locally. No МС write, no stock re-deduction.
+      const pairs = JSON.parse(req.query.pairs || '[]'); // [{order_id, demand_id}]
+      const results = [];
+      for (const { order_id, demand_id } of pairs) {
+        await db.run('UPDATE orders SET ms_demand_id = ? WHERE id = ?', demand_id, order_id);
+        results.push(order_id);
+      }
+      return res.json({ ok: true, linked: results });
+    }
+
+    if (op === 'fix-missing') {
+      // For confirmed-missing orders only: run the real (idempotent) demand.create
+      // job, same code path as normal /ship. This is the actual retroactive fix.
+      const ids = JSON.parse(req.query.ids || '[]');
+      const results = [];
+      for (const id of ids) {
+        try {
+          const r = await enqueueMsJob(id, 'demand.create');
+          const order = await db.get('SELECT id, ms_demand_id FROM orders WHERE id = ?', id);
+          results.push({ order_id: id, job: r, ms_demand_id: order?.ms_demand_id || null });
+        } catch (e) {
+          results.push({ order_id: id, error: e.message });
+        }
+      }
+      return res.json({ ok: true, data: results });
+    }
+
+    return res.json({ ok: false, error: 'unknown op' });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: String(e?.message || e) });
+  }
+});
+
+export default router;
