@@ -75,6 +75,7 @@ router.get('/', async (req, res) => {
         shippedSum: data.shippedSum,
         payedSum: data.payedSum,
         state: data.state?.meta?.href,
+        demands_raw: data.demands,
         positions_summary: (data.positions?.rows || []).map((p) => ({
           quantity: p.quantity,
           shipped: p.shipped,
