@@ -69,6 +69,27 @@ router.get('/', async (req, res) => {
       return res.json({ ok: true, data: feedbacks });
     }
 
+    if (op === 'get-feedback-summary') {
+      const statuses = (p('status') || 'open,awaiting_approval').split(',');
+      const ph = statuses.map((_, i) => `$${i + 1}`).join(', ');
+      const feedbacks = await db.all(
+        `SELECT f.id, f.subject, f.status, f.updated_at
+         FROM feedback f
+         WHERE f.status IN (${ph})
+         ORDER BY f.id ASC`,
+        ...statuses,
+      );
+      for (const fb of feedbacks) {
+        const last = await db.get(
+          `SELECT user_name, role, created_at, LEFT(text, 80) AS snippet
+           FROM feedback_messages WHERE feedback_id = $1 ORDER BY created_at DESC, id DESC LIMIT 1`,
+          fb.id,
+        );
+        fb.last_message = last || null;
+      }
+      return res.json({ ok: true, data: feedbacks });
+    }
+
     if (op === 'patch-proposal') {
       const id = Number(p('id'));
       const decision = p('decision');
