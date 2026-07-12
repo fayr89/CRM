@@ -41,14 +41,29 @@ router.get('/', async (req, res) => {
       const token = await getMoyskladToken();
       if (!token) return res.json({ ok: false, error: 'МС токен не настроен' });
       const id = req.query.ms_id;
-      const url = `${BASE}/entity/customerorder/${id}`;
+      const url = `${BASE}/entity/customerorder/${id}?expand=positions`;
       const r = await fetch(url, {
         headers: { Authorization: `Bearer ${String(token).trim()}`, Accept: 'application/json;charset=utf-8' },
         signal: AbortSignal.timeout(30000),
       });
       const text = await r.text();
-      const start = Number(req.query.start || 0);
-      return res.status(r.status).json({ ok: r.ok, status: r.status, len: text.length, body: text.slice(start, start + 4000) });
+      if (!r.ok) return res.status(r.status).json({ ok: false, status: r.status, body: text.slice(0, 2000) });
+      const data = JSON.parse(text);
+      return res.json({
+        ok: true,
+        id: data.id,
+        name: data.name,
+        sum: data.sum,
+        shippedSum: data.shippedSum,
+        payedSum: data.payedSum,
+        state: data.state?.meta?.href,
+        positions_summary: (data.positions?.rows || []).map((p) => ({
+          quantity: p.quantity,
+          shipped: p.shipped,
+          reserve: p.reserve,
+        })),
+        all_top_level_keys: Object.keys(data),
+      });
     }
 
     if (op === 'candidates') {
