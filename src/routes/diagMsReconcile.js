@@ -36,20 +36,12 @@ async function fetchCustomerOrderShippedState(token, customerOrderId) {
     throw new Error(`МС customerorder ${res.status}: ${text.slice(0, 500)}`);
   }
   const data = await res.json();
-  return { shippedSum: data.shippedSum || 0, sum: data.sum || 0, demandsHref: data.demands?.meta?.href || null };
-}
-
-// Resolve the actual demand id(s) linked to a customer order (for bookkeeping
-// only — link-existing never writes to МС, just records locally).
-async function fetchLinkedDemandIds(token, demandsHref) {
-  if (!demandsHref) return [];
-  const res = await fetch(`${demandsHref}?limit=10`, {
-    headers: { Authorization: `Bearer ${String(token).trim()}`, Accept: 'application/json;charset=utf-8' },
-    signal: AbortSignal.timeout(30000),
-  });
-  if (!res.ok) return [];
-  const data = await res.json();
-  return (data.rows || []).map((d) => d.id);
+  // `demands` is already a plain array of {meta:{href}} — the id is the last
+  // href path segment, no extra fetch needed.
+  const demandIds = (data.demands || [])
+    .map((d) => d.meta?.href?.split('/').pop())
+    .filter(Boolean);
+  return { shippedSum: data.shippedSum || 0, sum: data.sum || 0, demandIds };
 }
 
 router.get('/', async (req, res) => {
@@ -124,13 +116,12 @@ router.get('/', async (req, res) => {
         try {
           const st = await fetchCustomerOrderShippedState(token, r.ms_customer_order_id);
           if (st.shippedSum > 0) {
-            const demandIds = await fetchLinkedDemandIds(token, st.demandsHref);
             alreadyShipped.push({
               order_id: r.id,
               shippedSum: st.shippedSum,
               sum: st.sum,
-              demand_id: demandIds[0] || null,
-              demand_count: demandIds.length,
+              demand_id: st.demandIds[0] || null,
+              demand_count: st.demandIds.length,
             });
           } else {
             confirmedMissing.push(r.id);
