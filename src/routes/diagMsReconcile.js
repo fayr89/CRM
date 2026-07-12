@@ -47,7 +47,8 @@ router.get('/', async (req, res) => {
         signal: AbortSignal.timeout(30000),
       });
       const text = await r.text();
-      return res.status(r.status).json({ ok: r.ok, status: r.status, body: text.slice(0, 4000) });
+      const start = Number(req.query.start || 0);
+      return res.status(r.status).json({ ok: r.ok, status: r.status, len: text.length, body: text.slice(start, start + 4000) });
     }
 
     if (op === 'candidates') {
