@@ -19,19 +19,37 @@ router.use(async (req, res, next) => {
   next();
 });
 
-async function findDemandsByCustomerOrder(token, customerOrderId) {
-  const href = `${BASE}/entity/customerorder/${customerOrderId}`;
-  const url = `${BASE}/entity/demand?filter=customerOrder=${encodeURIComponent(href)}&limit=10`;
+// filter=customerOrder=<href> on /entity/demand is rejected by МС (error 1034,
+// unknown filtration field) — customerOrder isn't a filterable field there.
+// Reliable signal instead: the customerorder entity itself carries shippedSum
+// (updated whenever ANY demand — CRM-created or manually created in the МС UI —
+// ships against it). shippedSum > 0 means stock was already physically
+// deducted for this order, regardless of who created the demand.
+async function fetchCustomerOrderShippedState(token, customerOrderId) {
+  const url = `${BASE}/entity/customerorder/${customerOrderId}?expand=positions`;
   const res = await fetch(url, {
     headers: { Authorization: `Bearer ${String(token).trim()}`, Accept: 'application/json;charset=utf-8' },
     signal: AbortSignal.timeout(30000),
   });
   if (!res.ok) {
     const text = await res.text();
-    throw new Error(`МС demand-filter ${res.status}: ${text.slice(0, 500)}`);
+    throw new Error(`МС customerorder ${res.status}: ${text.slice(0, 500)}`);
   }
   const data = await res.json();
-  return data.rows || [];
+  return { shippedSum: data.shippedSum || 0, sum: data.sum || 0, demandsHref: data.demands?.meta?.href || null };
+}
+
+// Resolve the actual demand id(s) linked to a customer order (for bookkeeping
+// only — link-existing never writes to МС, just records locally).
+async function fetchLinkedDemandIds(token, demandsHref) {
+  if (!demandsHref) return [];
+  const res = await fetch(`${demandsHref}?limit=10`, {
+    headers: { Authorization: `Bearer ${String(token).trim()}`, Accept: 'application/json;charset=utf-8' },
+    signal: AbortSignal.timeout(30000),
+  });
+  if (!res.ok) return [];
+  const data = await res.json();
+  return (data.rows || []).map((d) => d.id);
 }
 
 router.get('/', async (req, res) => {
@@ -103,9 +121,16 @@ router.get('/', async (req, res) => {
       const errors = [];
       for (const r of toCheck) {
         try {
-          const demands = await findDemandsByCustomerOrder(token, r.ms_customer_order_id);
-          if (demands.length) {
-            alreadyShipped.push({ order_id: r.id, demand_id: demands[0].id, demand_count: demands.length });
+          const st = await fetchCustomerOrderShippedState(token, r.ms_customer_order_id);
+          if (st.shippedSum > 0) {
+            const demandIds = await fetchLinkedDemandIds(token, st.demandsHref);
+            alreadyShipped.push({
+              order_id: r.id,
+              shippedSum: st.shippedSum,
+              sum: st.sum,
+              demand_id: demandIds[0] || null,
+              demand_count: demandIds.length,
+            });
           } else {
             confirmedMissing.push(r.id);
           }
