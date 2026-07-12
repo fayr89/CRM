@@ -54,7 +54,7 @@ router.get('/', async (req, res) => {
       // already exists for that customer order. No writes anywhere.
       const token = await getMoyskladToken();
       if (!token) return res.json({ ok: false, error: 'МС токен не настроен' });
-      const rows = await db.all(
+      const allRows = await db.all(
         `SELECT o.id, o.ms_customer_order_id
          FROM orders o
          WHERE o.status IN ('shipped','completed')
@@ -62,6 +62,11 @@ router.get('/', async (req, res) => {
            AND NOT EXISTS (SELECT 1 FROM ms_jobs j WHERE j.order_id = o.id AND j.action = 'demand.create')
          ORDER BY o.id ASC`,
       );
+      // Chunked: 151 sequential МС calls exceeds serverless function timeout,
+      // so allow checking a slice at a time via offset/count.
+      const offset = Number(req.query.offset || 0);
+      const count = Number(req.query.count || allRows.length);
+      const rows = allRows.slice(offset, offset + count);
       const noCustomerOrder = rows.filter((r) => !r.ms_customer_order_id).map((r) => r.id);
       const toCheck = rows.filter((r) => r.ms_customer_order_id);
       const alreadyShipped = [];
@@ -81,7 +86,9 @@ router.get('/', async (req, res) => {
       }
       return res.json({
         ok: true,
-        total_candidates: rows.length,
+        total_candidates: allRows.length,
+        checked_this_batch: rows.length,
+        offset,
         no_customer_order_id: noCustomerOrder,
         already_shipped_in_ms: alreadyShipped,
         confirmed_missing: confirmedMissing,
