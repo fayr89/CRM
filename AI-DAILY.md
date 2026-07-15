@@ -2653,3 +2653,36 @@ Push-уведомление не отправлено — обе ранее эс
 обходов v247, ai_proposal #62 v263/v290) не требуют повтора без новой
 информации; 108 циклов без изменений сами по себе новой информацией не
 являются.
+
+**2026-07-15 (v357):** designated dev-ветка (`claude/inspiring-cannon-th6pn3`)
+отсутствовала на origin на старте (после `git fetch --unshallow` `git fetch
+origin claude/inspiring-cannon-th6pn3` вернул `couldn't find remote ref`,
+хотя shallow-клон до unshallow локально показывал `remotes/origin/...` —
+ещё один вариант артефакта обрезанной истории, в этот раз ложно-позитивный,
+не ложно-негативный, как в v169/v352-356) — тот же паттерн «смержили и
+GitHub удалил ветку»; локальный HEAD и origin-прод совпадали ровно на
+`4ee2ca2` (финальный коммит v356), восстановил простым `git push -u origin
+claude/inspiring-cannon-th6pn3`, без unrelated-histories. Vercel MCP
+подключился штатно с первой попытки. Собрал diag с нуля по шаблону
+v320-356 (`op=meta` + `op=get-feedback-summary`). Этап 1 —
+`proposals_by_status`=`{done:62}`, все четыре списка (approved/revision/
+rejected/pending) пусты по построению, новых предложений от админа нет.
+Этап 2 — `op=meta` подтвердил: `proposals_last_update`/`feedback_last_msg`
+всё ещё 2026-07-12T10:44-10:45 (момент закрытия ai_proposal #62 в v290) —
+без сдвига, `feedback_by_status` = open:4, awaiting_approval:15, closed:44.
+Все 19 обращений open(4: #29,42,47,61)/awaiting_approval(15: #10,35,36,45,
+46,50,52,53,54,55,56,57,59,62,63) сверены через `op=get-feedback-summary` —
+последнее сообщение и таймстемп в каждом идентичны зафиксированным в v356
+(включая #63 от 2026-07-12T10:45:23.756522 и неотвеченный вопрос #61 от
+2026-07-08T06:19:45.104558, оставлен как есть по правилу «спросили один
+раз — не дёргать»). 109-е подряд подтверждение отсутствия изменений с
+закрытия ai_proposal #62 в v290. Vercel-деплой add-diag коммита (`af3dc8b`)
+подтверждён READY/target production через `mcp__Vercel__get_deployment`
+перед опросом diag (alias на `crm-orcin-six.vercel.app` подтверждён в
+списке `alias`). ff-merge dev→prod прошёл штатно (fast-forward, без
+unrelated-histories) для add-diag; снос выполняется раздельным `Edit`
+app.js + отдельный `git rm`/`git add` (по правилу-граблине v210), с
+проверкой `git show --stat` перед пушем в прод. Push-уведомление не
+отправлено — обе ранее эскалированные находки (частота обходов v247,
+ai_proposal #62 v263/v290) не требуют повтора без новой информации; 109
+циклов без изменений сами по себе новой информацией не являются.
