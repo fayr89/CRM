@@ -117,7 +117,7 @@
 | `notification-types.js` | реестр 11 типов уведомлений (key/label/template/roles) |
 | `secrets.js` | хранение и чтение секретов МАХ-бота из app_settings |
 | `shippingSchedule.js` | расчёт ближайшей даты отгрузки по графику + cutoff МСК |
-| `priceRevision.js` | ревизия прайса = `MAX(product_prices.updated_at)`; подтверждения менеджеров (`price_acknowledgements`, ленивое создание). `assertPriceAcknowledged(user, Forbidden)` — жёсткий блок создания/резерва заказа для sales/manager до ознакомления, **fail-open** (ошибка проверки не роняет продажи). Баннер во фронте `app.js loadPriceAckBanner`, статус у админа — кнопка «👥 Ознакомление с прайсом» на странице товаров |
+| `priceRevision.js` | ревизия прайса = `MAX(product_prices.updated_at)`; подтверждения менеджеров (`price_acknowledgements`, ленивое создание). **МЯГКАЯ версия — НЕ блокирует заказы** (только баннер + отчёт, чтобы не трогать бизнес-логику/деньги — жёсткий блок откатывался daily-run по AI-DAILY.md). Баннер во фронте `app.js loadPriceAckBanner`, статус у админа — кнопка «👥 Ознакомление с прайсом» на странице товаров |
 | `webhooks.js` | `emitEvent` — отправка исходящих вебхуков подписчикам |
 
 ### Фронтенд (`public/`)

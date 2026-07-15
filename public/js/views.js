@@ -6884,6 +6884,9 @@ export async function renderProducts(main) {
       ? el('button', { class: 'btn', onClick: () => openPricingSettings() }, '⚙ Правила цен')
       : null,
     isAdmin
+      ? el('button', { class: 'btn', onClick: () => openPriceAckStatus() }, '👥 Ознакомление с прайсом')
+      : null,
+    isAdmin
       ? el('button', { class: 'btn', onClick: () => openImportNamesModal(reload) }, '✏️ Обновить названия')
       : null,
     isAdmin
@@ -7799,6 +7802,39 @@ async function openPricingSettings() {
       }
     },
   });
+}
+
+// Статус ознакомления продающих с актуальным прайсом (для админа).
+async function openPriceAckStatus() {
+  let data;
+  try {
+    data = await api.priceAckStatus();
+  } catch (e) {
+    toast(e.message || 'Не удалось загрузить статус', 'error');
+    return;
+  }
+  const when = data.revision_at ? fmtDateTime(data.revision_at) : '—';
+  const head = el('div', { style: { marginBottom: '10px' } },
+    el('div', {}, `Прайс обновлён: ${when}`),
+    el('div', { style: { fontWeight: '600', marginTop: '4px' } },
+      `Подтвердили: ${data.confirmed} из ${data.total}`),
+  );
+  const rows = (data.managers || []).map((m) => el('tr', {},
+    el('td', {}, m.name || m.email || `#${m.id}`),
+    el('td', {}, tr('role', m.role) || m.role),
+    el('td', {},
+      m.is_current
+        ? el('span', { style: { color: '#16a34a' } }, '✅ ознакомлен')
+        : el('span', { style: { color: '#dc2626' } }, '❌ не подтвердил')),
+    el('td', {}, m.acknowledged_at ? fmtDateTime(m.acknowledged_at) : '—'),
+  ));
+  const table = el('table', { class: 'table' },
+    el('thead', {}, el('tr', {},
+      el('th', {}, 'Менеджер'), el('th', {}, 'Роль'),
+      el('th', {}, 'Статус'), el('th', {}, 'Когда подтвердил'))),
+    el('tbody', {}, ...(rows.length ? rows : [el('tr', {}, el('td', { colspan: '4' }, 'Нет продающих менеджеров'))])),
+  );
+  await openModal('Ознакомление с прайсом', el('div', {}, head, table));
 }
 
 // ============================================================

@@ -454,6 +454,9 @@ function renderShell() {
   // Подсказка для пользователей iPhone-Safari: «добавьте на домой» — за 1 раз
   // показываем, потом 3 дня молчим (или навсегда, если юзер ткнул «×»/установил).
   loadIosInstallBanner(noticeBar);
+  // Баннер «Новый прайс — ознакомьтесь и подтвердите» для продающих. НЕ блокирует
+  // работу (мягкая версия) — просто висит, пока не нажмут «Подтверждаю».
+  loadPriceAckBanner(noticeBar);
 
   root.append(el('div', { class: 'shell' }, sidebar, overlay, main), menuBtn, userBadge);
 
@@ -529,6 +532,40 @@ function loadIosInstallBanner(container) {
 
   banner.append(text, howBtn, closeBtn);
   container.append(banner, details);
+}
+
+// Баннер ознакомления с прайсом (мягкий, без блокировок). Показываем продающим,
+// когда прайс обновлён, а они ещё не подтвердили актуальную ревизию. Заказы НЕ
+// блокируются — баннер просто нудит, пока не нажмут «Подтверждаю».
+async function loadPriceAckBanner(container) {
+  let info;
+  try {
+    info = await api.priceRevision();
+  } catch { return; }
+  if (!info || !info.show_banner) return;
+  const when = info.revision_at ? fmtDateTime(info.revision_at) : '';
+  const node = el('div', { class: 'notice-banner notice-warning' },
+    el('span', { class: 'notice-text' },
+      `⚠️ Прайс обновлён${when ? ' ' + when : ''}. Ознакомьтесь с новым прайсом и подтвердите.`),
+    el('a', { href: '#/products', class: 'btn btn-sm', style: { marginLeft: '8px' } }, 'Открыть прайс'),
+    el('button', {
+      class: 'btn btn-sm btn-primary',
+      style: { marginLeft: '8px' },
+      onClick: async (e) => {
+        const btn = e.currentTarget;
+        btn.disabled = true;
+        try {
+          await api.acknowledgePrice();
+          toast('Спасибо, ознакомление с прайсом подтверждено', 'success');
+          node.remove();
+        } catch (err) {
+          btn.disabled = false;
+          toast(err.message || 'Не удалось подтвердить', 'error');
+        }
+      },
+    }, '✅ Подтверждаю, ознакомлен'),
+  );
+  container.append(node);
 }
 
 async function loadNoticeBanners(container) {
