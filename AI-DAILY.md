@@ -2441,3 +2441,33 @@ diag (diag-деплой READY, target production, alias на `crm-orcin-six.verc
 отправлено — обе ранее эскалированные находки (частота обходов v247,
 ai_proposal #62 v263/v290) не требуют повтора без новой информации, 101 цикл
 без изменений сам по себе новой информацией не является.
+
+**2026-07-15 (v350):** designated dev-ветка (`claude/inspiring-cannon-l967dx`)
+отсутствовала на origin на старте (`git fetch` → `couldn't find remote ref`) —
+тот же паттерн «смержили и GitHub удалил ветку» (v169 и далее); `git fetch
+--unshallow` (по правилу v169) подтвердил: локальный HEAD уже строго на
+коммите прод (`8b2f279`, финальный коммит v349) — восстановил простым `git
+push -u origin claude/inspiring-cannon-l967dx`, без unrelated-histories.
+Vercel MCP подключился штатно с первой попытки. Собрал diag с нуля по шаблону
+v320-349 (`op=meta` + `op=get-feedback-summary`). Этап 1 —
+`proposals_by_status`=`{done:62}`, все четыре списка (approved/revision/
+rejected/pending) пусты по построению, новых предложений от админа нет. Этап
+2 — `op=meta` подтвердил: `proposals_last_update`/`feedback_last_msg` всё ещё
+2026-07-12T10:44-10:45 (момент закрытия ai_proposal #62 в v290) — без сдвига,
+`feedback_by_status` = open:4, awaiting_approval:15, closed:44. Все 19
+обращений open(4: #29,42,47,61)/awaiting_approval(15: #10,35,36,45,46,50,52,
+53,54,55,56,57,59,62,63) сверены через `op=get-feedback-summary` — последнее
+сообщение и таймстемп в каждом идентичны зафиксированным в v349 (включая #63
+от 2026-07-12T10:45:23.756522 и неотвеченный вопрос #61 от
+2026-07-08T06:19:45.104558, оставлен как есть по правилу «спросили один раз —
+не дёргать»). 102-е подряд подтверждение отсутствия изменений с закрытия
+ai_proposal #62 в v290. `/health` 200 подтверждён после деплоя add-diag
+(diag-деплой READY, target production, alias на `crm-orcin-six.vercel.app`
+подтверждён `mcp__Vercel__get_deployment` перед опросом). ff-merge dev→prod
+прошёл штатно (fast-forward, без unrelated-histories) для add-diag; снос
+выполняется этим же коммитом на dev-ветке (раздельные `git rm` + `Edit`
+app.js, отдельный `git add`, по правилу-граблине v210), с проверкой `git show
+--stat` перед пушем в прод. Push-уведомление не отправлено — обе ранее
+эскалированные находки (частота обходов v247, ai_proposal #62 v263/v290) не
+требуют повтора без новой информации, 102 цикла без изменений сами по себе
+новой информацией не являются.
