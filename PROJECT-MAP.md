@@ -80,7 +80,7 @@
 | `notifications`*-related* | (registry в `services/notification-types.js`) | список типов + шаблоны |
 | `search.js` | `/api/search` | глобальный поиск |
 | `products.js` | `/api/products` | каталог, прайсы, склады, шаблоны импорта, МойСклад-интеграция |
-| `pricing.js` | `/api/pricing` | способы оплаты + пороги скидок |
+| `pricing.js` | `/api/pricing` | способы оплаты + пороги скидок; **ревизия прайса и ознакомление**: `/revision` (статус юзера), `/acknowledge` (подтвердить), `/ack-status` (админ/РОП — кто подтвердил). Логика в `services/priceRevision.js` |
 | `warehouseSettings.js` | `/api/warehouse` | график отгрузок + видимость складов |
 | `analytics.js` | `/api/analytics` | revenue/managers/marketplaces/products/funnel/summary |
 | `admin.js` | `/api/admin` | бэкап БД, wipe-operational |
@@ -117,6 +117,7 @@
 | `notification-types.js` | реестр 11 типов уведомлений (key/label/template/roles) |
 | `secrets.js` | хранение и чтение секретов МАХ-бота из app_settings |
 | `shippingSchedule.js` | расчёт ближайшей даты отгрузки по графику + cutoff МСК |
+| `priceRevision.js` | ревизия прайса = `MAX(product_prices.updated_at)`; подтверждения менеджеров (`price_acknowledgements`, ленивое создание). `assertPriceAcknowledged(user, Forbidden)` — жёсткий блок создания/резерва заказа для sales/manager до ознакомления, **fail-open** (ошибка проверки не роняет продажи). Баннер во фронте `app.js loadPriceAckBanner`, статус у админа — кнопка «👥 Ознакомление с прайсом» на странице товаров |
 | `webhooks.js` | `emitEvent` — отправка исходящих вебхуков подписчикам |
 
 ### Фронтенд (`public/`)
