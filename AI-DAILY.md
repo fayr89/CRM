@@ -3742,3 +3742,31 @@ v247 (а не новая проблема) — просто раньше ник�
 Снос diag выполнен раздельным `Edit` app.js (импорт + роут) + `git rm
 src/routes/diagDaily.js`, проверено `git status`/`git diff --stat` перед
 коммитом и пушем в прод.
+
+**2026-07-16 (v385):** designated dev-ветка сессии (`claude/inspiring-cannon-50njrl`)
+отсутствовала на origin на старте (тот же паттерн «смержили и GitHub
+удалил ветку»); локальный HEAD уже строго на коммите прод (`36cd945`,
+финальный коммит v384, `git diff` пустой) — восстановил простым `git push
+-u origin claude/inspiring-cannon-50njrl`, без unrelated-histories.
+Локальный ref `claude/build-crm-system-JzCP9` был стухшим (застрял на
+v340 `97c4b4b`) — `git fetch` + `git reset --hard
+origin/claude/build-crm-system-JzCP9` перед merge, дальше чистый
+`ff-only`. `/health` 200 подтверждён.
+
+Этап 1 — approved/revision/rejected пусты (`proposals_by_status`=
+{done:62}), новых предложений от админа нет. Этап 2 — diag `op=meta`:
+`feedback_by_status`={awaiting_approval:15, closed:44, open:4},
+`proposals_last_update`=2026-07-12T10:44:03.911Z,
+`feedback_last_msg`=2026-07-12T10:45:23.756Z — идентичны v375-384 один в
+один, полный `get-feedback-summary` не потребовался. 137-е подряд
+подтверждение отсутствия изменений в feedback/ai_proposals с закрытия
+ai_proposal #62 в v290.
+
+ff-merge dev→prod для add-diag прошёл чистым fast-forward; снос
+выполняется раздельным `Edit` app.js (импорт + роут) + `git rm
+src/routes/diagDaily.js` (по правилу-граблине v210), с проверкой
+`git status`/`git diff --stat` перед коммитом и пушем в прод.
+Push-уведомление не отправлено — обе ранее эскалированные находки
+(частота обходов v247, #62 v263/v290, переизбыток веток v384) не требуют
+повтора без новой информации; 137 циклов без изменений сами по себе новой
+информацией не являются.
