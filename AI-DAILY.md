@@ -3828,3 +3828,30 @@ ff-merge dev→prod для add-diag прошёл чистым fast-forward; сн
 выполняется раздельным `Edit` app.js (импорт + роут) + `git rm
 src/routes/diagDaily.js` (по правилу-граблине v210), с проверкой
 `git status`/`git diff --stat` перед коммитом и пушем в прод.
+
+**2026-07-16 (v388):** designated dev-ветка (`claude/inspiring-cannon-gnknxm`)
+отсутствовала на origin на старте (тот же паттерн «смержили и GitHub
+удалил ветку»); локальный HEAD уже строго на финальном коммите v387
+(`85e92cf`), working tree чистое. Восстановил `git push -u origin
+claude/inspiring-cannon-gnknxm`. `/health` 200 подтверждён до добавления
+diag.
+
+Этап 1 — approved/revision/rejected пусты (`proposals_by_status`={done:62}),
+новых предложений от админа нет. Этап 2 — diag `op=meta`:
+`feedback_by_status`={awaiting_approval:15, closed:44, open:4},
+`proposals_last_update`=2026-07-12T10:44:03.911Z,
+`feedback_last_msg`=2026-07-12T10:45:23.756Z — идентичны v375-387 один в
+один, полный `get-feedback-summary` не потребовался. 140-е подряд
+подтверждение отсутствия изменений в feedback/ai_proposals с закрытия
+ai_proposal #62 в v290.
+
+Частотная находка (v247, подтверждена независимо в v383) по-прежнему
+актуальна без нового сдвига — add-diag v387→v388 снова ~60 минут, не
+дневной. Push-уведомление не отправлено — 140 циклов без изменений сами
+по себе новой информацией не являются, а находка уже дважды эскалирована
+без ответа админа.
+
+ff-merge dev→prod для add-diag прошёл чистым fast-forward; снос
+выполняется раздельным `Edit` app.js (импорт + роут) + `git rm
+src/routes/diagDaily.js` (по правилу-граблине v210), с проверкой
+`git status`/`git diff --stat` перед коммитом и пушем в прод.
