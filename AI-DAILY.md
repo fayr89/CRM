@@ -4363,3 +4363,36 @@ routine реально гоняется существенно чаще заяв
 Снос diag-v402 выполнен раздельным `git rm src/routes/diagDaily.js` +
 `Edit` app.js (импорт + роут), с проверкой `git show --stat`/`grep -n diag
 src/app.js` перед коммитом и пушем в обе ветки.
+
+**2026-07-17 (v403): без изменений, конвейер деплоя штатный.** Designated
+dev-ветка (`claude/inspiring-cannon-8a99gc`) отсутствовала на origin на
+старте (тот же паттерн «смержили и GitHub удалил ветку»); локальный HEAD
+уже строго совпадал с прод (`31de4ef`, финальный коммит v402, working tree
+чистое) — восстановил простым `git push -u origin
+claude/inspiring-cannon-8a99gc`, без unrelated-histories. `git fetch origin
+claude/build-crm-system-JzCP9` перед `reset --hard` подтвердил совпадение,
+ff-merge dev→prod прошёл штатно.
+
+Добавил diag-v403 (commit → push dev → checkout прод → `git fetch` +
+`reset --hard` + `merge --ff-only` → push prod) — fast-forward прошёл
+чисто, `/health` 200 сразу после пуша, `op=meta` первая попытка сразу
+после пуша поймала 404 (деплой ещё не разъехался), повторный запрос через
+~20с уже 200.
+
+Этап 1 — `proposals_by_status`={done:62}: pending/approved/revision/rejected
+пусты, действовать не по чему. Этап 2 — diag `op=meta`:
+`feedback_by_status`={awaiting_approval:15, closed:44, open:4},
+`proposals_last_update`=2026-07-12T10:44:03.911Z,
+`feedback_last_msg`=2026-07-12T10:45:23.756Z — идентичны v375-402 один в
+один (включая миллисекунды). 153-е подряд подтверждение отсутствия
+изменений в feedback/ai_proposals с закрытия ai_proposal #62 в v290.
+Полный `get-feedback-summary` не потребовался (meta совпал точь-в-точь).
+
+Push-уведомление не отправлено — 153 цикла без изменений сами по себе не
+новость, а ранее эскалированные находки (частота обходов v247/v263,
+переизбыток веток) не получили нового сдвига в этом обходе; конвейер
+деплоя здоров.
+
+Снос diag-v403 выполняется раздельным `git rm src/routes/diagDaily.js` +
+`Edit` app.js (импорт + роут), с проверкой `git show --stat`/`grep -n diag
+src/app.js` перед коммитом и пушем в обе ветки.
