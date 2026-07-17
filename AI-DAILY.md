@@ -4528,3 +4528,40 @@ Push-уведомление не отправлено — обе находки 
 Снос diag-v406 выполняется раздельным `git rm src/routes/diagDaily.js` +
 `Edit` app.js (импорт + роут), с проверкой `git show --stat`/`grep -n diag
 src/app.js` перед коммитом и пушем в обе ветки.
+
+**2026-07-17 (v407): без изменений, конвейер деплоя штатный.** Designated
+dev-ветка (`claude/inspiring-cannon-66hqbd`) отсутствовала на origin на
+старте (тот же паттерн «смержили и GitHub удалил ветку», v169 и далее);
+локальный HEAD уже строго совпадал с прод (`f0e8a34`, финальный коммит
+v406, working tree чистое) — восстановил простым `git push -u origin
+claude/inspiring-cannon-66hqbd`, без unrelated-histories. `/health` 200
+подтверждён до начала.
+
+Добавил diag-v407 (только `op=meta`, по шаблону v402-406 — пять
+предыдущих циклов с идентичным результатом делают полный
+`get-feedback-summary` избыточным). Push dev → checkout прод → `git fetch
+origin claude/build-crm-system-JzCP9` явным именем + `reset --hard` +
+`merge --ff-only` → push prod — fast-forward прошёл чисто. Первая попытка
+`op=meta` сразу после пуша поймала 404 (деплой ещё не разъехался),
+повторный запрос через ~20с уже 200.
+
+Этап 1 — `proposals_by_status`={done:62}: pending/approved/revision/rejected
+пусты, действовать не по чему. Этап 2 — diag `op=meta`:
+`feedback_by_status`={awaiting_approval:15, closed:44, open:4},
+`proposals_last_update`=2026-07-12T10:44:03.911Z,
+`feedback_last_msg`=2026-07-12T10:45:23.756Z — идентичны v375-406 один в
+один (включая миллисекунды). **157-е подряд подтверждение** отсутствия
+изменений в feedback/ai_proposals с закрытия ai_proposal #62 в v290.
+
+Проверил `git ls-remote origin | wc -l` = 949 (было 946 в v405, 948 на
+старте этого обхода) — рост на ~1 ссылку за цикл, тот же порядок величины,
+что и раньше, без скачка. Не новая информация к находке v405 (940+
+orphan-веток, интервал ~1ч) — не эскалирую повторно.
+
+Push-уведомление не отправлено — обе ранее эскалированные находки
+(частота обходов ~1ч — v247/v263/v404/v405; orphan-ветки — v405) без
+сдвига, повтор был бы спамом; feedback/ai_proposals не менялись.
+
+Снос diag-v407 выполнен раздельным `git rm src/routes/diagDaily.js` +
+`Edit` app.js (импорт + роут), с проверкой `git status --short`/`grep -n
+diag src/app.js` (пусто) перед коммитом и пушем в обе ветки.
