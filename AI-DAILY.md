@@ -4565,3 +4565,39 @@ Push-уведомление не отправлено — обе ранее эс
 Снос diag-v407 выполнен раздельным `git rm src/routes/diagDaily.js` +
 `Edit` app.js (импорт + роут), с проверкой `git status --short`/`grep -n
 diag src/app.js` (пусто) перед коммитом и пушем в обе ветки.
+
+**2026-07-17 (v408): без изменений, конвейер деплоя штатный.** Designated
+dev-ветка (`claude/inspiring-cannon-torn3u`) отсутствовала на origin на
+старте (тот же паттерн «смержили и GitHub удалил ветку»); локальный HEAD
+уже строго совпадал с прод (`41f2da8`, финальный коммит v407, working tree
+чистое) — восстановил простым `git push -u origin
+claude/inspiring-cannon-torn3u`, без unrelated-histories.
+
+Добавил diag-v408 (только `op=meta`, по шаблону v402-407 — шесть
+предыдущих циклов с идентичным результатом делают полный
+`get-feedback-summary` избыточным). Push dev → checkout прод → `git fetch
+origin claude/build-crm-system-JzCP9` явным именем + `reset --hard` +
+`merge --ff-only` → push prod — fast-forward прошёл чисто. `op=meta`
+подтвердил через ~20с после пуша (200 с первого раза).
+
+Этап 1 — `proposals_by_status`={done:62}: pending/approved/revision/rejected
+пусты, действовать не по чему. Этап 2 — diag `op=meta`:
+`feedback_by_status`={awaiting_approval:15, closed:44, open:4},
+`proposals_last_update`=2026-07-12T10:44:03.911Z,
+`feedback_last_msg`=2026-07-12T10:45:23.756Z — идентичны v375-407 один в
+один (включая миллисекунды). **158-е подряд подтверждение** отсутствия
+изменений в feedback/ai_proposals с закрытия ai_proposal #62 в v290.
+
+Проверил `git ls-remote origin | wc -l` = 950 (было 949 в v407, 946 в
+v405) — рост на ~1 ссылку за цикл, тот же порядок величины, без скачка.
+Не новая информация к находке v405 (940+ orphan-веток, интервал ~1ч) —
+не эскалирую повторно.
+
+Push-уведомление не отправлено — обе ранее эскалированные находки
+(частота обходов ~1ч — v247/v263/v404/v405; orphan-ветки — v405) без
+сдвига, повтор был бы спамом; feedback/ai_proposals не менялись за 158
+циклов подряд.
+
+Снос diag-v408 выполнен раздельным `git rm src/routes/diagDaily.js` +
+`Edit` app.js (импорт + роут), с проверкой `git status --short`/`grep -n
+diag src/app.js` (пусто) перед коммитом и пушем в обе ветки.
