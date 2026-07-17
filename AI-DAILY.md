@@ -4216,3 +4216,37 @@ Push-уведомление не отправлено — 148 циклов бе�
 Снос diag-v398 выполняется раздельным `git rm src/routes/diagDaily.js` +
 `Edit` app.js (импорт + роут), с проверкой `git show --stat`/`grep -n diag
 src/app.js` перед коммитом и пушем в обе ветки.
+
+**2026-07-17 (v399): без изменений, конвейер деплоя штатный.** Designated
+dev-ветка (`claude/inspiring-cannon-3i7kei`) отсутствовала на origin на
+старте (тот же паттерн «смержили и GitHub удалил ветку»); локальный HEAD
+уже строго совпадал с прод (`73c9939`, финальный коммит v398, working tree
+чистое) — восстановил простым `git push -u origin
+claude/inspiring-cannon-3i7kei`, без unrelated-histories. `/health` 200
+подтверждён до начала.
+
+Добавил diag-v399 (commit → push dev → checkout прод → `git fetch` +
+`reset --hard` + `merge --ff-only` → push prod) — fast-forward прошёл
+чисто, прод-деплой ушёл в `BUILDING` и завершился `READY` за ~25 секунд
+(первая попытка `op=meta` сразу после пуша поймала 404 — деплой ещё не
+успел разъехаться, повторный запрос через ~20с уже 200).
+
+Этап 1 — `proposals_by_status`={done:62}: pending/approved/revision/rejected
+пусты, действовать не по чему. Этап 2 — diag `op=meta`:
+`feedback_by_status`={awaiting_approval:15, closed:44, open:4},
+`proposals_last_update`=2026-07-12T10:44:03.911Z,
+`feedback_last_msg`=2026-07-12T10:45:23.756Z — идентичны v375-398 один в
+один (включая миллисекунды). 149-е подряд подтверждение отсутствия
+изменений в feedback/ai_proposals с закрытия ai_proposal #62 в v290.
+Полный `get-feedback-summary` не потребовался (meta совпал точь-в-точь).
+
+Push-уведомление не отправлено — 149 циклов без изменений сами по себе не
+новость, а ранее эскалированные находки (частота обходов v247/v263,
+переизбыток веток, инцидент деплоя v390/v391) не получили нового сдвига в
+этом обходе; конвейер деплоя здоров.
+
+Снос diag-v399 выполнен раздельным `git rm src/routes/diagDaily.js` +
+`Edit` app.js (импорт + роут) на dev-ветке, с проверкой `git show --stat`/
+`grep -n diag src/app.js` перед коммитом (оба файла подтверждены в одном
+коммите `1736b4e`) — ff-merge в прод, push. Финальная верификация: `/health`
+200, `/api/diag/daily-v399` 404 (снят) после деплоя.
