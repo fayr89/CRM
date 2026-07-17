@@ -4763,3 +4763,44 @@ Push-уведомление не отправлено — обе ранее эс
 Снос diag-v412 выполняется раздельным `git rm src/routes/diagDaily.js` +
 `Edit` app.js (импорт + роут), с проверкой `git status --short`/`grep -n
 diag src/app.js` перед коммитом и пушем в обе ветки.
+
+**2026-07-17 (v413): без изменений, конвейер деплоя штатный.** Designated
+dev-ветка (`claude/inspiring-cannon-qj1srp`) отсутствовала на origin на
+старте (тот же паттерн «смержили и GitHub удалил ветку»); локальный HEAD
+уже строго совпадал с прод (`5334222`, финальный коммит v412, working tree
+чистое) — восстановил простым `git push -u origin
+claude/inspiring-cannon-qj1srp`, без unrelated-histories. Репо стартовало
+не-shallow на этот раз (`git rev-parse --is-shallow-repository` = false
+после явного fetch --prune в начале обхода). `/health` 200 подтверждён до
+начала.
+
+Добавил diag-v413 (только `op=meta`, по шаблону v402-412 — одиннадцать
+предыдущих циклов с идентичным результатом делают полный
+`get-feedback-summary` избыточным). Push dev → checkout прод → `git fetch
+origin claude/build-crm-system-JzCP9` явным именем + `reset --hard` +
+`merge --ff-only` → push prod — fast-forward прошёл чисто (2 коммита:
+diag add). `op=meta` подтвердил 200 с первого раза (~20с после пуша,
+первый запрос ещё словил 404 до раскатки деплоя).
+
+Этап 1 — `proposals_by_status`={done:62}: pending/approved/revision/rejected
+пусты, действовать не по чему. Этап 2 — diag `op=meta`:
+`feedback_by_status`={awaiting_approval:15, closed:44, open:4},
+`proposals_last_update`=2026-07-12T10:44:03.911Z,
+`feedback_last_msg`=2026-07-12T10:45:23.756Z — идентичны v375-412 один в
+один (включая миллисекунды). **163-е подряд подтверждение** отсутствия
+изменений в feedback/ai_proposals с закрытия ai_proposal #62 в v290.
+
+Проверил `git ls-remote origin | wc -l` = 955 (было 954 в v412) — рост на
+~1 ссылку за цикл, тот же порядок величины, без скачка. Не новая
+информация к находке v405 (940+ orphan-веток, интервал ~1ч) — не
+эскалирую повторно.
+
+Push-уведомление не отправлено — обе ранее эскалированные находки
+(частота обходов ~1ч — v247/v263/v404/v405; orphan-ветки — v405) без
+сдвига, повтор был бы спамом; feedback/ai_proposals не менялись за 163
+цикла подряд; конвейер деплоя здоров (`/health` 200 до и после каждого
+шага).
+
+Снос diag-v413 выполняется раздельным `git rm src/routes/diagDaily.js` +
+`Edit` app.js (импорт + роут), с проверкой `git status --short`/`grep -n
+diag src/app.js` перед коммитом и пушем в обе ветки.
