@@ -4117,3 +4117,37 @@ src/routes/diagDaily.js` (по правилу-граблине v210, без `&&`
 проверкой `git show --stat` перед коммитом — подтверждено оба файла в одном
 коммите `b6533ae` — и пушем в обе ветки. Финальная верификация: `/health`
 200 подтверждён после деплоя.
+
+**2026-07-17 (v396): без изменений, конвейер деплоя штатный.** Designated
+dev-ветка (`claude/inspiring-cannon-6kglan`) отсутствовала на origin на
+старте (тот же паттерн «смержили и GitHub удалил ветку»); раздельный
+`git fetch` каждой ветки по отдельности подтвердил: локальный HEAD уже
+строго совпадал с прод (`c9960bb`, финальный коммит v395, working tree
+чистое, `git diff` пустой) — восстановил простым `git push -u origin
+claude/inspiring-cannon-6kglan`, без unrelated-histories. `/health` 200
+подтверждён до начала.
+
+Добавил diag-v396 (commit → push dev → `git fetch` + `reset --hard` +
+`merge --ff-only` в прод → push prod) — fast-forward прошёл чисто, оба
+деплоя (dev-preview `dpl_4sThVnY...` и prod `dpl_5N5CAe9...`) ушли в
+`READY` за ~30с после пуша, `op=meta` ответил 200.
+
+Этап 1 — `proposals_by_status`={done:62}: pending/approved/revision/rejected
+пусты, действовать не по чему. Этап 2 — diag `op=meta`:
+`feedback_by_status`={awaiting_approval:15, closed:44, open:4},
+`proposals_last_update`=2026-07-12T10:44:03.911Z,
+`feedback_last_msg`=2026-07-12T10:45:23.756Z — идентичны v375-395 один в
+один (включая миллисекунды). 146-е подряд подтверждение отсутствия
+изменений в feedback/ai_proposals с закрытия ai_proposal #62 в v290.
+Полный `get-feedback-summary` не потребовался (meta совпал точь-в-точь).
+
+Push-уведомление не отправлено — 146 циклов без изменений сами по себе не
+новость, а ранее эскалированные находки (частота обходов v247/v263,
+переизбыток веток) не получили нового сдвига в этом обходе; конвейер
+деплоя здоров, эскалировать нечего.
+
+Снос diag-v396 выполнен раздельным `git add src/app.js` + `git rm
+src/routes/diagDaily.js` (по правилу-граблине v210, без `&&`-цепочки), с
+проверкой `git show --stat`/`grep -n diag src/app.js` перед коммитом —
+подтверждено оба файла в одном коммите `59dc607`, `app.js` чист от
+diag-ссылок.
