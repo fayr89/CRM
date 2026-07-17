@@ -4286,3 +4286,35 @@ Push-уведомление не отправлено — 150 циклов бе�
 Снос diag-v400 выполняется раздельным `git rm src/routes/diagDaily.js` +
 `Edit` app.js (импорт + роут), с проверкой `git show --stat`/`grep -n diag
 src/app.js` перед коммитом и пушем в обе ветки.
+
+**2026-07-17 (v401): без изменений, конвейер деплоя штатный.** Designated
+dev-ветка (`claude/inspiring-cannon-7z8s0p`) отсутствовала на origin на
+старте (тот же паттерн «смержили и GitHub удалил ветку»); локальный HEAD
+уже строго совпадал с прод (`8e54419`, финальный коммит v400, working tree
+чистое) — восстановил простым `git push -u origin
+claude/inspiring-cannon-7z8s0p`, без unrelated-histories. `/health` 200
+подтверждён до начала.
+
+Добавил diag-v401 (commit → push dev → checkout прод → `git fetch` +
+`reset --hard` + `merge --ff-only` → push prod) — fast-forward прошёл
+чисто, прод-деплой ушёл в `BUILDING` и завершился `READY` за ~20-25 секунд
+(первая попытка `op=meta` сразу после пуша поймала 404 — деплой ещё не
+успел разъехаться, повторный запрос через 20с уже 200).
+
+Этап 1 — `proposals_by_status`={done:62}: pending/approved/revision/rejected
+пусты, действовать не по чему. Этап 2 — diag `op=meta`:
+`feedback_by_status`={awaiting_approval:15, closed:44, open:4},
+`proposals_last_update`=2026-07-12T10:44:03.911Z,
+`feedback_last_msg`=2026-07-12T10:45:23.756Z — идентичны v375-400 один в
+один (включая миллисекунды). 151-е подряд подтверждение отсутствия
+изменений в feedback/ai_proposals с закрытия ai_proposal #62 в v290.
+Полный `get-feedback-summary` не потребовался (meta совпал точь-в-точь).
+
+Push-уведомление не отправлено — 151 цикл без изменений сами по себе не
+новость, а ранее эскалированные находки (частота обходов v247/v263,
+переизбыток веток, инцидент деплоя v390/v391) не получили нового сдвига в
+этом обходе; конвейер деплоя здоров.
+
+Снос diag-v401 выполняется раздельным `git rm src/routes/diagDaily.js` +
+`Edit` app.js (импорт + роут), с проверкой `git show --stat`/`grep -n diag
+src/app.js` перед коммитом и пушем в обе ветки.
