@@ -40,6 +40,7 @@ import processingPlansRoutes from './routes/processingPlans.js';
 import productionOrdersRoutes from './routes/productionOrders.js';
 import contractsRoutes from './routes/contracts.js';
 import productionPLRoutes from './routes/productionPL.js';
+import diagDailyRoutes from './routes/diagDaily.js';
 import productionReceiptRoutes from './routes/productionReceipt.js';
 import productionSettingsRoutes from './routes/productionSettings.js';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -157,6 +158,7 @@ export function createApp({ serveStatic = true } = {}) {
   app.use('/api/production-orders', productionOrdersRoutes);
   app.use('/api/contracts', contractsRoutes);
   app.use('/api/production', productionPLRoutes);
+  app.use('/api/diag/daily-v392', diagDailyRoutes);
   app.use('/api/production/receipt', productionReceiptRoutes);
   app.use('/api/production-settings', productionSettingsRoutes);
   app.use((req, res) => {
