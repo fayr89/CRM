@@ -12059,7 +12059,11 @@ export async function renderSupplyDelivery(main) {
       box.append(el('div', { class: 'error' }, e.message || 'нет данных'));
     }
     wrap.append(box);
-    // Phase 2a — справочники офиса (тарифы упаковки, вознаграждение, пороги).
+    // Phase 2b — поставки, доставки, финмодель.
+    wrap.append(renderSdSuppliesCard());
+    wrap.append(renderSdDeliveriesCard());
+    // Phase 2a — справочники офиса + финпараметры.
+    wrap.append(renderSdFinanceCard());
     wrap.append(renderSdDirectories());
   } else if (!flag.is_admin) {
     wrap.append(el('div', { class: 'card' }, 'Зона выключена. Обратитесь к администратору, чтобы получить тестовый доступ.'));
@@ -12292,4 +12296,263 @@ function renderSdAdminPanel() {
   })();
 
   return card;
+}
+
+// ============================================================
+// Phase 2b — Поставки / Доставки + финмодель (тест-зона, под гейтом)
+// ============================================================
+const SD_CHANNELS = { wb: 'WB', ozon: 'Ozon', ym: 'Я.Маркет', avito: 'Авито' };
+const SD_MODELS = { fbs: 'ФБС', fbo: 'ФБО' };
+const SD_SUPPLY_STATUS = { draft: 'черновик', in_work: 'в работе', shipped: 'отгружена' };
+
+function renderSdFinanceCard() {
+  const card = el('div', { class: 'card', style: { marginBottom: '12px' } });
+  card.append(el('h4', {}, 'Финансовые параметры'));
+  const body = el('div', {}, 'Загрузка…');
+  card.append(body);
+  (async () => {
+    let s;
+    try { s = await api.sdFinanceSettings(); } catch (e) { body.textContent = e.message; return; }
+    body.textContent = '';
+    const rateI = el('input', { type: 'number', min: '0', step: 'any', value: s.labor_rate_per_min || 0, style: { width: '120px' } });
+    const status = el('span', { style: { marginLeft: '10px' } });
+    const saveBtn = el('button', { class: 'btn btn-primary', onClick: async () => {
+      status.textContent = 'Сохраняю…';
+      try { await api.sdSaveFinanceSettings({ labor_rate_per_min: Number(rateI.value) || 0 }); status.textContent = 'Сохранено'; toast('Сохранено', 'success'); }
+      catch (e) { status.textContent = ''; toast(e.message, 'error'); }
+    } }, 'Сохранить');
+    body.append(el('div', { style: { display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' } },
+      el('span', {}, 'Ставка труда склада, ₽/мин'), rateI, saveBtn, status));
+    body.append(el('div', { style: { fontSize: '12px', color: 'var(--text-muted)', marginTop: '6px' } },
+      `Вознаграждение склада (доход) — в «Справочники → Вознаграждение». Сейчас: ${s.reward.amount} ${SD_REWARD_UNITS[s.reward.unit] || s.reward.unit}.`));
+  })();
+  return card;
+}
+
+function renderSdSuppliesCard() {
+  const card = el('div', { class: 'card', style: { marginBottom: '12px' } });
+  card.append(el('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center' } },
+    el('h4', {}, 'Поставки'),
+    el('button', { class: 'btn btn-sm btn-primary', onClick: () => sdCreateSupply(reload) }, '+ Поставка')));
+  const tbody = el('tbody', {});
+  card.append(el('table', { class: 'table' },
+    el('thead', {}, el('tr', {}, el('th', {}, '#'), el('th', {}, 'Канал/Модель'), el('th', {}, 'Юрлицо'),
+      el('th', {}, 'Статус'), el('th', {}, 'Позиций (шт)'), el('th', {}, ''))), tbody));
+  async function reload() {
+    tbody.textContent = '';
+    let rows = [];
+    try { rows = await api.sdSupplies(); } catch (e) { toast(e.message, 'error'); }
+    if (!rows.length) { tbody.append(el('tr', {}, el('td', { colspan: '6' }, 'Нет поставок'))); return; }
+    for (const s of rows) {
+      const open = el('button', { class: 'btn btn-sm', onClick: () => sdOpenSupply(s.id, reload) }, 'Открыть');
+      const del = el('button', { class: 'btn btn-sm btn-danger', style: { marginLeft: '4px' }, onClick: async () => {
+        if (!(await confirm('Удалить поставку?'))) return;
+        try { await api.sdDeleteSupply(s.id); reload(); } catch (e) { toast(e.message, 'error'); }
+      } }, '🗑');
+      tbody.append(el('tr', {}, el('td', {}, '#' + s.id),
+        el('td', {}, `${SD_CHANNELS[s.channel] || s.channel} / ${SD_MODELS[s.model] || s.model}`),
+        el('td', {}, s.legal_entity || '—'), el('td', {}, SD_SUPPLY_STATUS[s.status] || s.status),
+        el('td', {}, `${s.item_count} (${s.total_qty})`), el('td', {}, open, del)));
+    }
+  }
+  reload();
+  return card;
+}
+
+async function sdCreateSupply(onSaved) {
+  const chanS = el('select', {}, ...Object.entries(SD_CHANNELS).map(([v, l]) => el('option', { value: v }, l)));
+  const modelS = el('select', {}, el('option', { value: 'fbs' }, 'ФБС'), el('option', { value: 'fbo' }, 'ФБО'));
+  const legalI = el('input', { type: 'text' });
+  const titleI = el('input', { type: 'text' });
+  const body = el('div', {},
+    el('div', { class: 'form-row' }, el('label', {}, 'Канал'), chanS),
+    el('div', { class: 'form-row' }, el('label', {}, 'Модель'), modelS),
+    el('div', { class: 'form-row' }, el('label', {}, 'Юрлицо'), legalI),
+    el('div', { class: 'form-row' }, el('label', {}, 'Название (необязательно)'), titleI));
+  await openModal('Новая поставка', body, { primaryLabel: 'Создать', onSubmit: async () => {
+    try {
+      await api.sdCreateSupply({ channel: chanS.value, model: modelS.value, legal_entity: legalI.value.trim() || null, title: titleI.value.trim() || null });
+      toast('Поставка создана', 'success'); onSaved?.();
+    } catch (e) { toast(e.message, 'error'); return false; }
+  } });
+}
+
+async function sdOpenSupply(id, onChange) {
+  const body = el('div', {}, 'Загрузка…');
+  async function refresh() {
+    let s;
+    try { s = await api.sdSupply(id); } catch (e) { body.textContent = e.message; return; }
+    body.textContent = '';
+    const statusSel = el('select', {}, ...['draft', 'in_work', 'shipped'].map((v) =>
+      el('option', { value: v, ...(v === s.status ? { selected: 'selected' } : {}) }, SD_SUPPLY_STATUS[v])));
+    statusSel.addEventListener('change', async () => {
+      try { await api.sdUpdateSupply(id, { status: statusSel.value }); toast('Статус обновлён', 'success'); onChange?.(); }
+      catch (e) { toast(e.message, 'error'); }
+    });
+    const head = el('div', { style: { marginBottom: '8px' } });
+    head.append(el('div', {}, `Канал: ${SD_CHANNELS[s.channel] || s.channel} · Модель: ${SD_MODELS[s.model] || s.model}`));
+    if (s.legal_entity) head.append(el('div', {}, `Юрлицо: ${s.legal_entity}`));
+    head.append(el('div', { style: { marginTop: '6px' } }, el('span', {}, 'Статус: '), statusSel));
+    body.append(head);
+    body.append(el('div', { style: { margin: '8px 0' } },
+      el('button', { class: 'btn btn-sm btn-primary', onClick: () => sdAddItem(id, refresh, onChange) }, '+ Позиция')));
+    const tbody = el('tbody', {});
+    body.append(el('table', { class: 'table' },
+      el('thead', {}, el('tr', {}, el('th', {}, 'Артикул'), el('th', {}, 'Название'), el('th', {}, 'Кол-во'), el('th', {}, ''))), tbody));
+    if (!s.items.length) tbody.append(el('tr', {}, el('td', { colspan: '4' }, 'Пока нет позиций')));
+    for (const it of s.items) {
+      const del = el('button', { class: 'btn btn-sm btn-danger', onClick: async () => {
+        try { await api.sdDeleteSupplyItem(id, it.id); refresh(); onChange?.(); } catch (e) { toast(e.message, 'error'); }
+      } }, '🗑');
+      tbody.append(el('tr', {}, el('td', {}, it.sku || '—'), el('td', {}, it.name || '—'), el('td', {}, String(it.quantity)), el('td', {}, del)));
+    }
+  }
+  await refresh();
+  await openModal(`Поставка #${id}`, body);
+}
+
+async function sdAddItem(supplyId, onSaved, onChange) {
+  const skuI = el('input', { type: 'text' });
+  const nameI = el('input', { type: 'text' });
+  const qtyI = el('input', { type: 'number', min: '1', step: '1', value: '1' });
+  const body = el('div', {},
+    el('div', { class: 'form-row' }, el('label', {}, 'Артикул'), skuI),
+    el('div', { class: 'form-row' }, el('label', {}, 'Название'), nameI),
+    el('div', { class: 'form-row' }, el('label', {}, 'Кол-во'), qtyI));
+  await openModal('Добавить позицию', body, { primaryLabel: 'Добавить', onSubmit: async () => {
+    const qty = Number(qtyI.value) || 0;
+    if (qty <= 0) { toast('Кол-во должно быть > 0', 'error'); return false; }
+    try {
+      await api.sdAddSupplyItem(supplyId, { sku: skuI.value.trim() || null, name: nameI.value.trim() || null, quantity: qty });
+      toast('Позиция добавлена', 'success'); onSaved?.(); onChange?.();
+    } catch (e) { toast(e.message, 'error'); return false; }
+  } });
+}
+
+function renderSdDeliveriesCard() {
+  const card = el('div', { class: 'card', style: { marginBottom: '12px' } });
+  card.append(el('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center' } },
+    el('h4', {}, 'Доставки'),
+    el('button', { class: 'btn btn-sm btn-primary', onClick: () => sdCreateDelivery(reload) }, '+ Доставка')));
+  const tbody = el('tbody', {});
+  card.append(el('table', { class: 'table' },
+    el('thead', {}, el('tr', {}, el('th', {}, '#'), el('th', {}, 'Название'), el('th', {}, 'Поставок'),
+      el('th', {}, 'Статус'), el('th', {}, ''))), tbody));
+  async function reload() {
+    tbody.textContent = '';
+    let rows = [];
+    try { rows = await api.sdDeliveries(); } catch (e) { toast(e.message, 'error'); }
+    if (!rows.length) { tbody.append(el('tr', {}, el('td', { colspan: '5' }, 'Нет доставок'))); return; }
+    for (const d of rows) {
+      const open = el('button', { class: 'btn btn-sm', onClick: () => sdOpenDelivery(d.id, reload) }, 'Открыть');
+      const del = el('button', { class: 'btn btn-sm btn-danger', style: { marginLeft: '4px' }, onClick: async () => {
+        if (!(await confirm('Удалить доставку?'))) return;
+        try { await api.sdDeleteDelivery(d.id); reload(); } catch (e) { toast(e.message, 'error'); }
+      } }, '🗑');
+      tbody.append(el('tr', {}, el('td', {}, '#' + d.id), el('td', {}, d.title || '—'),
+        el('td', {}, String(d.supply_count)), el('td', {}, d.status === 'closed' ? 'закрыта' : 'черновик'),
+        el('td', {}, open, del)));
+    }
+  }
+  reload();
+  return card;
+}
+
+async function sdCreateDelivery(onSaved) {
+  const titleI = el('input', { type: 'text' });
+  const logI = el('input', { type: 'number', min: '0', step: 'any', value: '0' });
+  const body = el('div', {},
+    el('div', { class: 'form-row' }, el('label', {}, 'Название'), titleI),
+    el('div', { class: 'form-row' }, el('label', {}, 'Логистика, ₽'), logI));
+  await openModal('Новая доставка', body, { primaryLabel: 'Создать', onSubmit: async () => {
+    try {
+      await api.sdCreateDelivery({ title: titleI.value.trim() || null, logistics_cost: Number(logI.value) || 0 });
+      toast('Доставка создана', 'success'); onSaved?.();
+    } catch (e) { toast(e.message, 'error'); return false; }
+  } });
+}
+
+async function sdOpenDelivery(id, onChange) {
+  const body = el('div', {}, 'Загрузка…');
+  async function refresh() {
+    let d;
+    try { d = await api.sdDelivery(id); } catch (e) { body.textContent = e.message; return; }
+    body.textContent = '';
+    const titleI = el('input', { type: 'text', value: d.title || '' });
+    const logI = el('input', { type: 'number', min: '0', step: 'any', value: d.logistics_cost || 0 });
+    const statusSel = el('select', {},
+      el('option', { value: 'draft', ...(d.status !== 'closed' ? { selected: 'selected' } : {}) }, 'Черновик'),
+      el('option', { value: 'closed', ...(d.status === 'closed' ? { selected: 'selected' } : {}) }, 'Закрыта'));
+    const saveHdr = el('button', { class: 'btn btn-sm', onClick: async () => {
+      try { await api.sdUpdateDelivery(id, { title: titleI.value.trim() || null, logistics_cost: Number(logI.value) || 0, status: statusSel.value }); toast('Сохранено', 'success'); refresh(); onChange?.(); }
+      catch (e) { toast(e.message, 'error'); }
+    } }, 'Сохранить');
+    const hdr = el('div', { style: { marginBottom: '10px' } });
+    hdr.append(el('div', { class: 'form-row' }, el('label', {}, 'Название'), titleI));
+    hdr.append(el('div', { class: 'form-row' }, el('label', {}, 'Логистика, ₽'), logI));
+    hdr.append(el('div', { class: 'form-row' }, el('label', {}, 'Статус'), statusSel));
+    hdr.append(saveHdr);
+    body.append(hdr);
+
+    const f = d.finance || {};
+    const fin = el('div', { class: 'card', style: { margin: '10px 0' } });
+    fin.append(el('h4', {}, 'Финмодель (предварительно)'));
+    const line = (label, val) => el('div', { style: { display: 'flex', justifyContent: 'space-between' } }, el('span', {}, label), el('strong', {}, val));
+    fin.append(line('Упаковка, ₽', String(f.packaging_cost ?? 0)));
+    fin.append(line('Время упаковки, мин', String(f.labor_minutes ?? 0)));
+    fin.append(line('Зарплата склада, ₽', String(f.labor_cost ?? 0)));
+    fin.append(line('Логистика, ₽', String(f.logistics_cost ?? 0)));
+    fin.append(line(`Вознаграждение (${SD_REWARD_UNITS[f.reward_unit] || f.reward_unit || '—'}, база ${f.reward_base ?? 0}), ₽`, String(f.reward_amount ?? 0)));
+    const profit = line('ЧИСТАЯ ПРИБЫЛЬ СКЛАДА, ₽', String(f.net_profit ?? 0));
+    profit.style.fontSize = '16px';
+    profit.style.marginTop = '6px';
+    profit.style.color = (Number(f.net_profit) >= 0 ? '#16a34a' : '#dc2626');
+    fin.append(profit);
+    body.append(fin);
+
+    const supBox = el('div', { style: { margin: '10px 0' } });
+    supBox.append(el('h4', {}, 'Поставки в доставке'));
+    const allSupplies = await api.sdSupplies().catch(() => []);
+    const attachedIds = new Set((d.supplies || []).map((s) => s.id));
+    const free = allSupplies.filter((s) => !attachedIds.has(s.id));
+    const supSel = el('select', {}, el('option', { value: '' }, '— выбрать поставку —'),
+      ...free.map((s) => el('option', { value: String(s.id) }, `#${s.id} ${SD_CHANNELS[s.channel] || s.channel}/${SD_MODELS[s.model] || s.model} (${s.total_qty} шт)`)));
+    const attachBtn = el('button', { class: 'btn btn-sm btn-primary', style: { marginLeft: '6px' }, onClick: async () => {
+      if (!supSel.value) return;
+      try { await api.sdAttachSupply(id, Number(supSel.value)); refresh(); onChange?.(); } catch (e) { toast(e.message, 'error'); }
+    } }, 'Привязать');
+    supBox.append(el('div', { style: { marginBottom: '6px' } }, supSel, attachBtn));
+    if (!(d.supplies || []).length) supBox.append(el('div', { style: { color: 'var(--text-muted)' } }, 'Поставки не привязаны'));
+    for (const s of (d.supplies || [])) {
+      const det = el('button', { class: 'btn btn-sm', onClick: async () => {
+        try { await api.sdDetachSupply(id, s.id); refresh(); onChange?.(); } catch (e) { toast(e.message, 'error'); }
+      } }, 'Отвязать');
+      supBox.append(el('div', { style: { display: 'flex', justifyContent: 'space-between', padding: '2px 0' } },
+        el('span', {}, `#${s.id} ${SD_CHANNELS[s.channel] || s.channel}/${SD_MODELS[s.model] || s.model} · ${s.total_qty} шт`), det));
+    }
+    body.append(supBox);
+
+    const pkgBox = el('div', { style: { margin: '10px 0' } });
+    pkgBox.append(el('h4', {}, 'Упаковка'));
+    const tariffs = await api.sdTariffs().catch(() => []);
+    const tarSel = el('select', {}, el('option', { value: '' }, '— тариф —'),
+      ...tariffs.map((t) => el('option', { value: String(t.id) }, `${t.name} (${t.cost}₽, ${t.time_norm_min}мин)`)));
+    const pQtyI = el('input', { type: 'number', min: '1', step: '1', value: '1', style: { width: '80px', marginLeft: '6px' } });
+    const addPkg = el('button', { class: 'btn btn-sm btn-primary', style: { marginLeft: '6px' }, onClick: async () => {
+      if (!tarSel.value) { toast('Выберите тариф', 'error'); return; }
+      try { await api.sdAddPackaging(id, { tariff_id: Number(tarSel.value), quantity: Number(pQtyI.value) || 1 }); refresh(); onChange?.(); } catch (e) { toast(e.message, 'error'); }
+    } }, '+ Добавить');
+    pkgBox.append(el('div', { style: { marginBottom: '6px' } }, tarSel, pQtyI, addPkg));
+    if (!(d.packaging || []).length) pkgBox.append(el('div', { style: { color: 'var(--text-muted)' } }, 'Упаковка не добавлена'));
+    for (const p of (d.packaging || [])) {
+      const del = el('button', { class: 'btn btn-sm btn-danger', onClick: async () => {
+        try { await api.sdDeletePackaging(id, p.id); refresh(); onChange?.(); } catch (e) { toast(e.message, 'error'); }
+      } }, '🗑');
+      pkgBox.append(el('div', { style: { display: 'flex', justifyContent: 'space-between', padding: '2px 0' } },
+        el('span', {}, `${p.tariff_name || 'тариф'} × ${p.quantity} = ${(p.unit_cost * p.quantity).toFixed(2)}₽ / ${(p.unit_time_min * p.quantity).toFixed(1)}мин`), del));
+    }
+    body.append(pkgBox);
+  }
+  await refresh();
+  await openModal(`Доставка #${id}`, body, { size: 'lg' });
 }

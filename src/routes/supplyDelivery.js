@@ -16,6 +16,7 @@ import {
 } from '../services/featureFlags.js';
 import {
   ensureSupplyDeliverySchema, getWarehouseReward, setWarehouseReward,
+  getLaborRatePerMin, setLaborRatePerMin, computeDeliveryFinance,
 } from '../services/supplyDeliverySchema.js';
 
 const router = Router();
@@ -219,6 +220,242 @@ router.delete('/thresholds/:sku', requireOperate, asyncHandler(async (req, res) 
   if (req.params.sku === 'default') throw BadRequest('Глобальный порог нельзя удалить — только изменить');
   await db.run('DELETE FROM sd_stock_thresholds WHERE sku = ?', req.params.sku);
   res.json({ ok: true });
+}));
+
+// ==================== Phase 2b: Поставки / Доставки ====================
+
+// ----- Финансовые параметры (ставка труда + вознаграждение) -----
+router.get('/finance-settings', requireOperate, asyncHandler(async (_req, res) => {
+  await ensureSupplyDeliverySchema();
+  res.json({
+    labor_rate_per_min: await getLaborRatePerMin(),
+    reward: await getWarehouseReward(),
+  });
+}));
+
+router.put('/finance-settings', requireOperate, asyncHandler(async (req, res) => {
+  const rate = z.object({ labor_rate_per_min: z.number().nonnegative() }).parse(req.body);
+  const saved = await setLaborRatePerMin(rate.labor_rate_per_min, req.user.id);
+  res.json({ labor_rate_per_min: saved });
+}));
+
+// ----- Поставки -----
+const supplySchema = z.object({
+  channel: z.enum(['wb', 'ozon', 'ym', 'avito']),
+  model: z.enum(['fbs', 'fbo']),
+  legal_entity: z.string().max(200).optional().nullable(),
+  title: z.string().max(200).optional().nullable(),
+  note: z.string().max(2000).optional().nullable(),
+});
+
+router.get('/supplies', requireOperate, asyncHandler(async (_req, res) => {
+  await ensureSupplyDeliverySchema();
+  res.json(await db.all(
+    `SELECT s.*, COALESCE(i.cnt, 0) AS item_count, COALESCE(i.qty, 0) AS total_qty
+     FROM sd_supplies s
+     LEFT JOIN (SELECT supply_id, COUNT(*) AS cnt, SUM(quantity) AS qty FROM sd_supply_items GROUP BY supply_id) i
+       ON i.supply_id = s.id
+     ORDER BY s.id DESC`,
+  ));
+}));
+
+router.post('/supplies', requireOperate, asyncHandler(async (req, res) => {
+  await ensureSupplyDeliverySchema();
+  const d = supplySchema.parse(req.body);
+  const row = await db.get(
+    `INSERT INTO sd_supplies (channel, model, legal_entity, title, note, created_by)
+     VALUES (?, ?, ?, ?, ?, ?) RETURNING *`,
+    d.channel, d.model, d.legal_entity ?? null, d.title ?? null, d.note ?? null, req.user.id,
+  );
+  res.json(row);
+}));
+
+router.get('/supplies/:id', requireOperate, asyncHandler(async (req, res) => {
+  await ensureSupplyDeliverySchema();
+  const supply = await db.get('SELECT * FROM sd_supplies WHERE id = ?', req.params.id);
+  if (!supply) throw NotFound('Поставка не найдена');
+  const items = await db.all('SELECT * FROM sd_supply_items WHERE supply_id = ? ORDER BY id', req.params.id);
+  res.json({ ...supply, items });
+}));
+
+router.put('/supplies/:id', requireOperate, asyncHandler(async (req, res) => {
+  await ensureSupplyDeliverySchema();
+  const d = supplySchema.partial().extend({
+    status: z.enum(['draft', 'in_work', 'shipped']).optional(),
+  }).parse(req.body);
+  const cur = await db.get('SELECT * FROM sd_supplies WHERE id = ?', req.params.id);
+  if (!cur) throw NotFound('Поставка не найдена');
+  const row = await db.get(
+    `UPDATE sd_supplies SET
+       channel = COALESCE(?, channel), model = COALESCE(?, model),
+       legal_entity = COALESCE(?, legal_entity), title = COALESCE(?, title),
+       note = COALESCE(?, note), status = COALESCE(?, status), updated_at = NOW()
+     WHERE id = ? RETURNING *`,
+    d.channel ?? null, d.model ?? null, d.legal_entity ?? null, d.title ?? null,
+    d.note ?? null, d.status ?? null, req.params.id,
+  );
+  res.json(row);
+}));
+
+router.delete('/supplies/:id', requireOperate, asyncHandler(async (req, res) => {
+  await ensureSupplyDeliverySchema();
+  await db.run('DELETE FROM sd_supplies WHERE id = ?', req.params.id);
+  res.json({ ok: true });
+}));
+
+const itemSchema = z.object({
+  sku: z.string().max(120).optional().nullable(),
+  name: z.string().max(300).optional().nullable(),
+  quantity: z.number().int().positive(),
+  product_id: z.number().int().positive().optional().nullable(),
+});
+
+router.post('/supplies/:id/items', requireOperate, asyncHandler(async (req, res) => {
+  await ensureSupplyDeliverySchema();
+  const supply = await db.get('SELECT id FROM sd_supplies WHERE id = ?', req.params.id);
+  if (!supply) throw NotFound('Поставка не найдена');
+  const d = itemSchema.parse(req.body);
+  const row = await db.get(
+    `INSERT INTO sd_supply_items (supply_id, sku, name, quantity, product_id)
+     VALUES (?, ?, ?, ?, ?) RETURNING *`,
+    req.params.id, d.sku ?? null, d.name ?? null, d.quantity, d.product_id ?? null,
+  );
+  res.json(row);
+}));
+
+router.delete('/supplies/:id/items/:itemId', requireOperate, asyncHandler(async (req, res) => {
+  await ensureSupplyDeliverySchema();
+  await db.run('DELETE FROM sd_supply_items WHERE id = ? AND supply_id = ?', req.params.itemId, req.params.id);
+  res.json({ ok: true });
+}));
+
+// ----- Доставки -----
+async function loadDeliveryDetail(id) {
+  const delivery = await db.get('SELECT * FROM sd_deliveries WHERE id = ?', id);
+  if (!delivery) return null;
+  const supplies = await db.all(
+    `SELECT s.*, COALESCE(i.qty, 0) AS total_qty
+     FROM sd_delivery_supplies ds
+     JOIN sd_supplies s ON s.id = ds.supply_id
+     LEFT JOIN (SELECT supply_id, SUM(quantity) AS qty FROM sd_supply_items GROUP BY supply_id) i ON i.supply_id = s.id
+     WHERE ds.delivery_id = ? ORDER BY s.id`,
+    id,
+  );
+  const packaging = await db.all('SELECT * FROM sd_delivery_packaging WHERE delivery_id = ? ORDER BY id', id);
+  const itemStats = {
+    supply_count: supplies.length,
+    total_qty: supplies.reduce((s, x) => s + (Number(x.total_qty) || 0), 0),
+  };
+  const finance = computeDeliveryFinance({
+    delivery,
+    packaging,
+    reward: await getWarehouseReward(),
+    laborRatePerMin: await getLaborRatePerMin(),
+    itemStats,
+  });
+  return { ...delivery, supplies, packaging, item_stats: itemStats, finance };
+}
+
+router.get('/deliveries', requireOperate, asyncHandler(async (_req, res) => {
+  await ensureSupplyDeliverySchema();
+  res.json(await db.all(
+    `SELECT d.*, COALESCE(ds.cnt, 0) AS supply_count
+     FROM sd_deliveries d
+     LEFT JOIN (SELECT delivery_id, COUNT(*) AS cnt FROM sd_delivery_supplies GROUP BY delivery_id) ds
+       ON ds.delivery_id = d.id
+     ORDER BY d.id DESC`,
+  ));
+}));
+
+router.post('/deliveries', requireOperate, asyncHandler(async (req, res) => {
+  await ensureSupplyDeliverySchema();
+  const d = z.object({
+    title: z.string().max(200).optional().nullable(),
+    logistics_cost: z.number().nonnegative().optional().default(0),
+  }).parse(req.body);
+  const row = await db.get(
+    'INSERT INTO sd_deliveries (title, logistics_cost, created_by) VALUES (?, ?, ?) RETURNING *',
+    d.title ?? null, d.logistics_cost ?? 0, req.user.id,
+  );
+  res.json(row);
+}));
+
+router.get('/deliveries/:id', requireOperate, asyncHandler(async (req, res) => {
+  await ensureSupplyDeliverySchema();
+  const detail = await loadDeliveryDetail(req.params.id);
+  if (!detail) throw NotFound('Доставка не найдена');
+  res.json(detail);
+}));
+
+router.put('/deliveries/:id', requireOperate, asyncHandler(async (req, res) => {
+  await ensureSupplyDeliverySchema();
+  const d = z.object({
+    title: z.string().max(200).optional().nullable(),
+    logistics_cost: z.number().nonnegative().optional(),
+    status: z.enum(['draft', 'closed']).optional(),
+  }).parse(req.body);
+  const cur = await db.get('SELECT * FROM sd_deliveries WHERE id = ?', req.params.id);
+  if (!cur) throw NotFound('Доставка не найдена');
+  const closedAt = d.status === 'closed' ? 'NOW()' : (d.status === 'draft' ? 'NULL' : 'closed_at');
+  await db.run(
+    `UPDATE sd_deliveries SET
+       title = COALESCE(?, title),
+       logistics_cost = COALESCE(?, logistics_cost),
+       status = COALESCE(?, status),
+       closed_at = ${closedAt},
+       updated_at = NOW()
+     WHERE id = ?`,
+    d.title ?? null, d.logistics_cost ?? null, d.status ?? null, req.params.id,
+  );
+  res.json(await loadDeliveryDetail(req.params.id));
+}));
+
+router.delete('/deliveries/:id', requireOperate, asyncHandler(async (req, res) => {
+  await ensureSupplyDeliverySchema();
+  await db.run('DELETE FROM sd_deliveries WHERE id = ?', req.params.id);
+  res.json({ ok: true });
+}));
+
+router.post('/deliveries/:id/supplies', requireOperate, asyncHandler(async (req, res) => {
+  await ensureSupplyDeliverySchema();
+  const { supply_id } = z.object({ supply_id: z.number().int().positive() }).parse(req.body);
+  const supply = await db.get('SELECT id FROM sd_supplies WHERE id = ?', supply_id);
+  if (!supply) throw NotFound('Поставка не найдена');
+  await db.run(
+    `INSERT INTO sd_delivery_supplies (delivery_id, supply_id) VALUES (?, ?)
+     ON CONFLICT DO NOTHING`,
+    req.params.id, supply_id,
+  );
+  res.json(await loadDeliveryDetail(req.params.id));
+}));
+
+router.delete('/deliveries/:id/supplies/:supplyId', requireOperate, asyncHandler(async (req, res) => {
+  await ensureSupplyDeliverySchema();
+  await db.run('DELETE FROM sd_delivery_supplies WHERE delivery_id = ? AND supply_id = ?', req.params.id, req.params.supplyId);
+  res.json(await loadDeliveryDetail(req.params.id));
+}));
+
+router.post('/deliveries/:id/packaging', requireOperate, asyncHandler(async (req, res) => {
+  await ensureSupplyDeliverySchema();
+  const d = z.object({
+    tariff_id: z.number().int().positive(),
+    quantity: z.number().int().positive(),
+  }).parse(req.body);
+  const t = await db.get('SELECT * FROM sd_packaging_tariffs WHERE id = ?', d.tariff_id);
+  if (!t) throw NotFound('Тариф упаковки не найден');
+  // Снапшот тарифа — доставка не пересчитывается при будущем изменении справочника.
+  await db.run(
+    `INSERT INTO sd_delivery_packaging (delivery_id, tariff_id, tariff_name, unit_cost, unit_time_min, quantity)
+     VALUES (?, ?, ?, ?, ?, ?)`,
+    req.params.id, t.id, t.name, t.cost, t.time_norm_min, d.quantity,
+  );
+  res.json(await loadDeliveryDetail(req.params.id));
+}));
+
+router.delete('/deliveries/:id/packaging/:lineId', requireOperate, asyncHandler(async (req, res) => {
+  await ensureSupplyDeliverySchema();
+  await db.run('DELETE FROM sd_delivery_packaging WHERE id = ? AND delivery_id = ?', req.params.lineId, req.params.id);
+  res.json(await loadDeliveryDetail(req.params.id));
 }));
 
 export default router;

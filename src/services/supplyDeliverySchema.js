@@ -51,8 +51,113 @@ export async function ensureSupplyDeliverySchema() {
        key TEXT PRIMARY KEY, value JSONB NOT NULL,
        updated_by INTEGER, updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`,
   );
+  // ----- Phase 2b: сущности Поставка / Доставка -----
+  await db.run(
+    `CREATE TABLE IF NOT EXISTS sd_supplies (
+       id SERIAL PRIMARY KEY,
+       channel TEXT NOT NULL DEFAULT 'wb',
+       model TEXT NOT NULL DEFAULT 'fbs',
+       legal_entity TEXT,
+       title TEXT,
+       status TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft','in_work','shipped')),
+       note TEXT,
+       created_by INTEGER,
+       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+     )`,
+  );
+  await db.run(
+    `CREATE TABLE IF NOT EXISTS sd_supply_items (
+       id SERIAL PRIMARY KEY,
+       supply_id INTEGER NOT NULL REFERENCES sd_supplies(id) ON DELETE CASCADE,
+       sku TEXT,
+       name TEXT,
+       quantity INTEGER NOT NULL DEFAULT 1,
+       product_id INTEGER,
+       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+     )`,
+  );
+  await db.run(
+    `CREATE TABLE IF NOT EXISTS sd_deliveries (
+       id SERIAL PRIMARY KEY,
+       title TEXT,
+       status TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft','closed')),
+       logistics_cost REAL NOT NULL DEFAULT 0,
+       created_by INTEGER,
+       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+       closed_at TIMESTAMPTZ
+     )`,
+  );
+  await db.run(
+    `CREATE TABLE IF NOT EXISTS sd_delivery_supplies (
+       delivery_id INTEGER NOT NULL REFERENCES sd_deliveries(id) ON DELETE CASCADE,
+       supply_id INTEGER NOT NULL REFERENCES sd_supplies(id) ON DELETE CASCADE,
+       PRIMARY KEY (delivery_id, supply_id)
+     )`,
+  );
+  // Позиции упаковки доставки — снапшот тарифа на момент добавления (старые
+  // доставки не пересчитываются при изменении справочника).
+  await db.run(
+    `CREATE TABLE IF NOT EXISTS sd_delivery_packaging (
+       id SERIAL PRIMARY KEY,
+       delivery_id INTEGER NOT NULL REFERENCES sd_deliveries(id) ON DELETE CASCADE,
+       tariff_id INTEGER,
+       tariff_name TEXT,
+       unit_cost REAL NOT NULL DEFAULT 0,
+       unit_time_min REAL NOT NULL DEFAULT 0,
+       quantity INTEGER NOT NULL DEFAULT 1,
+       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+     )`,
+  );
   ensured = true;
 }
+
+// Ставка труда склада (₽/мин) — стоимость времени упаковки. Отдельно от
+// «вознаграждения» (то — доход склада, это — его расход на зарплату).
+export async function getLaborRatePerMin() {
+  const row = await db.get(`SELECT value FROM app_settings WHERE key = 'sd.labor_rate_per_min'`).catch(() => null);
+  return Number(row?.value) || 0;
+}
+
+export async function setLaborRatePerMin(rate, userId) {
+  await ensureSupplyDeliverySchema();
+  const clean = Math.max(0, Number(rate) || 0);
+  await db.run(
+    `INSERT INTO app_settings (key, value, updated_by, updated_at)
+     VALUES ('sd.labor_rate_per_min', ?::jsonb, ?, NOW())
+     ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_by = EXCLUDED.updated_by, updated_at = NOW()`,
+    JSON.stringify(clean), userId,
+  );
+  return clean;
+}
+
+// Финмодель доставки: прибыль склада = вознаграждение − (упаковка + зарплата +
+// логистика). Себестоимость товара НЕ входит (это прибыль склада как центра).
+export function computeDeliveryFinance({ delivery, packaging, reward, laborRatePerMin, itemStats }) {
+  const packaging_cost = (packaging || []).reduce((s, p) => s + (Number(p.unit_cost) || 0) * (Number(p.quantity) || 0), 0);
+  const labor_minutes = (packaging || []).reduce((s, p) => s + (Number(p.unit_time_min) || 0) * (Number(p.quantity) || 0), 0);
+  const labor_cost = labor_minutes * (Number(laborRatePerMin) || 0);
+  const logistics_cost = Number(delivery?.logistics_cost) || 0;
+  let reward_base = 0;
+  if (reward?.unit === 'per_item') reward_base = itemStats?.total_qty || 0;
+  else if (reward?.unit === 'per_order') reward_base = itemStats?.supply_count || 0;
+  else if (reward?.unit === 'per_hour') reward_base = labor_minutes / 60;
+  const reward_amount = (Number(reward?.amount) || 0) * reward_base;
+  const net_profit = reward_amount - (packaging_cost + labor_cost + logistics_cost);
+  return {
+    packaging_cost: round2(packaging_cost),
+    labor_minutes: round2(labor_minutes),
+    labor_cost: round2(labor_cost),
+    logistics_cost: round2(logistics_cost),
+    reward_unit: reward?.unit || 'per_order',
+    reward_base: round2(reward_base),
+    reward_amount: round2(reward_amount),
+    net_profit: round2(net_profit),
+  };
+}
+
+function round2(n) { return Math.round((Number(n) || 0) * 100) / 100; }
 
 export const REWARD_UNITS = ['per_order', 'per_item', 'per_hour'];
 export const DEFAULT_REWARD = { amount: 0, unit: 'per_order' };

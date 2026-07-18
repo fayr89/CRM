@@ -227,6 +227,27 @@ export const api = {
   sdThresholds: () => request('GET', '/api/supply-delivery/thresholds'),
   sdSaveThreshold: (sku, body) => request('PUT', `/api/supply-delivery/thresholds/${encodeURIComponent(sku)}`, { body }),
   sdDeleteThreshold: (sku) => request('DELETE', `/api/supply-delivery/thresholds/${encodeURIComponent(sku)}`),
+  // Финансовые параметры (Phase 2b)
+  sdFinanceSettings: () => request('GET', '/api/supply-delivery/finance-settings'),
+  sdSaveFinanceSettings: (body) => request('PUT', '/api/supply-delivery/finance-settings', { body }),
+  // Поставки
+  sdSupplies: () => request('GET', '/api/supply-delivery/supplies'),
+  sdCreateSupply: (body) => request('POST', '/api/supply-delivery/supplies', { body }),
+  sdSupply: (id) => request('GET', `/api/supply-delivery/supplies/${id}`),
+  sdUpdateSupply: (id, body) => request('PUT', `/api/supply-delivery/supplies/${id}`, { body }),
+  sdDeleteSupply: (id) => request('DELETE', `/api/supply-delivery/supplies/${id}`),
+  sdAddSupplyItem: (id, body) => request('POST', `/api/supply-delivery/supplies/${id}/items`, { body }),
+  sdDeleteSupplyItem: (id, itemId) => request('DELETE', `/api/supply-delivery/supplies/${id}/items/${itemId}`),
+  // Доставки
+  sdDeliveries: () => request('GET', '/api/supply-delivery/deliveries'),
+  sdCreateDelivery: (body) => request('POST', '/api/supply-delivery/deliveries', { body }),
+  sdDelivery: (id) => request('GET', `/api/supply-delivery/deliveries/${id}`),
+  sdUpdateDelivery: (id, body) => request('PUT', `/api/supply-delivery/deliveries/${id}`, { body }),
+  sdDeleteDelivery: (id) => request('DELETE', `/api/supply-delivery/deliveries/${id}`),
+  sdAttachSupply: (id, supply_id) => request('POST', `/api/supply-delivery/deliveries/${id}/supplies`, { body: { supply_id } }),
+  sdDetachSupply: (id, supplyId) => request('DELETE', `/api/supply-delivery/deliveries/${id}/supplies/${supplyId}`),
+  sdAddPackaging: (id, body) => request('POST', `/api/supply-delivery/deliveries/${id}/packaging`, { body }),
+  sdDeletePackaging: (id, lineId) => request('DELETE', `/api/supply-delivery/deliveries/${id}/packaging/${lineId}`),
 
   // Производственный заказ: выполнить N штук + синхронизация материала с МС
   executeProductionOrder: (id, qty, day) => request('POST', `/api/production-orders/${id}/execute`, { body: { qty, day } }),
