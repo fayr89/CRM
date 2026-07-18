@@ -30,6 +30,7 @@ import {
   renderProductionOrders,
   renderContracts,
   renderProductionPL,
+  renderSupplyDelivery,
 } from './views.js';
 
 const root = document.getElementById('app');
@@ -179,6 +180,7 @@ function renderLogin() {
       setSession(r.token, r.user);
       if (r.user.role === 'admin') maybeBackupOnLogin();
       if (['admin', 'aus'].includes(r.user.role)) maybeRefreshStockOnLogin();
+      loadSupplyDeliveryFlag().then(() => renderApp());
       location.hash = '#/dashboard';
       renderApp();
     } catch (e) {
@@ -285,6 +287,15 @@ function renderShell() {
           el('span', {}, it.label), ...extras),
       );
     }
+  }
+  // Тест-зона «Поставки → Доставки» — только если бэк разрешил (фиче-флаг, по
+  // умолчанию выключено). Отдельная группа, визуально помечена как тестовая.
+  if (supplyDeliveryVisible) {
+    navChildren.push(el('div', { class: 'sidebar-group-title' }, '🧪 Тест'));
+    navChildren.push(
+      el('a', { href: '#/supply-delivery', class: path.startsWith('#/supply-delivery') ? 'active' : '' },
+        el('span', {}, 'Поставки · Доставки')),
+    );
   }
 
   const searchBtn = el(
@@ -783,7 +794,20 @@ const ROUTES = {
   '#/contracts': renderContracts,
   '#/production-pl': renderProductionPL,
   '#/ai-inbox': renderAiInbox,
+  '#/supply-delivery': renderSupplyDelivery,
 };
+
+// Видимость тест-зоны «Поставки → Доставки» — приходит с бэка (фиче-флаг).
+// Кэшируем в модульной переменной, чтобы синхронно строить меню в renderShell.
+let supplyDeliveryVisible = false;
+async function loadSupplyDeliveryFlag() {
+  try {
+    const f = await api.supplyDeliveryFlag();
+    supplyDeliveryVisible = !!f.visible;
+  } catch {
+    supplyDeliveryVisible = false;
+  }
+}
 
 function renderApp() {
   const { path, params } = parseHash();
@@ -829,6 +853,8 @@ if (getToken()) {
     const { path } = parseHash();
     if (['#/orders', '#/products'].includes(path)) renderApp();
   });
+  // Флаг тест-зоны «Поставки → Доставки» — обновляем меню, когда узнали видимость.
+  loadSupplyDeliveryFlag().then(() => renderApp());
 }
 
 // === Service Worker: детект обновлений и баннер «Доступно обновление» ===

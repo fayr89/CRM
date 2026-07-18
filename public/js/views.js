@@ -12020,3 +12020,108 @@ async function renderProductionSettingsSection(area) {
     area.append(el('div', { class: 'card error' }, 'Ошибка: ' + (e.message || 'не удалось загрузить')));
   }
 }
+
+// ============================================================
+// ТЕСТОВАЯ ЗОНА «Поставки → Доставки» (ТЗ 18.07.2026, Phase 1 — изоляция)
+// Всё под фиче-флагом: пока владелец не включит зону, обычные менеджеры её не
+// видят и не могут в ней работать — боевой поток не затрагивается.
+// ============================================================
+export async function renderSupplyDelivery(main) {
+  const wrap = el('div', { class: 'page' });
+  main.append(wrap);
+
+  wrap.append(el('div', {
+    class: 'notice-banner notice-warning',
+    style: { marginBottom: '16px' },
+  }, '🧪 ТЕСТОВАЯ ЗОНА «Поставки → Доставки». Модуль в разработке — не для рабочих операций. Пока идёт тестирование, обычные менеджеры сюда не заходят.'));
+
+  let flag;
+  try {
+    flag = await api.supplyDeliveryFlag();
+  } catch (e) {
+    wrap.append(el('div', { class: 'card error' }, 'Ошибка доступа к зоне: ' + (e.message || '')));
+    return;
+  }
+
+  if (flag.is_admin) wrap.append(renderSdAdminPanel());
+
+  if (flag.can_operate) {
+    const box = el('div', { class: 'card' }, el('h3', {}, 'Структура модуля (скелет)'));
+    try {
+      const ov = await api.supplyDeliveryOverview();
+      box.append(el('div', { style: { marginBottom: '8px', color: 'var(--text-muted)' } }, ov.message || ''));
+      const ul = el('ul', {});
+      for (const s of (ov.sections || [])) {
+        ul.append(el('li', {}, `${s.title} — ${s.status === 'planned' ? 'запланировано' : s.status}`));
+      }
+      box.append(ul);
+    } catch (e) {
+      box.append(el('div', { class: 'error' }, e.message || 'нет данных'));
+    }
+    wrap.append(box);
+  } else if (!flag.is_admin) {
+    wrap.append(el('div', { class: 'card' }, 'Зона выключена. Обратитесь к администратору, чтобы получить тестовый доступ.'));
+  }
+}
+
+function renderSdAdminPanel() {
+  const card = el('div', { class: 'card', style: { marginBottom: '16px' } });
+  card.append(el('h3', {}, '⚙ Управление тест-зоной (админ)'));
+  const body = el('div', {}, 'Загрузка…');
+  card.append(body);
+
+  (async () => {
+    let cfg;
+    try {
+      cfg = await api.supplyDeliverySettings();
+    } catch (e) {
+      body.textContent = 'Ошибка: ' + (e.message || '');
+      return;
+    }
+    body.textContent = '';
+
+    const enabledCb = el('input', { type: 'checkbox' });
+    enabledCb.checked = !!cfg.enabled;
+    body.append(el('label', { style: { display: 'block', marginBottom: '10px' } },
+      enabledCb, el('span', { style: { marginLeft: '8px' } },
+        'Включить тестовую зону (иначе доступ закрыт всем, кроме этой панели)')));
+
+    body.append(el('div', { style: { fontWeight: '600', margin: '8px 0 4px' } },
+      'Кому дать тестовый доступ:'));
+    const selected = new Set((cfg.test_user_ids || []).map(Number));
+    const listBox = el('div', { style: { maxHeight: '220px', overflow: 'auto', border: '1px solid var(--border)', borderRadius: '6px', padding: '8px' } });
+    const cbById = new Map();
+    for (const u of (cfg.users || [])) {
+      const cb = el('input', { type: 'checkbox' });
+      cb.checked = selected.has(Number(u.id));
+      cbById.set(Number(u.id), cb);
+      listBox.append(el('label', { style: { display: 'block', padding: '2px 0' } },
+        cb, el('span', { style: { marginLeft: '8px' } },
+          `${u.name || u.email} — ${tr('role', u.role) || u.role}`)));
+    }
+    if (!(cfg.users || []).length) listBox.append(el('div', { style: { color: 'var(--text-muted)' } }, 'Нет пользователей'));
+    body.append(listBox);
+
+    const status = el('span', { style: { marginLeft: '10px' } });
+    const saveBtn = el('button', { class: 'btn btn-primary', style: { marginTop: '10px' } }, 'Сохранить');
+    saveBtn.addEventListener('click', async () => {
+      saveBtn.disabled = true;
+      status.textContent = 'Сохраняю…';
+      const test_user_ids = [];
+      for (const [id, cb] of cbById) if (cb.checked) test_user_ids.push(id);
+      try {
+        await api.saveSupplyDeliverySettings({ enabled: enabledCb.checked, test_user_ids });
+        status.textContent = 'Сохранено';
+        toast('Настройки тест-зоны сохранены', 'success');
+      } catch (e) {
+        status.textContent = '';
+        toast(e.message || 'Ошибка', 'error');
+      } finally {
+        saveBtn.disabled = false;
+      }
+    });
+    body.append(el('div', { style: { marginTop: '10px' } }, saveBtn, status));
+  })();
+
+  return card;
+}

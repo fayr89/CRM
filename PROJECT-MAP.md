@@ -94,6 +94,7 @@
 | `processingPlans.js` | `/api/processing-plans` | техкарты (продукт + норма труда + список материалов с qty_per_unit) |
 | `productionOrders.js` | `/api/production-orders` | планы выпуска товаров штуками за период с разбивкой по дням |
 | `contracts.js` | `/api/contracts` | подряды (клиентские заказы на изготовление) + этапы + материалы + труд + прочие расходы |
+| `supplyDelivery.js` | `/api/supply-delivery` | **ТЕСТ-ЗОНА «Поставки → Доставки»** (ТЗ 18.07.2026, Phase 1 — только изоляция). `/flag` (видимость для юзера), `/settings` (админ: вкл/выкл + тест-юзеры), `/overview` (скелет, под гейтом). Фиче-флаг `services/featureFlags.js`, по умолчанию ВЫКЛ — боевой поток не затрагивается. Реальные сущности (WB/Ozon/ЯМ интеграции) — следующие фазы, только под этим гейтом |
 
 > **TEMP diag-роуты.** Авто-claude иногда заводит файлы вроде
 > `routes/diagDaily.js` под `/api/diag/...` для разовой диагностики
@@ -118,6 +119,7 @@
 | `secrets.js` | хранение и чтение секретов МАХ-бота из app_settings |
 | `shippingSchedule.js` | расчёт ближайшей даты отгрузки по графику + cutoff МСК |
 | `priceRevision.js` | ревизия прайса = `MAX(product_prices.updated_at)`; подтверждения менеджеров (`price_acknowledgements`, ленивое создание). **МЯГКАЯ версия — НЕ блокирует заказы** (только баннер + отчёт, чтобы не трогать бизнес-логику/деньги — жёсткий блок откатывался daily-run по AI-DAILY.md). Баннер во фронте `app.js loadPriceAckBanner`, статус у админа — кнопка «👥 Ознакомление с прайсом» на странице товаров |
+| `featureFlags.js` | фиче-флаги / тест-зоны. Первый потребитель — модуль «Поставки → Доставки». `getSupplyDeliveryConfig`/`setSupplyDeliveryConfig` (app_settings `features.supply_delivery` = `{enabled, test_user_ids}`), `canSeeSupplyDelivery` (админ всегда; тест-юзер при enabled), `canOperateSupplyDelivery` (только при enabled). Фронт: пункт меню «🧪 Тест» под флагом, `renderSupplyDelivery` в views.js |
 | `webhooks.js` | `emitEvent` — отправка исходящих вебхуков подписчикам |
 
 ### Фронтенд (`public/`)

@@ -211,6 +211,12 @@ export const api = {
   updateProductionSettings: (body) => request('PUT', '/api/production-settings', { body }),
   msStores: (refresh) => request('GET', '/api/production-settings/ms-stores', { query: refresh ? { refresh: '1' } : {} }),
 
+  // Тестовая зона «Поставки → Доставки» (фиче-флаг + скелет)
+  supplyDeliveryFlag: () => request('GET', '/api/supply-delivery/flag'),
+  supplyDeliverySettings: () => request('GET', '/api/supply-delivery/settings'),
+  saveSupplyDeliverySettings: (body) => request('PUT', '/api/supply-delivery/settings', { body }),
+  supplyDeliveryOverview: () => request('GET', '/api/supply-delivery/overview'),
+
   // Производственный заказ: выполнить N штук + синхронизация материала с МС
   executeProductionOrder: (id, qty, day) => request('POST', `/api/production-orders/${id}/execute`, { body: { qty, day } }),
   syncMaterialMs: (id) => request('POST', `/api/materials/${id}/sync-ms`),
