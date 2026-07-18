@@ -224,6 +224,9 @@ async function switchRole(role) {
   try {
     const r = await api.impersonate(role);
     setSession(r.token, r.user);
+    // Перечитываем флаг тест-зоны под новой ролью, иначе меню «🧪 Тест» осталось
+    // бы из кэша админа при «Смотреть как менеджер» и врало бы про изоляцию.
+    await loadSupplyDeliveryFlag();
     location.hash = '#/dashboard';
     renderApp();
   } catch (e) {
