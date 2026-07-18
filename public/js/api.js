@@ -216,6 +216,17 @@ export const api = {
   supplyDeliverySettings: () => request('GET', '/api/supply-delivery/settings'),
   saveSupplyDeliverySettings: (body) => request('PUT', '/api/supply-delivery/settings', { body }),
   supplyDeliveryOverview: () => request('GET', '/api/supply-delivery/overview'),
+  // Справочники модуля (Phase 2a)
+  sdTariffs: () => request('GET', '/api/supply-delivery/packaging-tariffs'),
+  sdCreateTariff: (body) => request('POST', '/api/supply-delivery/packaging-tariffs', { body }),
+  sdUpdateTariff: (id, body) => request('PUT', `/api/supply-delivery/packaging-tariffs/${id}`, { body }),
+  sdDeleteTariff: (id) => request('DELETE', `/api/supply-delivery/packaging-tariffs/${id}`),
+  sdTariffHistory: (id) => request('GET', `/api/supply-delivery/packaging-tariffs/${id}/history`),
+  sdReward: () => request('GET', '/api/supply-delivery/reward'),
+  sdSaveReward: (body) => request('PUT', '/api/supply-delivery/reward', { body }),
+  sdThresholds: () => request('GET', '/api/supply-delivery/thresholds'),
+  sdSaveThreshold: (sku, body) => request('PUT', `/api/supply-delivery/thresholds/${encodeURIComponent(sku)}`, { body }),
+  sdDeleteThreshold: (sku) => request('DELETE', `/api/supply-delivery/thresholds/${encodeURIComponent(sku)}`),
 
   // Производственный заказ: выполнить N штук + синхронизация материала с МС
   executeProductionOrder: (id, qty, day) => request('POST', `/api/production-orders/${id}/execute`, { body: { qty, day } }),

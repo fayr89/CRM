@@ -94,7 +94,7 @@
 | `processingPlans.js` | `/api/processing-plans` | техкарты (продукт + норма труда + список материалов с qty_per_unit) |
 | `productionOrders.js` | `/api/production-orders` | планы выпуска товаров штуками за период с разбивкой по дням |
 | `contracts.js` | `/api/contracts` | подряды (клиентские заказы на изготовление) + этапы + материалы + труд + прочие расходы |
-| `supplyDelivery.js` | `/api/supply-delivery` | **ТЕСТ-ЗОНА «Поставки → Доставки»** (ТЗ 18.07.2026, Phase 1 — только изоляция). `/flag` (видимость для юзера), `/settings` (админ: вкл/выкл + тест-юзеры), `/overview` (скелет, под гейтом). Фиче-флаг `services/featureFlags.js`, по умолчанию ВЫКЛ — боевой поток не затрагивается. Реальные сущности (WB/Ozon/ЯМ интеграции) — следующие фазы, только под этим гейтом |
+| `supplyDelivery.js` | `/api/supply-delivery` | **ТЕСТ-ЗОНА «Поставки → Доставки»** (ТЗ 18.07.2026). Phase 1 — изоляция: `/flag`, `/settings` (админ: вкл/выкл + тест-юзеры), `/overview`. Phase 2a — справочники (под `requireOperate`): `/packaging-tariffs` (+ `/:id/history`), `/reward`, `/thresholds`. Фиче-флаг `services/featureFlags.js` (по умолчанию ВЫКЛ). Таблицы `sd_*` создаются лениво в `services/supplyDeliverySchema.js` (без бампа SCHEMA_VERSION). Реальные сущности Поставка/Доставка + интеграции WB/Ozon/ЯМ — след. фазы, всё под гейтом |
 
 > **TEMP diag-роуты.** Авто-claude иногда заводит файлы вроде
 > `routes/diagDaily.js` под `/api/diag/...` для разовой диагностики

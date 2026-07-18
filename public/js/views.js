@@ -12059,9 +12059,177 @@ export async function renderSupplyDelivery(main) {
       box.append(el('div', { class: 'error' }, e.message || 'нет данных'));
     }
     wrap.append(box);
+    // Phase 2a — справочники офиса (тарифы упаковки, вознаграждение, пороги).
+    wrap.append(renderSdDirectories());
   } else if (!flag.is_admin) {
     wrap.append(el('div', { class: 'card' }, 'Зона выключена. Обратитесь к администратору, чтобы получить тестовый доступ.'));
   }
+}
+
+// Справочники модуля (Phase 2a). Всё внутри тест-зоны, под гейтом.
+function renderSdDirectories() {
+  const wrap = el('div', {});
+  wrap.append(el('h3', { style: { margin: '20px 0 8px' } }, '📚 Справочники (офис)'));
+  wrap.append(sdTariffsCard());
+  wrap.append(sdRewardCard());
+  wrap.append(sdThresholdsCard());
+  return wrap;
+}
+
+const SD_REWARD_UNITS = { per_order: 'за заказ', per_item: 'за позицию', per_hour: 'за час' };
+
+function sdTariffsCard() {
+  const card = el('div', { class: 'card', style: { marginBottom: '12px' } });
+  card.append(el('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center' } },
+    el('h4', {}, 'Тарифы упаковки'),
+    el('button', { class: 'btn btn-sm btn-primary', onClick: () => sdEditTariff(null, reload) }, '+ Тариф')));
+  const tbody = el('tbody', {});
+  card.append(el('table', { class: 'table' },
+    el('thead', {}, el('tr', {}, el('th', {}, 'Тип'), el('th', {}, 'Стоимость, ₽'),
+      el('th', {}, 'Норматив, мин'), el('th', {}, ''))), tbody));
+  async function reload() {
+    tbody.textContent = '';
+    let rows = [];
+    try { rows = await api.sdTariffs(); } catch (e) { toast(e.message, 'error'); }
+    if (!rows.length) { tbody.append(el('tr', {}, el('td', { colspan: '4' }, 'Пока нет тарифов'))); return; }
+    for (const t of rows) {
+      tbody.append(el('tr', {},
+        el('td', {}, t.name),
+        el('td', {}, String(t.cost)),
+        el('td', {}, String(t.time_norm_min)),
+        el('td', { style: { whiteSpace: 'nowrap' } },
+          el('button', { class: 'btn btn-sm', onClick: () => sdTariffHistory(t) }, 'История'),
+          el('button', { class: 'btn btn-sm', style: { marginLeft: '4px' }, onClick: () => sdEditTariff(t, reload) }, '✏'),
+          el('button', { class: 'btn btn-sm btn-danger', style: { marginLeft: '4px' }, onClick: async () => {
+            if (!(await confirm(`Удалить тариф «${t.name}»?`))) return;
+            try { await api.sdDeleteTariff(t.id); reload(); } catch (e) { toast(e.message, 'error'); }
+          } }, '🗑'))));
+    }
+  }
+  reload();
+  return card;
+}
+
+async function sdEditTariff(tariff, onSaved) {
+  const nameI = el('input', { type: 'text', value: tariff?.name || '' });
+  const costI = el('input', { type: 'number', step: 'any', min: '0', value: tariff?.cost ?? '' });
+  const timeI = el('input', { type: 'number', step: 'any', min: '0', value: tariff?.time_norm_min ?? '' });
+  const body = el('div', {},
+    el('div', { class: 'form-row' }, el('label', {}, 'Тип упаковки'), nameI),
+    el('div', { class: 'form-row' }, el('label', {}, 'Стоимость, ₽'), costI),
+    el('div', { class: 'form-row' }, el('label', {}, 'Норматив времени, мин'), timeI));
+  await openModal(tariff ? 'Изменить тариф' : 'Новый тариф', body, {
+    primaryLabel: 'Сохранить',
+    onSubmit: async () => {
+      const payload = { name: nameI.value.trim(), cost: Number(costI.value) || 0, time_norm_min: Number(timeI.value) || 0 };
+      if (!payload.name) { toast('Укажите тип упаковки', 'error'); return false; }
+      try {
+        if (tariff) await api.sdUpdateTariff(tariff.id, payload);
+        else await api.sdCreateTariff(payload);
+        toast('Тариф сохранён', 'success');
+        onSaved?.();
+      } catch (e) { toast(e.message, 'error'); return false; }
+    },
+  });
+}
+
+async function sdTariffHistory(tariff) {
+  let rows = [];
+  try { rows = await api.sdTariffHistory(tariff.id); } catch (e) { toast(e.message, 'error'); return; }
+  const body = el('table', { class: 'table' },
+    el('thead', {}, el('tr', {}, el('th', {}, 'Когда'), el('th', {}, 'Стоимость'), el('th', {}, 'Норматив'))),
+    el('tbody', {}, ...(rows.length ? rows.map((h) => el('tr', {},
+      el('td', {}, fmtDateTime(h.changed_at)), el('td', {}, String(h.cost)), el('td', {}, String(h.time_norm_min)),
+    )) : [el('tr', {}, el('td', { colspan: '3' }, 'Нет истории'))])));
+  await openModal(`История тарифа «${tariff.name}»`, body);
+}
+
+function sdRewardCard() {
+  const card = el('div', { class: 'card', style: { marginBottom: '12px' } });
+  card.append(el('h4', {}, 'Вознаграждение склада'));
+  const body = el('div', {}, 'Загрузка…');
+  card.append(body);
+  (async () => {
+    let r;
+    try { r = await api.sdReward(); } catch (e) { body.textContent = e.message; return; }
+    body.textContent = '';
+    const amountI = el('input', { type: 'number', step: 'any', min: '0', value: r.amount ?? 0, style: { width: '140px' } });
+    const unitS = el('select', {}, ...Object.entries(SD_REWARD_UNITS).map(([v, l]) =>
+      el('option', { value: v, ...(v === r.unit ? { selected: 'selected' } : {}) }, l)));
+    const status = el('span', { style: { marginLeft: '10px' } });
+    const saveBtn = el('button', { class: 'btn btn-primary', onClick: async () => {
+      status.textContent = 'Сохраняю…';
+      try {
+        await api.sdSaveReward({ amount: Number(amountI.value) || 0, unit: unitS.value });
+        status.textContent = 'Сохранено'; toast('Вознаграждение сохранено', 'success');
+      } catch (e) { status.textContent = ''; toast(e.message, 'error'); }
+    } }, 'Сохранить');
+    body.append(el('div', { style: { display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' } },
+      el('span', {}, 'Ставка, ₽'), amountI, unitS, saveBtn, status));
+  })();
+  return card;
+}
+
+function sdThresholdsCard() {
+  const card = el('div', { class: 'card', style: { marginBottom: '12px' } });
+  card.append(el('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center' } },
+    el('h4', {}, 'Пороги остатков при поставке'),
+    el('button', { class: 'btn btn-sm btn-primary', onClick: () => sdEditThreshold(null, reload) }, '+ По SKU')));
+  const info = el('div', { style: { fontSize: '12px', color: 'var(--text-muted)', marginBottom: '6px' } },
+    'Строка «default» — глобальный порог. Режим: предупреждение или жёсткий запрет при поставке ниже порога.');
+  card.append(info);
+  const tbody = el('tbody', {});
+  card.append(el('table', { class: 'table' },
+    el('thead', {}, el('tr', {}, el('th', {}, 'SKU'), el('th', {}, 'Порог'), el('th', {}, 'Режим'), el('th', {}, ''))), tbody));
+  async function reload() {
+    tbody.textContent = '';
+    let rows = [];
+    try { rows = await api.sdThresholds(); } catch (e) { toast(e.message, 'error'); }
+    const hasDefault = rows.some((r) => r.sku === 'default');
+    if (!hasDefault) {
+      tbody.append(el('tr', {}, el('td', {}, el('em', {}, 'default (не задан)')), el('td', {}, '—'), el('td', {}, '—'),
+        el('td', {}, el('button', { class: 'btn btn-sm', onClick: () => sdEditThreshold({ sku: 'default' }, reload) }, 'Задать'))));
+    }
+    for (const r of rows) {
+      tbody.append(el('tr', {},
+        el('td', {}, r.sku),
+        el('td', {}, String(r.threshold)),
+        el('td', {}, r.mode === 'block' ? 'жёсткий запрет' : 'предупреждение'),
+        el('td', { style: { whiteSpace: 'nowrap' } },
+          el('button', { class: 'btn btn-sm', onClick: () => sdEditThreshold(r, reload) }, '✏'),
+          r.sku === 'default' ? null : el('button', { class: 'btn btn-sm btn-danger', style: { marginLeft: '4px' }, onClick: async () => {
+            if (!(await confirm(`Удалить порог для «${r.sku}»?`))) return;
+            try { await api.sdDeleteThreshold(r.sku); reload(); } catch (e) { toast(e.message, 'error'); }
+          } }, '🗑'))));
+    }
+  }
+  reload();
+  return card;
+}
+
+async function sdEditThreshold(row, onSaved) {
+  const isDefault = row?.sku === 'default';
+  const skuI = el('input', { type: 'text', value: row?.sku || '', ...(row ? { disabled: 'disabled' } : {}) });
+  const thrI = el('input', { type: 'number', min: '0', step: '1', value: row?.threshold ?? 0 });
+  const modeS = el('select', {},
+    el('option', { value: 'warn', ...(row?.mode !== 'block' ? { selected: 'selected' } : {}) }, 'Предупреждение'),
+    el('option', { value: 'block', ...(row?.mode === 'block' ? { selected: 'selected' } : {}) }, 'Жёсткий запрет'));
+  const body = el('div', {},
+    el('div', { class: 'form-row' }, el('label', {}, isDefault ? 'SKU (глобальный)' : 'SKU'), skuI),
+    el('div', { class: 'form-row' }, el('label', {}, 'Порог'), thrI),
+    el('div', { class: 'form-row' }, el('label', {}, 'Режим'), modeS));
+  await openModal(row ? 'Изменить порог' : 'Порог по SKU', body, {
+    primaryLabel: 'Сохранить',
+    onSubmit: async () => {
+      const sku = (skuI.value || '').trim();
+      if (!sku) { toast('Укажите SKU (или default)', 'error'); return false; }
+      try {
+        await api.sdSaveThreshold(sku, { threshold: Number(thrI.value) || 0, mode: modeS.value });
+        toast('Порог сохранён', 'success');
+        onSaved?.();
+      } catch (e) { toast(e.message, 'error'); return false; }
+    },
+  });
 }
 
 function renderSdAdminPanel() {
