@@ -5664,3 +5664,38 @@ Push-уведомление не отправлено — обе ранее эс
 Снос diag-v434 выполнен раздельным `git rm src/routes/diagDaily.js` +
 `Edit` app.js (импорт + роут), с проверкой `git status --short`/`grep -n
 diag src/app.js` (пусто) перед коммитом и пушем в обе ветки.
+
+**2026-07-19 (v435): без изменений, конвейер деплоя штатный.** Designated
+dev-ветка (`claude/inspiring-cannon-3hybb5`) уже существовала на origin и
+строго совпадала с прод (`4298158`, финальный коммит v434), working tree
+чистое — restore не потребовался. Репо стартовало shallow — `git fetch
+--unshallow origin` выполнен на старте, без unrelated-histories. `/health`
+200 подтверждён до начала.
+
+Добавил diag-v435 (только `op=meta`, по шаблону v402-434 — тридцать три
+предыдущих цикла с идентичным результатом делают полный
+`get-feedback-summary` избыточным). Push dev → checkout прод → `git fetch
+origin claude/build-crm-system-JzCP9` явным именем + `reset --hard` +
+`merge --ff-only` → push prod — fast-forward прошёл чисто (1 коммит: diag
+add). Первые две попытки `op=meta` сразу после пуша ловили 404 (алиас ещё
+не переехал на новый деплой); проверил через `mcp__Vercel__list_deployments`
+— прод-деплой уже был `READY`, 404 был чисто из-за задержки алиаса, не
+билд-ошибка; третья попытка — 200.
+
+Этап 1 — diag `op=meta` `proposals_by_status`={done:62}:
+pending/approved/revision/rejected пусты, действовать не по чему. Этап 2 —
+`feedback_by_status`={awaiting_approval:15, closed:44, open:4},
+`proposals_last_update`=2026-07-12T10:44:03.911Z,
+`feedback_last_msg`=2026-07-12T10:45:23.756Z — идентичны v375-434 один в
+один (включая миллисекунды). **185-е подряд подтверждение** отсутствия
+изменений в feedback/ai_proposals с закрытия ai_proposal #62 в v290.
+
+Push-уведомление не отправлено — обе ранее эскалированные находки (частота
+обходов v247/v263/v404/v405, orphan-ветки v405) без сдвига за 30
+последующих циклов; повтор без новой информации был бы спамом;
+feedback/ai_proposals не менялись за 185 циклов подряд; конвейер деплоя
+здоров (`/health` подтверждён живым до и после каждого шага).
+
+Снос diag-v435 выполнен раздельным `git rm src/routes/diagDaily.js` +
+`Edit` app.js (импорт + роут), с проверкой `git status --short`/`grep -n
+diag src/app.js` (пусто) перед коммитом и пушем в обе ветки.
