@@ -19,7 +19,10 @@ import {
   getLaborRatePerMin, setLaborRatePerMin, computeDeliveryFinance,
 } from '../services/supplyDeliverySchema.js';
 import { encryptSecret, decryptSecret } from '../services/secrets.js';
-import { fetchWbCards } from '../services/channelApis.js';
+import {
+  fetchWbCards, wbNewOrders, wbCreateSupply, wbAddOrderToSupply,
+  wbSupplyBarcode, wbDeliverSupply, wbReshipmentOrders,
+} from '../services/channelApis.js';
 
 const router = Router();
 router.use(authenticate);
@@ -322,9 +325,18 @@ const supplySchema = z.object({
   channel: z.enum(['wb', 'ozon', 'ym', 'avito']),
   model: z.enum(['fbs', 'fbo']),
   legal_entity: z.string().max(200).optional().nullable(),
+  channel_account_id: z.number().int().positive().optional().nullable(),
   title: z.string().max(200).optional().nullable(),
   note: z.string().max(2000).optional().nullable(),
 });
+
+// Ключ WB для поставки: из привязанного канал-аккаунта (справочник «Каналы»).
+async function wbKeyForSupply(supply) {
+  if (!supply.channel_account_id) throw BadRequest('У поставки не выбран WB-канал (с ключом). Укажите его при создании.');
+  const acc = await db.get('SELECT * FROM sd_channel_accounts WHERE id = ?', supply.channel_account_id);
+  if (!acc || !acc.api_key_enc) throw BadRequest('У выбранного канала нет API-ключа');
+  return decryptSecret(acc.api_key_enc);
+}
 
 router.get('/supplies', requireOperate, asyncHandler(async (_req, res) => {
   await ensureSupplyDeliverySchema();
@@ -341,9 +353,9 @@ router.post('/supplies', requireOperate, asyncHandler(async (req, res) => {
   await ensureSupplyDeliverySchema();
   const d = supplySchema.parse(req.body);
   const row = await db.get(
-    `INSERT INTO sd_supplies (channel, model, legal_entity, title, note, created_by)
-     VALUES (?, ?, ?, ?, ?, ?) RETURNING *`,
-    d.channel, d.model, d.legal_entity ?? null, d.title ?? null, d.note ?? null, req.user.id,
+    `INSERT INTO sd_supplies (channel, model, legal_entity, channel_account_id, title, note, created_by)
+     VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING *`,
+    d.channel, d.model, d.legal_entity ?? null, d.channel_account_id ?? null, d.title ?? null, d.note ?? null, req.user.id,
   );
   res.json(row);
 }));
@@ -366,10 +378,10 @@ router.put('/supplies/:id', requireOperate, asyncHandler(async (req, res) => {
   const row = await db.get(
     `UPDATE sd_supplies SET
        channel = COALESCE(?, channel), model = COALESCE(?, model),
-       legal_entity = COALESCE(?, legal_entity), title = COALESCE(?, title),
-       note = COALESCE(?, note), status = COALESCE(?, status), updated_at = NOW()
+       legal_entity = COALESCE(?, legal_entity), channel_account_id = COALESCE(?, channel_account_id),
+       title = COALESCE(?, title), note = COALESCE(?, note), status = COALESCE(?, status), updated_at = NOW()
      WHERE id = ? RETURNING *`,
-    d.channel ?? null, d.model ?? null, d.legal_entity ?? null, d.title ?? null,
+    d.channel ?? null, d.model ?? null, d.legal_entity ?? null, d.channel_account_id ?? null, d.title ?? null,
     d.note ?? null, d.status ?? null, req.params.id,
   );
   res.json(row);
@@ -738,6 +750,87 @@ router.delete('/channel-map/:id', requireOperate, asyncHandler(async (req, res) 
   await ensureSupplyDeliverySchema();
   await db.run('DELETE FROM sd_product_channel_map WHERE id = ?', req.params.id);
   res.json({ ok: true });
+}));
+
+// ----- WB ФБС: процесс поставки (создать поставку → задания → штрихкод → доставка) -----
+async function loadWbSupply(id) {
+  const s = await db.get('SELECT * FROM sd_supplies WHERE id = ?', id);
+  if (!s) throw NotFound('Поставка не найдена');
+  if (s.channel !== 'wb') throw BadRequest('Это не WB-поставка');
+  return s;
+}
+
+router.post('/supplies/:id/wb/create-supply', requireOperate, asyncHandler(async (req, res) => {
+  await ensureSupplyDeliverySchema();
+  const s = await loadWbSupply(req.params.id);
+  if (s.external_supply_id) throw BadRequest('Поставка в WB уже создана: ' + s.external_supply_id);
+  const key = await wbKeyForSupply(s);
+  const supplyId = await wbCreateSupply(key, s.title || `CRM #${s.id}`);
+  if (!supplyId) throw BadRequest('WB не вернул supplyId');
+  await db.run('UPDATE sd_supplies SET external_supply_id = ?, external_status = ?, updated_at = NOW() WHERE id = ?', supplyId, 'created', s.id);
+  res.json({ ok: true, external_supply_id: supplyId });
+}));
+
+router.get('/supplies/:id/wb/new-orders', requireOperate, asyncHandler(async (req, res) => {
+  await ensureSupplyDeliverySchema();
+  const s = await loadWbSupply(req.params.id);
+  const key = await wbKeyForSupply(s);
+  res.json(await wbNewOrders(key));
+}));
+
+router.post('/supplies/:id/wb/attach-order', requireOperate, asyncHandler(async (req, res) => {
+  await ensureSupplyDeliverySchema();
+  const s = await loadWbSupply(req.params.id);
+  if (!s.external_supply_id) throw BadRequest('Сначала создайте поставку в WB');
+  const d = z.object({
+    order_id: z.string().min(1),
+    article: z.string().optional().nullable(),
+    barcode: z.string().optional().nullable(),
+    name: z.string().optional().nullable(),
+  }).parse(req.body);
+  const key = await wbKeyForSupply(s);
+  await wbAddOrderToSupply(key, s.external_supply_id, d.order_id);
+  await db.run(
+    `INSERT INTO sd_supply_items (supply_id, sku, name, quantity, external_order_id, barcode)
+     VALUES (?, ?, ?, 1, ?, ?)`,
+    s.id, d.article ?? null, d.name ?? d.article ?? null, d.order_id, d.barcode ?? null,
+  );
+  res.json({ ok: true });
+}));
+
+router.get('/supplies/:id/wb/barcode', requireOperate, asyncHandler(async (req, res) => {
+  await ensureSupplyDeliverySchema();
+  const s = await loadWbSupply(req.params.id);
+  if (!s.external_supply_id) throw BadRequest('Поставка в WB не создана');
+  const key = await wbKeyForSupply(s);
+  res.json(await wbSupplyBarcode(key, s.external_supply_id, (req.query.type || 'svg').toString()));
+}));
+
+router.post('/supplies/:id/wb/deliver', requireOperate, asyncHandler(async (req, res) => {
+  await ensureSupplyDeliverySchema();
+  const s = await loadWbSupply(req.params.id);
+  if (!s.external_supply_id) throw BadRequest('Поставка в WB не создана');
+  const key = await wbKeyForSupply(s);
+  await wbDeliverSupply(key, s.external_supply_id);
+  await db.run("UPDATE sd_supplies SET external_status = 'delivered', status = 'shipped', updated_at = NOW() WHERE id = ?", s.id);
+  res.json({ ok: true });
+}));
+
+// Список WB-каналов для выбора при создании поставки (без ключей, для operate).
+router.get('/wb/accounts', requireOperate, asyncHandler(async (_req, res) => {
+  await ensureSupplyDeliverySchema();
+  res.json(await db.all(
+    "SELECT id, legal_entity FROM sd_channel_accounts WHERE channel = 'wb' AND active IS NOT FALSE ORDER BY legal_entity, id",
+  ));
+}));
+
+router.get('/wb/reshipment', requireOperate, asyncHandler(async (req, res) => {
+  await ensureSupplyDeliverySchema();
+  const accId = parseInt(req.query.channel_account_id, 10);
+  const acc = await db.get('SELECT * FROM sd_channel_accounts WHERE id = ? AND channel = ?', accId, 'wb');
+  if (!acc || !acc.api_key_enc) throw BadRequest('Укажите WB-канал с ключом');
+  const key = decryptSecret(acc.api_key_enc);
+  res.json(await wbReshipmentOrders(key));
 }));
 
 export default router;

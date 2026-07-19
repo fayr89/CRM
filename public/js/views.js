@@ -12370,14 +12370,29 @@ async function sdCreateSupply(onSaved) {
   const modelS = el('select', {}, el('option', { value: 'fbs' }, 'ФБС'), el('option', { value: 'fbo' }, 'ФБО'));
   const legalI = el('input', { type: 'text' });
   const titleI = el('input', { type: 'text' });
+  // WB-канал (с ключом) — нужен для процесса поставки WB. Показываем только для WB.
+  const accS = el('select', {}, el('option', { value: '' }, '— WB-канал (для API) —'));
+  const accRow = el('div', { class: 'form-row' }, el('label', {}, 'WB-канал'), accS);
+  api.sdWbAccounts().then((accs) => {
+    for (const a of (accs || [])) accS.append(el('option', { value: String(a.id) }, `#${a.id} ${a.legal_entity || ''}`));
+  }).catch(() => {});
+  const syncAccVisible = () => { accRow.style.display = chanS.value === 'wb' ? '' : 'none'; };
+  chanS.addEventListener('change', syncAccVisible);
   const body = el('div', {},
     el('div', { class: 'form-row' }, el('label', {}, 'Канал'), chanS),
     el('div', { class: 'form-row' }, el('label', {}, 'Модель'), modelS),
+    accRow,
     el('div', { class: 'form-row' }, el('label', {}, 'Юрлицо'), legalI),
     el('div', { class: 'form-row' }, el('label', {}, 'Название (необязательно)'), titleI));
+  syncAccVisible();
   await openModal('Новая поставка', body, { primaryLabel: 'Создать', onSubmit: async () => {
     try {
-      await api.sdCreateSupply({ channel: chanS.value, model: modelS.value, legal_entity: legalI.value.trim() || null, title: titleI.value.trim() || null });
+      await api.sdCreateSupply({
+        channel: chanS.value, model: modelS.value,
+        legal_entity: legalI.value.trim() || null,
+        channel_account_id: (chanS.value === 'wb' && accS.value) ? Number(accS.value) : null,
+        title: titleI.value.trim() || null,
+      });
       toast('Поставка создана', 'success'); onSaved?.();
     } catch (e) { toast(e.message, 'error'); return false; }
   } });
@@ -12400,6 +12415,7 @@ async function sdOpenSupply(id, onChange) {
     if (s.legal_entity) head.append(el('div', {}, `Юрлицо: ${s.legal_entity}`));
     head.append(el('div', { style: { marginTop: '6px' } }, el('span', {}, 'Статус: '), statusSel));
     body.append(head);
+    if (s.channel === 'wb' && s.model === 'fbs') body.append(sdWbFbsSection(s, refresh, onChange));
     body.append(el('div', { style: { margin: '8px 0' } },
       el('button', { class: 'btn btn-sm btn-primary', onClick: () => sdAddItem(id, refresh, onChange) }, '+ Позиция')));
     const tbody = el('tbody', {});
@@ -12778,4 +12794,72 @@ async function sdMatchProductModal(mapId, onSaved) {
     try { await api.sdMatchChannel(mapId, selected); toast('Сопоставлено', 'success'); onSaved?.(); }
     catch (e) { toast(e.message, 'error'); return false; }
   } });
+}
+
+// ---- WB ФБС: процесс поставки (UI) ----
+function sdWbFbsSection(s, refresh, onChange) {
+  const box = el('div', { class: 'card', style: { margin: '8px 0' } });
+  box.append(el('h4', {}, 'WB ФБС — процесс поставки'));
+  if (!s.channel_account_id) {
+    box.append(el('div', { style: { color: '#dc2626' } },
+      'Не выбран WB-канал с ключом. Пересоздай поставку с указанием WB-канала (ключ заводится в «Каналы»).'));
+    return box;
+  }
+  const id = s.id;
+  if (!s.external_supply_id) {
+    box.append(el('div', { style: { marginBottom: '6px' } }, 'Поставка ещё не создана в WB.'));
+    box.append(el('button', { class: 'btn btn-sm btn-primary', onClick: async () => {
+      try { const r = await api.sdWbCreateSupply(id); toast('Создана в WB: ' + r.external_supply_id, 'success'); refresh(); onChange?.(); }
+      catch (e) { toast(e.message, 'error'); }
+    } }, 'Создать поставку в WB'));
+    return box;
+  }
+  box.append(el('div', { style: { marginBottom: '6px' } }, `WB supplyId: ${s.external_supply_id} · статус: ${s.external_status || '—'}`));
+  const btns = el('div', { style: { display: 'flex', gap: '6px', flexWrap: 'wrap' } });
+  btns.append(el('button', { class: 'btn btn-sm btn-primary', onClick: () => sdWbNewOrdersModal(id, refresh, onChange) }, 'Сборочные задания'));
+  btns.append(el('button', { class: 'btn btn-sm', onClick: async () => {
+    try { const b = await api.sdWbBarcode(id); sdShowWbBarcode(b); } catch (e) { toast(e.message, 'error'); }
+  } }, 'Штрихкод поставки'));
+  btns.append(el('button', { class: 'btn btn-sm', onClick: async () => {
+    if (!(await confirm('Передать поставку в доставку (после физической отгрузки)? Отменить нельзя.'))) return;
+    try { await api.sdWbDeliver(id); toast('Передано в доставку', 'success'); refresh(); onChange?.(); } catch (e) { toast(e.message, 'error'); }
+  } }, 'Передать в доставку'));
+  box.append(btns);
+  return box;
+}
+
+async function sdWbNewOrdersModal(supplyId, refresh, onChange) {
+  const list = el('div', {});
+  async function load() {
+    list.textContent = 'Загрузка…';
+    let orders = [];
+    try { orders = await api.sdWbNewOrders(supplyId); } catch (e) { list.textContent = e.message; return; }
+    list.textContent = '';
+    if (!orders.length) { list.textContent = 'Нет новых сборочных заданий'; return; }
+    for (const o of orders) {
+      const add = el('button', { class: 'btn btn-sm btn-primary', onClick: async () => {
+        try { await api.sdWbAttachOrder(supplyId, { order_id: o.order_id, article: o.article, barcode: o.barcode, name: o.name }); toast('Добавлено в поставку', 'success'); add.disabled = true; refresh(); onChange?.(); }
+        catch (e) { toast(e.message, 'error'); }
+      } }, 'Добавить');
+      list.append(el('div', { style: { display: 'flex', justifyContent: 'space-between', padding: '3px 0', borderBottom: '1px solid var(--border)' } },
+        el('span', {}, `#${o.order_id} · ${o.article || '—'} · ${o.barcode || ''}`), add));
+    }
+  }
+  const reloadBtn = el('button', { class: 'btn btn-sm', style: { marginBottom: '8px' }, onClick: load }, 'Обновить');
+  const body = el('div', {}, reloadBtn, list);
+  load();
+  await openModal('Сборочные задания WB', body);
+}
+
+function sdShowWbBarcode(b) {
+  const body = el('div', {});
+  if (b && b.barcode) body.append(el('div', { style: { marginBottom: '8px' } }, `Штрихкод: ${b.barcode}`));
+  if (b && b.file) {
+    const img = el('img', { style: { maxWidth: '100%' } });
+    img.src = (b.type === 'svg' ? 'data:image/svg+xml;base64,' : 'data:image/png;base64,') + b.file;
+    body.append(img);
+  } else if (!b || !b.barcode) {
+    body.append(el('div', {}, 'WB не вернул штрихкод.'));
+  }
+  openModal('Штрихкод поставки WB', body);
 }

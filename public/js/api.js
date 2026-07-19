@@ -246,6 +246,14 @@ export const api = {
   sdMatchChannel: (id, product_id) => request('PUT', `/api/supply-delivery/channel-map/${id}/match`, { body: { product_id } }),
   sdUnmatchChannel: (id) => request('PUT', `/api/supply-delivery/channel-map/${id}/unmatch`),
   sdDeleteChannelMap: (id) => request('DELETE', `/api/supply-delivery/channel-map/${id}`),
+  // WB ФБС: процесс поставки
+  sdWbCreateSupply: (id) => request('POST', `/api/supply-delivery/supplies/${id}/wb/create-supply`),
+  sdWbNewOrders: (id) => request('GET', `/api/supply-delivery/supplies/${id}/wb/new-orders`),
+  sdWbAttachOrder: (id, body) => request('POST', `/api/supply-delivery/supplies/${id}/wb/attach-order`, { body }),
+  sdWbBarcode: (id) => request('GET', `/api/supply-delivery/supplies/${id}/wb/barcode`),
+  sdWbDeliver: (id) => request('POST', `/api/supply-delivery/supplies/${id}/wb/deliver`),
+  sdWbReshipment: (channelAccountId) => request('GET', '/api/supply-delivery/wb/reshipment', { query: { channel_account_id: channelAccountId } }),
+  sdWbAccounts: () => request('GET', '/api/supply-delivery/wb/accounts'),
   // Поставки
   sdSupplies: () => request('GET', '/api/supply-delivery/supplies'),
   sdCreateSupply: (body) => request('POST', '/api/supply-delivery/supplies', { body }),

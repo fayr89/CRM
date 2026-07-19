@@ -6,6 +6,79 @@
 // Работает только при наличии реального API-ключа (заводится в справочнике
 // «Каналы»). Без ключа/при ошибке — бросаем понятную ошибку, ничего не ломаем.
 
+// ===================== WB Marketplace API (ФБС) =====================
+// База marketplace-api.wildberries.ru. Токен WB (категория Marketplace) —
+// напрямую в заголовке Authorization. Эндпоинты — как в ТЗ 5.1 (v3).
+const WB_MP_BASE = 'https://marketplace-api.wildberries.ru';
+
+async function wbMpFetch(key, method, path, body) {
+  if (!key) throw new Error('Не задан API-ключ WB');
+  let res;
+  try {
+    res = await fetch(`${WB_MP_BASE}${path}`, {
+      method,
+      headers: { Authorization: key, 'Content-Type': 'application/json' },
+      body: body != null ? JSON.stringify(body) : undefined,
+      signal: AbortSignal.timeout(30000),
+    });
+  } catch (e) {
+    throw new Error('WB API недоступен: ' + (e?.message || e));
+  }
+  const text = await res.text().catch(() => '');
+  if (!res.ok) throw new Error(`WB API ${res.status}: ${text.slice(0, 300)}`);
+  if (!text) return {};
+  try { return JSON.parse(text); } catch { return { raw: text }; }
+}
+
+// Новые сборочные задания (GET /api/v3/orders/new).
+export async function wbNewOrders(key) {
+  const d = await wbMpFetch(key, 'GET', '/api/v3/orders/new');
+  return (d?.orders || []).map((o) => ({
+    order_id: String(o.id ?? o.orderUid ?? ''),
+    article: o.article ?? null,
+    barcode: Array.isArray(o.skus) ? (o.skus[0] ?? null) : null,
+    name: o.article ?? null,
+    price: o.price ?? null,
+    created_at: o.createdAt ?? null,
+  }));
+}
+
+// Создать пустую поставку (POST /api/v3/supplies) → { id }.
+export async function wbCreateSupply(key, name) {
+  const d = await wbMpFetch(key, 'POST', '/api/v3/supplies', { name: name || 'Поставка CRM' });
+  return d?.id || d?.supplyId || null;
+}
+
+// Привязать сборочное задание к поставке (PATCH .../orders/{orderId}).
+export async function wbAddOrderToSupply(key, supplyId, orderId) {
+  await wbMpFetch(key, 'PATCH', `/api/v3/supplies/${encodeURIComponent(supplyId)}/orders/${encodeURIComponent(orderId)}`);
+  return true;
+}
+
+// Штрихкод/QR поставки (GET .../barcode?type=svg|png) → { barcode, file(base64) }.
+export async function wbSupplyBarcode(key, supplyId, type = 'svg') {
+  const d = await wbMpFetch(key, 'GET', `/api/v3/supplies/${encodeURIComponent(supplyId)}/barcode?type=${type}`);
+  return { barcode: d?.barcode ?? null, file: d?.file ?? null, type };
+}
+
+// Состав поставки (GET .../orders).
+export async function wbSupplyOrders(key, supplyId) {
+  const d = await wbMpFetch(key, 'GET', `/api/v3/supplies/${encodeURIComponent(supplyId)}/orders`);
+  return d?.orders || [];
+}
+
+// Передать поставку в доставку (PATCH .../deliver).
+export async function wbDeliverSupply(key, supplyId) {
+  await wbMpFetch(key, 'PATCH', `/api/v3/supplies/${encodeURIComponent(supplyId)}/deliver`);
+  return true;
+}
+
+// Повторная отгрузка непринятых при приёмке (GET /api/v3/supplies/orders/reshipment).
+export async function wbReshipmentOrders(key) {
+  const d = await wbMpFetch(key, 'GET', '/api/v3/supplies/orders/reshipment');
+  return d?.orders || d?.next || [];
+}
+
 // WB Content API: список карточек товара (номенклатура продавца).
 // Авторизация — ключ напрямую в заголовке Authorization (без Bearer).
 export async function fetchWbCards(apiKey, { limit = 100 } = {}) {
