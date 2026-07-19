@@ -18,6 +18,7 @@ import {
   ensureSupplyDeliverySchema, getWarehouseReward, setWarehouseReward,
   getLaborRatePerMin, setLaborRatePerMin, computeDeliveryFinance,
 } from '../services/supplyDeliverySchema.js';
+import { encryptSecret, decryptSecret } from '../services/secrets.js';
 
 const router = Router();
 router.use(authenticate);
@@ -110,11 +111,11 @@ router.get(
 // ==================== Phase 2a: Справочники офиса ====================
 // Все под requireOperate — инертны, пока тест-зона выключена.
 
-// ----- Тарифы упаковки (с историей изменений) -----
+// ----- Тарифы упаковки (тип + единица измерения + стоимость; с историей цены) -----
 const tariffSchema = z.object({
   name: z.string().min(1).max(120),
+  unit: z.string().min(1).max(30),
   cost: z.number().nonnegative(),
-  time_norm_min: z.number().nonnegative(),
 });
 
 router.get('/packaging-tariffs', requireOperate, asyncHandler(async (_req, res) => {
@@ -126,12 +127,12 @@ router.post('/packaging-tariffs', requireOperate, asyncHandler(async (req, res) 
   await ensureSupplyDeliverySchema();
   const d = tariffSchema.parse(req.body);
   const row = await db.get(
-    'INSERT INTO sd_packaging_tariffs (name, cost, time_norm_min) VALUES (?, ?, ?) RETURNING *',
-    d.name, d.cost, d.time_norm_min,
+    'INSERT INTO sd_packaging_tariffs (name, unit, cost, time_norm_min) VALUES (?, ?, ?, 0) RETURNING *',
+    d.name, d.unit, d.cost,
   );
   await db.run(
-    'INSERT INTO sd_packaging_tariff_history (tariff_id, cost, time_norm_min, changed_by) VALUES (?, ?, ?, ?)',
-    row.id, d.cost, d.time_norm_min, req.user.id,
+    'INSERT INTO sd_packaging_tariff_history (tariff_id, cost, time_norm_min, changed_by) VALUES (?, ?, 0, ?)',
+    row.id, d.cost, req.user.id,
   );
   res.json(row);
 }));
@@ -142,18 +143,94 @@ router.put('/packaging-tariffs/:id', requireOperate, asyncHandler(async (req, re
   const cur = await db.get('SELECT * FROM sd_packaging_tariffs WHERE id = ?', req.params.id);
   if (!cur) throw NotFound('Тариф не найден');
   const row = await db.get(
-    'UPDATE sd_packaging_tariffs SET name = ?, cost = ?, time_norm_min = ?, updated_at = NOW() WHERE id = ? RETURNING *',
-    d.name, d.cost, d.time_norm_min, req.params.id,
+    'UPDATE sd_packaging_tariffs SET name = ?, unit = ?, cost = ?, updated_at = NOW() WHERE id = ? RETURNING *',
+    d.name, d.unit, d.cost, req.params.id,
   );
-  // История — только при реальном изменении стоимости/норматива (старые доставки
-  // не пересчитываются: они снапшотят тариф на момент расчёта — это Phase 2b).
-  if (Number(cur.cost) !== d.cost || Number(cur.time_norm_min) !== d.time_norm_min) {
+  // История цены — только при реальном изменении стоимости (старые доставки не
+  // пересчитываются: снапшот тарифа берётся в момент добавления в доставку).
+  if (Number(cur.cost) !== d.cost) {
     await db.run(
-      'INSERT INTO sd_packaging_tariff_history (tariff_id, cost, time_norm_min, changed_by) VALUES (?, ?, ?, ?)',
-      req.params.id, d.cost, d.time_norm_min, req.user.id,
+      'INSERT INTO sd_packaging_tariff_history (tariff_id, cost, time_norm_min, changed_by) VALUES (?, ?, 0, ?)',
+      req.params.id, d.cost, req.user.id,
     );
   }
   res.json(row);
+}));
+
+// ----- Каналы + юрлица + API-ключи (только админ) -----
+const channelAccountSchema = z.object({
+  channel: z.enum(['wb', 'ozon', 'ym', 'avito']),
+  legal_entity: z.string().max(200).optional().nullable(),
+  api_key: z.string().max(4000).optional().nullable(),
+  manager_id: z.number().int().positive().optional().nullable(),
+});
+
+function maskKey(enc) {
+  if (!enc) return null;
+  try {
+    const plain = decryptSecret(enc);
+    if (!plain) return null;
+    const tail = plain.slice(-4);
+    return `••••${tail}`;
+  } catch { return '••••'; }
+}
+
+router.get('/channel-accounts', requireRole('admin'), asyncHandler(async (_req, res) => {
+  await ensureSupplyDeliverySchema();
+  const accounts = await db.all(
+    `SELECT a.id, a.channel, a.legal_entity, a.manager_id, a.active, a.api_key_enc, u.name AS manager_name
+     FROM sd_channel_accounts a LEFT JOIN users u ON u.id = a.manager_id
+     ORDER BY a.channel, a.id`,
+  );
+  const users = await db.all(
+    "SELECT id, name, email, role FROM users WHERE active IS NOT FALSE AND role <> 'admin' ORDER BY name",
+  );
+  res.json({
+    accounts: accounts.map((a) => ({
+      id: a.id, channel: a.channel, legal_entity: a.legal_entity,
+      manager_id: a.manager_id, manager_name: a.manager_name, active: a.active,
+      key_set: !!a.api_key_enc, key_mask: maskKey(a.api_key_enc),
+    })),
+    users,
+  });
+}));
+
+router.post('/channel-accounts', requireRole('admin'), asyncHandler(async (req, res) => {
+  await ensureSupplyDeliverySchema();
+  const d = channelAccountSchema.parse(req.body);
+  const enc = d.api_key ? encryptSecret(d.api_key.trim()) : null;
+  const row = await db.get(
+    `INSERT INTO sd_channel_accounts (channel, legal_entity, api_key_enc, manager_id)
+     VALUES (?, ?, ?, ?) RETURNING id`,
+    d.channel, d.legal_entity ?? null, enc, d.manager_id ?? null,
+  );
+  await logAction(req, { action: 'supply_delivery.channel_account.create', entity_type: 'sd_channel_account', entity_id: row.id, details: { channel: d.channel } });
+  res.json({ ok: true, id: row.id });
+}));
+
+router.put('/channel-accounts/:id', requireRole('admin'), asyncHandler(async (req, res) => {
+  await ensureSupplyDeliverySchema();
+  const d = channelAccountSchema.partial().extend({ active: z.boolean().optional() }).parse(req.body);
+  const cur = await db.get('SELECT * FROM sd_channel_accounts WHERE id = ?', req.params.id);
+  if (!cur) throw NotFound('Канал не найден');
+  // Ключ обновляем только если прислали непустой (иначе не трогаем сохранённый).
+  const enc = (d.api_key && d.api_key.trim()) ? encryptSecret(d.api_key.trim()) : cur.api_key_enc;
+  await db.run(
+    `UPDATE sd_channel_accounts SET
+       channel = COALESCE(?, channel), legal_entity = COALESCE(?, legal_entity),
+       api_key_enc = ?, manager_id = COALESCE(?, manager_id),
+       active = COALESCE(?, active), updated_at = NOW()
+     WHERE id = ?`,
+    d.channel ?? null, d.legal_entity ?? null, enc, d.manager_id ?? null,
+    d.active ?? null, req.params.id,
+  );
+  res.json({ ok: true });
+}));
+
+router.delete('/channel-accounts/:id', requireRole('admin'), asyncHandler(async (req, res) => {
+  await ensureSupplyDeliverySchema();
+  await db.run('DELETE FROM sd_channel_accounts WHERE id = ?', req.params.id);
+  res.json({ ok: true });
 }));
 
 router.delete('/packaging-tariffs/:id', requireOperate, asyncHandler(async (req, res) => {
@@ -350,8 +427,8 @@ async function loadDeliveryDetail(id) {
     delivery,
     packaging,
     reward: await getWarehouseReward(),
-    laborRatePerMin: await getLaborRatePerMin(),
     itemStats,
+    handlingCost: 0, // расход склада за позицию — придёт с продуктовым справочником
   });
   return { ...delivery, supplies, packaging, item_stats: itemStats, finance };
 }

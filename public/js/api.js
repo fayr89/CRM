@@ -227,6 +227,11 @@ export const api = {
   sdThresholds: () => request('GET', '/api/supply-delivery/thresholds'),
   sdSaveThreshold: (sku, body) => request('PUT', `/api/supply-delivery/thresholds/${encodeURIComponent(sku)}`, { body }),
   sdDeleteThreshold: (sku) => request('DELETE', `/api/supply-delivery/thresholds/${encodeURIComponent(sku)}`),
+  // Каналы + юрлица + API-ключи (только админ)
+  sdChannelAccounts: () => request('GET', '/api/supply-delivery/channel-accounts'),
+  sdCreateChannelAccount: (body) => request('POST', '/api/supply-delivery/channel-accounts', { body }),
+  sdUpdateChannelAccount: (id, body) => request('PUT', `/api/supply-delivery/channel-accounts/${id}`, { body }),
+  sdDeleteChannelAccount: (id) => request('DELETE', `/api/supply-delivery/channel-accounts/${id}`),
   // Финансовые параметры (Phase 2b)
   sdFinanceSettings: () => request('GET', '/api/supply-delivery/finance-settings'),
   sdSaveFinanceSettings: (body) => request('PUT', '/api/supply-delivery/finance-settings', { body }),

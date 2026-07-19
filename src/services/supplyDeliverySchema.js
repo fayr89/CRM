@@ -110,6 +110,25 @@ export async function ensureSupplyDeliverySchema() {
        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
      )`,
   );
+  // Каналы + юрлица + API-ключи (ключи заводит только админ; один канал = один
+  // менеджер канала). api_key_enc — зашифрован через services/secrets.js.
+  await db.run(
+    `CREATE TABLE IF NOT EXISTS sd_channel_accounts (
+       id SERIAL PRIMARY KEY,
+       channel TEXT NOT NULL,
+       legal_entity TEXT,
+       api_key_enc TEXT,
+       manager_id INTEGER,
+       active BOOLEAN NOT NULL DEFAULT TRUE,
+       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+     )`,
+  );
+  // Упаковка: вместо норматива времени — единица измерения (шт/м/рулон…).
+  // Габариты упакованного изделия и расход упаковки — на уровне товара
+  // (продуктовый справочник, отдельный шаг). Старую колонку time_norm_min
+  // оставляем ради обратной совместимости, но не используем.
+  await db.run(`ALTER TABLE sd_packaging_tariffs ADD COLUMN IF NOT EXISTS unit TEXT NOT NULL DEFAULT 'шт'`);
   ensured = true;
 }
 
@@ -132,23 +151,23 @@ export async function setLaborRatePerMin(rate, userId) {
   return clean;
 }
 
-// Финмодель доставки: прибыль склада = вознаграждение − (упаковка + зарплата +
-// логистика). Себестоимость товара НЕ входит (это прибыль склада как центра).
-export function computeDeliveryFinance({ delivery, packaging, reward, laborRatePerMin, itemStats }) {
+// Финмодель доставки: прибыль склада = вознаграждение − (упаковка + обработка
+// позиций складом + логистика). Себестоимость товара НЕ входит (прибыль склада
+// как обособленного центра). «Обработка позиций» (расход склада за позицию,
+// задаёт офис) появится вместе с продуктовым справочником — пока 0.
+export function computeDeliveryFinance({ delivery, packaging, reward, itemStats, handlingCost }) {
   const packaging_cost = (packaging || []).reduce((s, p) => s + (Number(p.unit_cost) || 0) * (Number(p.quantity) || 0), 0);
-  const labor_minutes = (packaging || []).reduce((s, p) => s + (Number(p.unit_time_min) || 0) * (Number(p.quantity) || 0), 0);
-  const labor_cost = labor_minutes * (Number(laborRatePerMin) || 0);
+  const handling_cost = Number(handlingCost) || 0;
   const logistics_cost = Number(delivery?.logistics_cost) || 0;
   let reward_base = 0;
   if (reward?.unit === 'per_item') reward_base = itemStats?.total_qty || 0;
   else if (reward?.unit === 'per_order') reward_base = itemStats?.supply_count || 0;
-  else if (reward?.unit === 'per_hour') reward_base = labor_minutes / 60;
+  // per_hour временно неактуален (учёт времени убран) → база 0.
   const reward_amount = (Number(reward?.amount) || 0) * reward_base;
-  const net_profit = reward_amount - (packaging_cost + labor_cost + logistics_cost);
+  const net_profit = reward_amount - (packaging_cost + handling_cost + logistics_cost);
   return {
     packaging_cost: round2(packaging_cost),
-    labor_minutes: round2(labor_minutes),
-    labor_cost: round2(labor_cost),
+    handling_cost: round2(handling_cost),
     logistics_cost: round2(logistics_cost),
     reward_unit: reward?.unit || 'per_order',
     reward_base: round2(reward_base),

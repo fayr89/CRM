@@ -12044,6 +12044,8 @@ export async function renderSupplyDelivery(main) {
   }
 
   if (flag.is_admin) wrap.append(renderSdAdminPanel());
+  // Каналы + юрлица + API-ключи — только админ (ключи заводит только он).
+  if (flag.is_admin) wrap.append(renderSdChannelsCard());
 
   if (flag.can_operate) {
     const box = el('div', { class: 'card' }, el('h3', {}, 'Структура модуля (скелет)'));
@@ -12089,8 +12091,8 @@ function sdTariffsCard() {
     el('button', { class: 'btn btn-sm btn-primary', onClick: () => sdEditTariff(null, reload) }, '+ Тариф')));
   const tbody = el('tbody', {});
   card.append(el('table', { class: 'table' },
-    el('thead', {}, el('tr', {}, el('th', {}, 'Тип'), el('th', {}, 'Стоимость, ₽'),
-      el('th', {}, 'Норматив, мин'), el('th', {}, ''))), tbody));
+    el('thead', {}, el('tr', {}, el('th', {}, 'Тип'), el('th', {}, 'Ед. изм.'),
+      el('th', {}, 'Стоимость, ₽'), el('th', {}, ''))), tbody));
   async function reload() {
     tbody.textContent = '';
     let rows = [];
@@ -12099,8 +12101,8 @@ function sdTariffsCard() {
     for (const t of rows) {
       tbody.append(el('tr', {},
         el('td', {}, t.name),
+        el('td', {}, t.unit || 'шт'),
         el('td', {}, String(t.cost)),
-        el('td', {}, String(t.time_norm_min)),
         el('td', { style: { whiteSpace: 'nowrap' } },
           el('button', { class: 'btn btn-sm', onClick: () => sdTariffHistory(t) }, 'История'),
           el('button', { class: 'btn btn-sm', style: { marginLeft: '4px' }, onClick: () => sdEditTariff(t, reload) }, '✏'),
@@ -12116,16 +12118,16 @@ function sdTariffsCard() {
 
 async function sdEditTariff(tariff, onSaved) {
   const nameI = el('input', { type: 'text', value: tariff?.name || '' });
+  const unitI = el('input', { type: 'text', value: tariff?.unit || 'шт', placeholder: 'шт / м / рулон…' });
   const costI = el('input', { type: 'number', step: 'any', min: '0', value: tariff?.cost ?? '' });
-  const timeI = el('input', { type: 'number', step: 'any', min: '0', value: tariff?.time_norm_min ?? '' });
   const body = el('div', {},
     el('div', { class: 'form-row' }, el('label', {}, 'Тип упаковки'), nameI),
-    el('div', { class: 'form-row' }, el('label', {}, 'Стоимость, ₽'), costI),
-    el('div', { class: 'form-row' }, el('label', {}, 'Норматив времени, мин'), timeI));
+    el('div', { class: 'form-row' }, el('label', {}, 'Единица измерения'), unitI),
+    el('div', { class: 'form-row' }, el('label', {}, 'Стоимость за единицу, ₽'), costI));
   await openModal(tariff ? 'Изменить тариф' : 'Новый тариф', body, {
     primaryLabel: 'Сохранить',
     onSubmit: async () => {
-      const payload = { name: nameI.value.trim(), cost: Number(costI.value) || 0, time_norm_min: Number(timeI.value) || 0 };
+      const payload = { name: nameI.value.trim(), unit: unitI.value.trim() || 'шт', cost: Number(costI.value) || 0 };
       if (!payload.name) { toast('Укажите тип упаковки', 'error'); return false; }
       try {
         if (tariff) await api.sdUpdateTariff(tariff.id, payload);
@@ -12141,11 +12143,11 @@ async function sdTariffHistory(tariff) {
   let rows = [];
   try { rows = await api.sdTariffHistory(tariff.id); } catch (e) { toast(e.message, 'error'); return; }
   const body = el('table', { class: 'table' },
-    el('thead', {}, el('tr', {}, el('th', {}, 'Когда'), el('th', {}, 'Стоимость'), el('th', {}, 'Норматив'))),
+    el('thead', {}, el('tr', {}, el('th', {}, 'Когда'), el('th', {}, 'Стоимость, ₽'))),
     el('tbody', {}, ...(rows.length ? rows.map((h) => el('tr', {},
-      el('td', {}, fmtDateTime(h.changed_at)), el('td', {}, String(h.cost)), el('td', {}, String(h.time_norm_min)),
-    )) : [el('tr', {}, el('td', { colspan: '3' }, 'Нет истории'))])));
-  await openModal(`История тарифа «${tariff.name}»`, body);
+      el('td', {}, fmtDateTime(h.changed_at)), el('td', {}, String(h.cost)),
+    )) : [el('tr', {}, el('td', { colspan: '2' }, 'Нет истории'))])));
+  await openModal(`История цены тарифа «${tariff.name}»`, body);
 }
 
 function sdRewardCard() {
@@ -12307,24 +12309,16 @@ const SD_SUPPLY_STATUS = { draft: 'черновик', in_work: 'в работе'
 
 function renderSdFinanceCard() {
   const card = el('div', { class: 'card', style: { marginBottom: '12px' } });
-  card.append(el('h4', {}, 'Финансовые параметры'));
+  card.append(el('h4', {}, 'Финмодель'));
   const body = el('div', {}, 'Загрузка…');
   card.append(body);
   (async () => {
     let s;
     try { s = await api.sdFinanceSettings(); } catch (e) { body.textContent = e.message; return; }
     body.textContent = '';
-    const rateI = el('input', { type: 'number', min: '0', step: 'any', value: s.labor_rate_per_min || 0, style: { width: '120px' } });
-    const status = el('span', { style: { marginLeft: '10px' } });
-    const saveBtn = el('button', { class: 'btn btn-primary', onClick: async () => {
-      status.textContent = 'Сохраняю…';
-      try { await api.sdSaveFinanceSettings({ labor_rate_per_min: Number(rateI.value) || 0 }); status.textContent = 'Сохранено'; toast('Сохранено', 'success'); }
-      catch (e) { status.textContent = ''; toast(e.message, 'error'); }
-    } }, 'Сохранить');
-    body.append(el('div', { style: { display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' } },
-      el('span', {}, 'Ставка труда склада, ₽/мин'), rateI, saveBtn, status));
+    body.append(el('div', {}, 'Прибыль склада = вознаграждение − (упаковка + обработка позиций складом + логистика).'));
     body.append(el('div', { style: { fontSize: '12px', color: 'var(--text-muted)', marginTop: '6px' } },
-      `Вознаграждение склада (доход) — в «Справочники → Вознаграждение». Сейчас: ${s.reward.amount} ${SD_REWARD_UNITS[s.reward.unit] || s.reward.unit}.`));
+      `Вознаграждение (доход) — в «Справочники → Вознаграждение», сейчас: ${s.reward.amount} ${SD_REWARD_UNITS[s.reward.unit] || s.reward.unit}. Расход склада за позицию задаётся в продуктовом справочнике (в разработке).`));
   })();
   return card;
 }
@@ -12499,8 +12493,7 @@ async function sdOpenDelivery(id, onChange) {
     fin.append(el('h4', {}, 'Финмодель (предварительно)'));
     const line = (label, val) => el('div', { style: { display: 'flex', justifyContent: 'space-between' } }, el('span', {}, label), el('strong', {}, val));
     fin.append(line('Упаковка, ₽', String(f.packaging_cost ?? 0)));
-    fin.append(line('Время упаковки, мин', String(f.labor_minutes ?? 0)));
-    fin.append(line('Зарплата склада, ₽', String(f.labor_cost ?? 0)));
+    fin.append(line('Обработка позиций складом, ₽', String(f.handling_cost ?? 0)));
     fin.append(line('Логистика, ₽', String(f.logistics_cost ?? 0)));
     fin.append(line(`Вознаграждение (${SD_REWARD_UNITS[f.reward_unit] || f.reward_unit || '—'}, база ${f.reward_base ?? 0}), ₽`, String(f.reward_amount ?? 0)));
     const profit = line('ЧИСТАЯ ПРИБЫЛЬ СКЛАДА, ₽', String(f.net_profit ?? 0));
@@ -12536,7 +12529,7 @@ async function sdOpenDelivery(id, onChange) {
     pkgBox.append(el('h4', {}, 'Упаковка'));
     const tariffs = await api.sdTariffs().catch(() => []);
     const tarSel = el('select', {}, el('option', { value: '' }, '— тариф —'),
-      ...tariffs.map((t) => el('option', { value: String(t.id) }, `${t.name} (${t.cost}₽, ${t.time_norm_min}мин)`)));
+      ...tariffs.map((t) => el('option', { value: String(t.id) }, `${t.name} (${t.cost}₽/${t.unit || 'шт'})`)));
     const pQtyI = el('input', { type: 'number', min: '1', step: '1', value: '1', style: { width: '80px', marginLeft: '6px' } });
     const addPkg = el('button', { class: 'btn btn-sm btn-primary', style: { marginLeft: '6px' }, onClick: async () => {
       if (!tarSel.value) { toast('Выберите тариф', 'error'); return; }
@@ -12555,4 +12548,62 @@ async function sdOpenDelivery(id, onChange) {
   }
   await refresh();
   await openModal(`Доставка #${id}`, body, { size: 'lg' });
+}
+
+// ---- Каналы + юрлица + API-ключи (админ) ----
+function renderSdChannelsCard() {
+  const card = el('div', { class: 'card', style: { marginBottom: '12px' } });
+  card.append(el('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center' } },
+    el('h4', {}, 'Каналы, юрлица и API-ключи'),
+    el('button', { class: 'btn btn-sm btn-primary', onClick: () => sdEditChannel(null, null, reload) }, '+ Канал')));
+  card.append(el('div', { style: { fontSize: '12px', color: 'var(--text-muted)', marginBottom: '6px' } },
+    'Ключи вводит только админ. Один канал/юрлицо закрепляется за одним менеджером канала.'));
+  const tbody = el('tbody', {});
+  card.append(el('table', { class: 'table' },
+    el('thead', {}, el('tr', {}, el('th', {}, 'Канал'), el('th', {}, 'Юрлицо'), el('th', {}, 'API-ключ'),
+      el('th', {}, 'Менеджер'), el('th', {}, ''))), tbody));
+  async function reload() {
+    tbody.textContent = '';
+    let data;
+    try { data = await api.sdChannelAccounts(); } catch (e) { toast(e.message, 'error'); return; }
+    const users = data.users || [];
+    if (!(data.accounts || []).length) { tbody.append(el('tr', {}, el('td', { colspan: '5' }, 'Каналы не заведены'))); return; }
+    for (const a of data.accounts) {
+      const edit = el('button', { class: 'btn btn-sm', onClick: () => sdEditChannel(a, users, reload) }, '✏');
+      const del = el('button', { class: 'btn btn-sm btn-danger', style: { marginLeft: '4px' }, onClick: async () => {
+        if (!(await confirm('Удалить канал?'))) return;
+        try { await api.sdDeleteChannelAccount(a.id); reload(); } catch (e) { toast(e.message, 'error'); }
+      } }, '🗑');
+      tbody.append(el('tr', {}, el('td', {}, SD_CHANNELS[a.channel] || a.channel), el('td', {}, a.legal_entity || '—'),
+        el('td', {}, a.key_set ? (a.key_mask || 'задан') : '—'), el('td', {}, a.manager_name || '—'), el('td', {}, edit, del)));
+    }
+  }
+  reload();
+  return card;
+}
+
+async function sdEditChannel(acc, users, onSaved) {
+  let userList = users;
+  if (!userList) { try { const d = await api.sdChannelAccounts(); userList = d.users || []; } catch { userList = []; } }
+  const chanS = el('select', {}, ...Object.entries(SD_CHANNELS).map(([v, l]) =>
+    el('option', { value: v, ...(acc && acc.channel === v ? { selected: 'selected' } : {}) }, l)));
+  const legalI = el('input', { type: 'text', value: acc?.legal_entity || '' });
+  const keyI = el('input', { type: 'text', placeholder: acc?.key_set ? 'оставьте пустым — ключ не изменится' : 'API-ключ' });
+  const mgrS = el('select', {}, el('option', { value: '' }, '— менеджер канала —'),
+    ...userList.map((u) => el('option', { value: String(u.id), ...(acc && Number(acc.manager_id) === Number(u.id) ? { selected: 'selected' } : {}) },
+      `${u.name || u.email} (${tr('role', u.role) || u.role})`)));
+  const body = el('div', {},
+    el('div', { class: 'form-row' }, el('label', {}, 'Канал'), chanS),
+    el('div', { class: 'form-row' }, el('label', {}, 'Юрлицо'), legalI),
+    el('div', { class: 'form-row' }, el('label', {}, 'API-ключ'), keyI),
+    el('div', { class: 'form-row' }, el('label', {}, 'Менеджер канала'), mgrS));
+  await openModal(acc ? 'Изменить канал' : 'Новый канал', body, { primaryLabel: 'Сохранить', onSubmit: async () => {
+    const payload = { channel: chanS.value, legal_entity: legalI.value.trim() || null, manager_id: mgrS.value ? Number(mgrS.value) : null };
+    if (keyI.value.trim()) payload.api_key = keyI.value.trim();
+    try {
+      if (acc) await api.sdUpdateChannelAccount(acc.id, payload);
+      else await api.sdCreateChannelAccount(payload);
+      toast('Канал сохранён', 'success'); onSaved?.();
+    } catch (e) { toast(e.message, 'error'); return false; }
+  } });
 }
