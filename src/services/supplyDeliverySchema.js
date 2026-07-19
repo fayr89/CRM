@@ -212,6 +212,9 @@ export async function ensureSupplyDeliverySchema() {
   await db.run('UPDATE sd_sets SET packaging_migrated = TRUE WHERE packaging_migrated IS NOT TRUE');
   // Сопоставление канал-SKU → сет (а не → товар склада).
   await db.run('ALTER TABLE sd_product_channel_map ADD COLUMN IF NOT EXISTS set_id INTEGER');
+  // Из какого канал-аккаунта (юрлица/ключа) подтянута номенклатура — чтобы
+  // тянуть/фильтровать по конкретному каналу, а не только по первому.
+  await db.run('ALTER TABLE sd_product_channel_map ADD COLUMN IF NOT EXISTS channel_account_id INTEGER');
   // WB ФБС: поставке нужен внешний supplyId WB + привязка к каналу (для ключа),
   // позиции = сборочные задания WB (external_order_id + штрихкод).
   await db.run('ALTER TABLE sd_supplies ADD COLUMN IF NOT EXISTS channel_account_id INTEGER');

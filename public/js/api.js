@@ -239,7 +239,7 @@ export const api = {
   sdProductDirectory: (search) => request('GET', '/api/supply-delivery/product-directory', { query: { search } }),
   sdSaveProductDirectory: (productId, body) => request('PUT', `/api/supply-delivery/product-directory/${productId}`, { body }),
   // Сопоставление номенклатуры канала ⇄ внутренней (Phase 3)
-  sdChannelMap: (channel, status, search) => request('GET', '/api/supply-delivery/channel-map', { query: { channel, status, search } }),
+  sdChannelMap: (channel, status, search, channelAccountId) => request('GET', '/api/supply-delivery/channel-map', { query: { channel, status, search, channel_account_id: channelAccountId || '' } }),
   sdImportChannelMap: (body) => request('POST', '/api/supply-delivery/channel-map/import', { body }),
   sdPullWb: (channel_account_id) => request('POST', '/api/supply-delivery/channel-map/pull-wb', { body: { channel_account_id } }),
   sdAutoMatchChannel: (channel) => request('POST', '/api/supply-delivery/channel-map/auto-match', { body: { channel } }),

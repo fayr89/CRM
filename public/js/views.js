@@ -12693,6 +12693,9 @@ function renderSdChannelMapCard(isAdmin) {
   const chanSel = el('select', {}, ...Object.entries(SD_CHANNELS).map(([v, l]) => el('option', { value: v }, l)));
   const statusSel = el('select', {}, el('option', { value: 'all' }, 'Все'),
     el('option', { value: 'unmatched' }, 'Не сопоставленные'), el('option', { value: 'matched' }, 'Сопоставленные'));
+  // Фильтр по юрлицу (WB-каналу): пусто = все. Заполняется из /wb/accounts.
+  const accSel = el('select', {}, el('option', { value: '' }, 'Все юрлица'));
+  let wbAccounts = [];
   const searchI = el('input', { type: 'text', placeholder: 'Поиск', style: { width: '150px' } });
   const info = el('span', { style: { marginLeft: '8px', color: 'var(--text-muted)' } });
   const findBtn = el('button', { class: 'btn btn-sm', onClick: () => reload() }, 'Показать');
@@ -12701,32 +12704,52 @@ function renderSdChannelMapCard(isAdmin) {
     try { const r = await api.sdAutoMatchChannel(chanSel.value); toast(`Сопоставлено: ${r.matched}`, 'success'); reload(); } catch (e) { toast(e.message, 'error'); }
   } }, 'Авто-сопоставить');
   const controls = el('div', { style: { marginBottom: '8px', display: 'flex', gap: '6px', alignItems: 'center', flexWrap: 'wrap' } },
-    chanSel, statusSel, searchI, findBtn, importBtn, autoBtn);
+    chanSel, statusSel, accSel, searchI, findBtn, importBtn, autoBtn);
+  // Подтяжка из WB: по ВЫБРАННОМУ юрлицу, а при «Все юрлица» — по всем WB-каналам
+  // с ключом (раньше бралось только первое юрлицо — это и был баг). Действие
+  // админское (пишет много строк + ходит во внешний API), фильтр — для всех.
+  let pullBtn = null;
   if (isAdmin) {
-    controls.append(el('button', { class: 'btn btn-sm', onClick: async () => {
-      try {
-        const d = await api.sdChannelAccounts();
-        const acc = (d.accounts || []).find((a) => a.channel === 'wb' && a.key_set);
-        if (!acc) { toast('Заведи WB-канал с ключом в «Каналы»', 'error'); return; }
-        toast('Тяну номенклатуру WB…', 'success');
-        const r = await api.sdPullWb(acc.id);
-        toast(`Подтянуто из WB: ${r.pulled}`, 'success'); reload();
-      } catch (e) { toast(e.message, 'error'); }
-    } }, 'Подтянуть из WB API'));
+    pullBtn = el('button', { class: 'btn btn-sm', onClick: async () => {
+      const targets = accSel.value ? wbAccounts.filter((a) => String(a.id) === accSel.value) : wbAccounts.slice();
+      if (!targets.length) { toast('Нет WB-каналов с ключом. Заведи их в «Каналы».', 'error'); return; }
+      let total = 0; const errs = [];
+      toast(`Тяну номенклатуру WB (юрлиц: ${targets.length})…`, 'success');
+      for (const a of targets) {
+        try { const r = await api.sdPullWb(a.id); total += Number(r.pulled) || 0; }
+        catch (e) { errs.push(`${a.legal_entity || ('#' + a.id)}: ${e.message}`); }
+      }
+      if (errs.length) toast(`Подтянуто ${total}. Ошибки: ${errs.join(' | ')}`, 'error');
+      else toast(`Подтянуто из WB: ${total}`, 'success');
+      reload();
+    } }, 'Подтянуть из WB API');
+    controls.append(pullBtn);
   }
-  chanSel.addEventListener('change', () => reload());
+  // Фильтр по юрлицу и подтяжка актуальны только для WB.
+  function syncChannelUi() {
+    const isWb = chanSel.value === 'wb';
+    accSel.style.display = isWb ? '' : 'none';
+    if (pullBtn) pullBtn.style.display = isWb ? '' : 'none';
+  }
+  chanSel.addEventListener('change', () => { accSel.value = ''; syncChannelUi(); reload(); });
   statusSel.addEventListener('change', () => reload());
+  accSel.addEventListener('change', () => reload());
   card.append(controls, info);
   const tbody = el('tbody', {});
   card.append(el('table', { class: 'table' },
     el('thead', {}, el('tr', {}, el('th', {}, 'ШК канала'), el('th', {}, 'Артикул канала'), el('th', {}, 'Название'),
-      el('th', {}, 'Сопоставлен товар'), el('th', {}, ''))), tbody));
+      el('th', {}, 'Юрлицо'), el('th', {}, 'Сопоставлен товар'), el('th', {}, ''))), tbody));
+  async function loadAccounts() {
+    try { wbAccounts = await api.sdWbAccounts(); } catch { wbAccounts = []; }
+    for (const a of wbAccounts) accSel.append(el('option', { value: String(a.id) }, a.legal_entity || ('WB #' + a.id)));
+  }
   async function reload() {
     tbody.textContent = '';
     let data;
-    try { data = await api.sdChannelMap(chanSel.value, statusSel.value, searchI.value.trim()); } catch (e) { toast(e.message, 'error'); return; }
+    const accFilter = chanSel.value === 'wb' ? accSel.value : '';
+    try { data = await api.sdChannelMap(chanSel.value, statusSel.value, searchI.value.trim(), accFilter); } catch (e) { toast(e.message, 'error'); return; }
     info.textContent = `Сопоставлено ${data.matched} из ${data.total}`;
-    if (!data.rows.length) { tbody.append(el('tr', {}, el('td', { colspan: '5' }, 'Пусто'))); return; }
+    if (!data.rows.length) { tbody.append(el('tr', {}, el('td', { colspan: '6' }, 'Пусто'))); return; }
     for (const m of data.rows) {
       const matched = m.set_id
         ? el('span', {}, `сет: ${m.set_name || '#' + m.set_id}`)
@@ -12739,9 +12762,11 @@ function renderSdChannelMapCard(isAdmin) {
         try { await api.sdDeleteChannelMap(m.id); reload(); } catch (e) { toast(e.message, 'error'); }
       } }, '🗑');
       tbody.append(el('tr', {}, el('td', {}, m.channel_barcode || '—'), el('td', {}, m.channel_sku || '—'),
-        el('td', {}, m.channel_name || '—'), el('td', {}, matched), el('td', {}, matchBtn, unBtn, del)));
+        el('td', {}, m.channel_name || '—'), el('td', {}, m.legal_entity || '—'), el('td', {}, matched), el('td', {}, matchBtn, unBtn, del)));
     }
   }
+  loadAccounts();
+  syncChannelUi();
   reload();
   return card;
 }

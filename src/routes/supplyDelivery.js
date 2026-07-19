@@ -772,6 +772,8 @@ router.get('/channel-map', requireOperate, asyncHandler(async (req, res) => {
   const status = (req.query.status || 'all').toString();
   const search = (req.query.search || '').toString().trim();
   const limit = Math.min(500, Math.max(1, parseInt(req.query.limit, 10) || 200));
+  const accId = parseInt(req.query.channel_account_id, 10);
+  const hasAcc = Number.isInteger(accId) && accId > 0;
   const params = [channel];
   let where = 'm.channel = ?';
   if (status === 'matched') where += ' AND m.set_id IS NOT NULL';
@@ -780,19 +782,25 @@ router.get('/channel-map', requireOperate, asyncHandler(async (req, res) => {
     where += ' AND (m.channel_barcode ILIKE ? OR m.channel_sku ILIKE ? OR m.channel_name ILIKE ?)';
     params.push(`%${search}%`, `%${search}%`, `%${search}%`);
   }
+  if (hasAcc) { where += ' AND m.channel_account_id = ?'; params.push(accId); }
   const rows = await db.all(
-    `SELECT m.*, st.name AS set_name
+    `SELECT m.*, st.name AS set_name, a.legal_entity
      FROM sd_product_channel_map m
      LEFT JOIN sd_sets st ON st.id = m.set_id
+     LEFT JOIN sd_channel_accounts a ON a.id = m.channel_account_id
      WHERE ${where}
      ORDER BY (m.set_id IS NULL) DESC, m.id DESC
      LIMIT ?`,
     ...params, limit,
   );
+  // Счётчики — по каналу (и по юрлицу, если фильтруем), без учёта статуса/поиска.
+  const countParams = [channel];
+  let countWhere = 'channel = ?';
+  if (hasAcc) { countWhere += ' AND channel_account_id = ?'; countParams.push(accId); }
   const counts = await db.get(
     `SELECT COUNT(*) AS total, COUNT(*) FILTER (WHERE set_id IS NOT NULL) AS matched
-     FROM sd_product_channel_map WHERE channel = ?`,
-    channel,
+     FROM sd_product_channel_map WHERE ${countWhere}`,
+    ...countParams,
   );
   res.json({ rows, total: Number(counts?.total) || 0, matched: Number(counts?.matched) || 0 });
 }));
@@ -837,16 +845,17 @@ router.post('/channel-map/pull-wb', requireOperate, asyncHandler(async (req, res
   for (const it of items) {
     if (!it.channel_barcode && !it.channel_sku) continue;
     await db.run(
-      `INSERT INTO sd_product_channel_map (channel, channel_barcode, channel_sku, channel_name, channel_extra)
-       VALUES ('wb', ?, ?, ?, ?::jsonb)
+      `INSERT INTO sd_product_channel_map (channel, channel_barcode, channel_sku, channel_name, channel_extra, channel_account_id)
+       VALUES ('wb', ?, ?, ?, ?::jsonb, ?)
        ON CONFLICT (channel, COALESCE(channel_barcode, ''), COALESCE(channel_sku, ''))
-       DO UPDATE SET channel_name = EXCLUDED.channel_name, channel_extra = EXCLUDED.channel_extra, updated_at = NOW()`,
+       DO UPDATE SET channel_name = EXCLUDED.channel_name, channel_extra = EXCLUDED.channel_extra,
+                     channel_account_id = EXCLUDED.channel_account_id, updated_at = NOW()`,
       it.channel_barcode ?? null, it.channel_sku ?? null, it.channel_name ?? null,
-      JSON.stringify(it.channel_extra || {}),
+      JSON.stringify(it.channel_extra || {}), channel_account_id,
     );
     n += 1;
   }
-  res.json({ ok: true, pulled: n });
+  res.json({ ok: true, pulled: n, legal_entity: acc.legal_entity });
 }));
 
 // Авто-сопоставление: артикул канала = артикул склада-компонента какого-то сета.
