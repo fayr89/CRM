@@ -6409,3 +6409,50 @@ v247/v263/v404/v405, orphan-ветки v405) уже эскалированы р�
 Снос diag-v452 выполнен раздельным `git rm src/routes/diagDaily.js` +
 `Edit` app.js (импорт + роут), с проверкой `git status --short`/`grep -n
 diag src/app.js` (пусто) перед коммитом и пушем в обе ветки.
+
+**2026-07-19 (v453): без изменений, конвейер деплоя штатный.** Designated
+dev-ветка (`claude/inspiring-cannon-ofviz9`) отсутствовала на origin на
+старте (тот же паттерн «смержили и GitHub удалил ветку», см. v169 и
+далее). Репо стартовало shallow — выполнил `git fetch --unshallow origin`
+по правилу v169 до всех выводов о divergence. После unshallow локальный
+HEAD строго совпал с `origin/claude/build-crm-system-JzCP9` (`7fa7c8a`,
+финальный коммит v452) — обычная линейная точка, не unrelated-histories.
+Восстановил designated dev-ветку `git push -u origin
+claude/inspiring-cannon-ofviz9`. `/health` 200 подтверждён до начала.
+
+Добавил diag-v453 (только `op=meta`, по шаблону v402-452 — пятьдесят одна
+предыдущая цикл с идентичным результатом делают полный
+`get-feedback-summary` избыточным). Push dev → checkout прод → `git fetch
+origin claude/build-crm-system-JzCP9` явным именем + `reset --hard` +
+`merge --ff-only` → push prod — fast-forward прошёл чисто (1 коммит: diag
+add). Первая попытка `op=meta` сразу после пуша поймала 404 (алиас ещё не
+переехал), повтор через ~20с — 200.
+
+Этап 1 — diag `op=meta` `proposals_by_status`={done:62}:
+pending/approved/revision/rejected пусты, действовать не по чему. Этап 2 —
+`feedback_by_status`={awaiting_approval:15, closed:44, open:4},
+`proposals_last_update`=2026-07-12T10:44:03.911Z,
+`feedback_last_msg`=2026-07-12T10:45:23.756Z — идентичны v375-452 один в
+один (включая миллисекунды). **203-е подряд подтверждение** отсутствия
+изменений в feedback/ai_proposals с закрытия ai_proposal #62 в v290.
+
+Push-уведомление не отправлено — нет новой информации: feedback/ai_proposals
+не менялись за 203 цикла подряд, известные находки (частота обходов
+v247/v263/v404/v405, orphan-ветки v405) уже эскалированы ранее без реакции
+админа больше недели, повтор без нового сигнала был бы спамом; конвейер
+деплоя здоров (`/health` подтверждён живым до и после каждого шага).
+
+Снос diag-v453 выполнен раздельным `git rm src/routes/diagDaily.js` +
+`Edit` app.js (импорт + роут), с проверкой `git status --short`/`grep -n
+diag src/app.js` (пусто) перед коммитом. **Отклонение от обычного
+порядка:** снос-коммит был по невнимательности сделан прямо на
+прод-ветке (`claude/build-crm-system-JzCP9`), а не на dev — до этого
+обхода я не переключился обратно на dev после ff-merge diag-add. Не
+проблема по сути (тот же diff, что обычно делается на dev и мержится
+ff-only), но чтобы обе ветки не разошлись, синхронизировал dev
+fast-forward'ом от прод (`git checkout
+claude/inspiring-cannon-ofviz9 && git merge --ff-only
+claude/build-crm-system-JzCP9`) и запушил обе. **Следующему обходу:**
+после `git push` прод-ветки явно проверять `git branch --show-current`
+перед следующим коммитом (снос diag) — не полагаться на память, что ты
+всё ещё на dev.
