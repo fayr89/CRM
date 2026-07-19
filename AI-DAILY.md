@@ -5941,3 +5941,42 @@ Push-уведомление не отправлено — нет новой ин
 Снос diag-v441 выполнен раздельным `git rm src/routes/diagDaily.js` +
 `Edit` app.js (импорт + роут), с проверкой `git status --short`/`grep -n
 diag src/app.js` (пусто) перед коммитом и пушем в обе ветки.
+
+**2026-07-19 (v442): без изменений, конвейер деплоя штатный.** `/health`
+200 подтверждён до начала. Designated dev-ветка (`claude/inspiring-cannon-i8fvhh`)
+отсутствовала на origin на старте — репо стартовало shallow, прямой
+`git rev-parse origin/claude/build-crm-system-JzCP9` до unshallow ложно
+показывал прод на `0843dc5` (устаревший кэш), локальный HEAD dev-ветки уже
+был на `bbad0f3`. После `git fetch --unshallow origin` подтверждено: прод
+и локальный dev-HEAD оба на `bbad0f3` — designated ветка была смержена в
+прод в прошлом обходе (тот же паттерн v169/v264/.../v438), сливать было
+нечего, просто восстановил ref `git push -u origin claude/inspiring-cannon-i8fvhh`.
+
+Добавил diag-v442 (`op=meta`, по шаблону v402-441). Push dev → checkout
+прод → `git fetch origin claude/build-crm-system-JzCP9` явным именем →
+`reset --hard` + `merge --ff-only` → push prod — fast-forward прошёл чисто
+(1 коммит: diag add). Первая попытка `op=meta` сразу после пуша поймала
+404 (алиас ещё не переехал), повтор через ~20с — 200.
+
+Этап 1 — diag `op=meta` `proposals_by_status`={done:62}:
+pending/approved/revision/rejected пусты, действовать не по чему. Этап 2 —
+`feedback_by_status`={awaiting_approval:15, closed:44, open:4},
+`proposals_last_update`=2026-07-12T10:44:03.911Z,
+`feedback_last_msg`=2026-07-12T10:45:23.756Z — идентичны v375-441 один в
+один (включая миллисекунды). **192-е подряд подтверждение** отсутствия
+изменений в feedback/ai_proposals с закрытия ai_proposal #62 в v290.
+
+`git ls-remote origin | wc -l` = 984 (было 983 в конце v441) — рост на 1
+ссылку, в пределах обычного шума ветвления, без скачка orphan-веток. Не
+новая информация к находкам v405 (940+ orphan-веток) / v247,v263,v404,v405
+(интервал обхода) — обе уже отправлены push-уведомлением ранее без
+реакции админа за 30+ циклов; повтор без новой информации был бы спамом.
+Не эскалирую повторно.
+
+Push-уведомление не отправлено — нет новой информации: feedback/ai_proposals
+не менялись за 192 цикла подряд, orphan-ветки без скачка, конвейер деплоя
+здоров (`/health` подтверждён живым до и после каждого шага).
+
+Снос diag-v442 выполнен раздельным `git rm src/routes/diagDaily.js` +
+`Edit` app.js (импорт + роут), с проверкой `git status --short`/`grep -n
+diag src/app.js` (пусто) перед коммитом и пушем в обе ветки.
