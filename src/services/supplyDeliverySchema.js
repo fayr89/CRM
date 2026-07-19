@@ -164,6 +164,32 @@ export async function ensureSupplyDeliverySchema() {
     `CREATE UNIQUE INDEX IF NOT EXISTS uniq_sd_channel_map
      ON sd_product_channel_map (channel, COALESCE(channel_barcode, ''), COALESCE(channel_sku, ''))`,
   );
+  // «Книга сетов»: сет = артикул маркетплейса (комбинация артикулов склада).
+  // Упаковка и габариты — на СЕТЕ (а не на товаре склада), т.к. пакуется именно
+  // маркетплейс-артикул. Один сет ↔ разные канальные SKU (см. channel_map.set_id).
+  await db.run(
+    `CREATE TABLE IF NOT EXISTS sd_sets (
+       id SERIAL PRIMARY KEY,
+       name TEXT NOT NULL,
+       packaging_tariff_id INTEGER,
+       packaging_consumption REAL NOT NULL DEFAULT 0,
+       packing_time_min REAL NOT NULL DEFAULT 0,
+       dim_l REAL, dim_w REAL, dim_h REAL,
+       created_by INTEGER,
+       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+     )`,
+  );
+  await db.run(
+    `CREATE TABLE IF NOT EXISTS sd_set_components (
+       id SERIAL PRIMARY KEY,
+       set_id INTEGER NOT NULL REFERENCES sd_sets(id) ON DELETE CASCADE,
+       product_id INTEGER REFERENCES products(id) ON DELETE SET NULL,
+       quantity REAL NOT NULL DEFAULT 1
+     )`,
+  );
+  // Сопоставление канал-SKU → сет (а не → товар склада).
+  await db.run('ALTER TABLE sd_product_channel_map ADD COLUMN IF NOT EXISTS set_id INTEGER');
   // WB ФБС: поставке нужен внешний supplyId WB + привязка к каналу (для ключа),
   // позиции = сборочные задания WB (external_order_id + штрихкод).
   await db.run('ALTER TABLE sd_supplies ADD COLUMN IF NOT EXISTS channel_account_id INTEGER');

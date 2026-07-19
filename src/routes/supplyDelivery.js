@@ -435,27 +435,28 @@ async function loadDeliveryDetail(id) {
     supply_count: supplies.length,
     total_qty: supplies.reduce((s, x) => s + (Number(x.total_qty) || 0), 0),
   };
-  // Упаковка и зарплата ДЕРИВАЮТСЯ из позиций доставки × продуктовый справочник:
-  //   упаковка = Σ (расход упаковки × кол-во × цена ед. тарифа)
-  //   время    = Σ (время упаковки позиции × кол-во)  → зарплата = время × ставка ₽/мин
-  // Позиция сопоставляется с внутренним товаром по product_id, иначе по sku
-  // (LATERAL LIMIT 1 — без размножения строк на неуникальных sku).
+  // Упаковка и зарплата ДЕРИВАЮТСЯ из позиций доставки через «сет»:
+  //   позиция (канал-SKU/штрихкод) → sd_product_channel_map (по каналу поставки)
+  //   → sd_sets (упаковка/время). упаковка = Σ (расход × кол-во × цена ед. тарифа),
+  //   время = Σ (время сета × кол-во) → зарплата = время × ставка ₽/мин.
   const agg = await db.get(
     `SELECT
-       COALESCE(SUM(pd.packaging_consumption * i.quantity * COALESCE(t.cost, 0)), 0) AS packaging_cost,
-       COALESCE(SUM(pd.packing_time_min * i.quantity), 0) AS labor_minutes,
-       COUNT(*) FILTER (WHERE pd.product_id IS NULL) AS positions_unmapped,
+       COALESCE(SUM(st.packaging_consumption * i.quantity * COALESCE(t.cost, 0)), 0) AS packaging_cost,
+       COALESCE(SUM(st.packing_time_min * i.quantity), 0) AS labor_minutes,
+       COUNT(*) FILTER (WHERE st.id IS NULL) AS positions_unmapped,
        COUNT(*) AS positions_total
      FROM sd_delivery_supplies ds
+     JOIN sd_supplies s ON s.id = ds.supply_id
      JOIN sd_supply_items i ON i.supply_id = ds.supply_id
      LEFT JOIN LATERAL (
-       SELECT pr.id FROM products pr
-       WHERE (i.product_id IS NOT NULL AND pr.id = i.product_id)
-          OR (i.product_id IS NULL AND i.sku IS NOT NULL AND pr.sku = i.sku)
-       ORDER BY pr.id LIMIT 1
-     ) p ON TRUE
-     LEFT JOIN sd_product_directory pd ON pd.product_id = p.id
-     LEFT JOIN sd_packaging_tariffs t ON t.id = pd.packaging_tariff_id
+       SELECT m.set_id FROM sd_product_channel_map m
+       WHERE m.channel = s.channel AND m.set_id IS NOT NULL
+         AND ((i.sku IS NOT NULL AND m.channel_sku = i.sku)
+           OR (i.barcode IS NOT NULL AND m.channel_barcode = i.barcode))
+       ORDER BY m.id LIMIT 1
+     ) mm ON TRUE
+     LEFT JOIN sd_sets st ON st.id = mm.set_id
+     LEFT JOIN sd_packaging_tariffs t ON t.id = st.packaging_tariff_id
      WHERE ds.delivery_id = ?`,
     id,
   );
@@ -631,7 +632,98 @@ router.put('/product-directory/:productId', requireOperate, asyncHandler(async (
   res.json(row);
 }));
 
-// ----- Matching номенклатуры канала ⇄ внутренней (Phase 3, WB первый) -----
+// ----- Книга сетов (артикул маркетплейса = комбинация артикулов склада) -----
+const setSchema = z.object({
+  name: z.string().min(1).max(200),
+  packaging_tariff_id: z.number().int().positive().optional().nullable(),
+  packaging_consumption: z.number().nonnegative().optional().default(0),
+  packing_time_min: z.number().nonnegative().optional().default(0),
+  dim_l: z.number().nonnegative().optional().nullable(),
+  dim_w: z.number().nonnegative().optional().nullable(),
+  dim_h: z.number().nonnegative().optional().nullable(),
+});
+
+router.get('/sets', requireOperate, asyncHandler(async (req, res) => {
+  await ensureSupplyDeliverySchema();
+  const search = (req.query.search || '').toString().trim();
+  const params = [];
+  let where = '1=1';
+  if (search) { where += ' AND st.name ILIKE ?'; params.push(`%${search}%`); }
+  res.json(await db.all(
+    `SELECT st.*, t.name AS packaging_name, t.unit AS packaging_unit,
+            COALESCE(c.cnt, 0) AS component_count
+     FROM sd_sets st
+     LEFT JOIN sd_packaging_tariffs t ON t.id = st.packaging_tariff_id
+     LEFT JOIN (SELECT set_id, COUNT(*) AS cnt FROM sd_set_components GROUP BY set_id) c ON c.set_id = st.id
+     WHERE ${where}
+     ORDER BY st.name LIMIT 500`,
+    ...params,
+  ));
+}));
+
+router.post('/sets', requireOperate, asyncHandler(async (req, res) => {
+  await ensureSupplyDeliverySchema();
+  const d = setSchema.parse(req.body);
+  const row = await db.get(
+    `INSERT INTO sd_sets (name, packaging_tariff_id, packaging_consumption, packing_time_min, dim_l, dim_w, dim_h, created_by)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING *`,
+    d.name, d.packaging_tariff_id ?? null, d.packaging_consumption ?? 0, d.packing_time_min ?? 0,
+    d.dim_l ?? null, d.dim_w ?? null, d.dim_h ?? null, req.user.id,
+  );
+  res.json(row);
+}));
+
+router.get('/sets/:id', requireOperate, asyncHandler(async (req, res) => {
+  await ensureSupplyDeliverySchema();
+  const set = await db.get('SELECT * FROM sd_sets WHERE id = ?', req.params.id);
+  if (!set) throw NotFound('Сет не найден');
+  const components = await db.all(
+    `SELECT sc.id, sc.product_id, sc.quantity, p.sku, p.name
+     FROM sd_set_components sc LEFT JOIN products p ON p.id = sc.product_id
+     WHERE sc.set_id = ? ORDER BY sc.id`,
+    req.params.id,
+  );
+  res.json({ ...set, components });
+}));
+
+router.put('/sets/:id', requireOperate, asyncHandler(async (req, res) => {
+  await ensureSupplyDeliverySchema();
+  const d = setSchema.parse(req.body);
+  const cur = await db.get('SELECT id FROM sd_sets WHERE id = ?', req.params.id);
+  if (!cur) throw NotFound('Сет не найден');
+  const row = await db.get(
+    `UPDATE sd_sets SET name = ?, packaging_tariff_id = ?, packaging_consumption = ?, packing_time_min = ?,
+       dim_l = ?, dim_w = ?, dim_h = ?, updated_at = NOW() WHERE id = ? RETURNING *`,
+    d.name, d.packaging_tariff_id ?? null, d.packaging_consumption ?? 0, d.packing_time_min ?? 0,
+    d.dim_l ?? null, d.dim_w ?? null, d.dim_h ?? null, req.params.id,
+  );
+  res.json(row);
+}));
+
+router.delete('/sets/:id', requireOperate, asyncHandler(async (req, res) => {
+  await ensureSupplyDeliverySchema();
+  await db.run('DELETE FROM sd_sets WHERE id = ?', req.params.id);
+  res.json({ ok: true });
+}));
+
+router.post('/sets/:id/components', requireOperate, asyncHandler(async (req, res) => {
+  await ensureSupplyDeliverySchema();
+  const set = await db.get('SELECT id FROM sd_sets WHERE id = ?', req.params.id);
+  if (!set) throw NotFound('Сет не найден');
+  const d = z.object({ product_id: z.number().int().positive(), quantity: z.number().positive().optional().default(1) }).parse(req.body);
+  const prod = await db.get('SELECT id FROM products WHERE id = ?', d.product_id);
+  if (!prod) throw NotFound('Товар не найден');
+  await db.run('INSERT INTO sd_set_components (set_id, product_id, quantity) VALUES (?, ?, ?)', req.params.id, d.product_id, d.quantity ?? 1);
+  res.json({ ok: true });
+}));
+
+router.delete('/sets/:id/components/:cid', requireOperate, asyncHandler(async (req, res) => {
+  await ensureSupplyDeliverySchema();
+  await db.run('DELETE FROM sd_set_components WHERE id = ? AND set_id = ?', req.params.cid, req.params.id);
+  res.json({ ok: true });
+}));
+
+// ----- Matching номенклатуры канала ⇄ сет (Phase 3, WB первый) -----
 router.get('/channel-map', requireOperate, asyncHandler(async (req, res) => {
   await ensureSupplyDeliverySchema();
   const channel = (req.query.channel || 'wb').toString();
@@ -640,23 +732,23 @@ router.get('/channel-map', requireOperate, asyncHandler(async (req, res) => {
   const limit = Math.min(500, Math.max(1, parseInt(req.query.limit, 10) || 200));
   const params = [channel];
   let where = 'm.channel = ?';
-  if (status === 'matched') where += ' AND m.product_id IS NOT NULL';
-  else if (status === 'unmatched') where += ' AND m.product_id IS NULL';
+  if (status === 'matched') where += ' AND m.set_id IS NOT NULL';
+  else if (status === 'unmatched') where += ' AND m.set_id IS NULL';
   if (search) {
     where += ' AND (m.channel_barcode ILIKE ? OR m.channel_sku ILIKE ? OR m.channel_name ILIKE ?)';
     params.push(`%${search}%`, `%${search}%`, `%${search}%`);
   }
   const rows = await db.all(
-    `SELECT m.*, p.sku AS product_sku, p.name AS product_name
+    `SELECT m.*, st.name AS set_name
      FROM sd_product_channel_map m
-     LEFT JOIN products p ON p.id = m.product_id
+     LEFT JOIN sd_sets st ON st.id = m.set_id
      WHERE ${where}
-     ORDER BY (m.product_id IS NULL) DESC, m.id DESC
+     ORDER BY (m.set_id IS NULL) DESC, m.id DESC
      LIMIT ?`,
     ...params, limit,
   );
   const counts = await db.get(
-    `SELECT COUNT(*) AS total, COUNT(*) FILTER (WHERE product_id IS NOT NULL) AS matched
+    `SELECT COUNT(*) AS total, COUNT(*) FILTER (WHERE set_id IS NOT NULL) AS matched
      FROM sd_product_channel_map WHERE channel = ?`,
     channel,
   );
@@ -715,17 +807,16 @@ router.post('/channel-map/pull-wb', requireOperate, asyncHandler(async (req, res
   res.json({ ok: true, pulled: n });
 }));
 
-// Авто-сопоставление: артикул канала (channel_sku) = внутренний артикул (products.sku).
+// Авто-сопоставление: артикул канала = артикул склада-компонента какого-то сета.
 router.post('/channel-map/auto-match', requireOperate, asyncHandler(async (req, res) => {
   await ensureSupplyDeliverySchema();
   const { channel } = z.object({ channel: z.enum(['wb', 'ozon', 'ym', 'avito']) }).parse(req.body);
   const r = await db.run(
     `UPDATE sd_product_channel_map m
-     SET product_id = p.id, matched_at = NOW(), updated_at = NOW()
-     FROM products p
-     WHERE m.channel = ? AND m.product_id IS NULL
-       AND m.channel_sku IS NOT NULL AND p.sku = m.channel_sku
-       AND p.external_source = 'moysklad'`,
+     SET set_id = x.set_id, matched_at = NOW(), updated_at = NOW()
+     FROM (SELECT sc.set_id, p.sku FROM sd_set_components sc JOIN products p ON p.id = sc.product_id) x
+     WHERE m.channel = ? AND m.set_id IS NULL
+       AND m.channel_sku IS NOT NULL AND x.sku = m.channel_sku`,
     channel,
   );
   res.json({ ok: true, matched: r.changes || 0 });
@@ -733,16 +824,16 @@ router.post('/channel-map/auto-match', requireOperate, asyncHandler(async (req, 
 
 router.put('/channel-map/:id/match', requireOperate, asyncHandler(async (req, res) => {
   await ensureSupplyDeliverySchema();
-  const { product_id } = z.object({ product_id: z.number().int().positive() }).parse(req.body);
-  const prod = await db.get('SELECT id FROM products WHERE id = ?', product_id);
-  if (!prod) throw NotFound('Товар не найден');
-  await db.run('UPDATE sd_product_channel_map SET product_id = ?, matched_at = NOW(), updated_at = NOW() WHERE id = ?', product_id, req.params.id);
+  const { set_id } = z.object({ set_id: z.number().int().positive() }).parse(req.body);
+  const st = await db.get('SELECT id FROM sd_sets WHERE id = ?', set_id);
+  if (!st) throw NotFound('Сет не найден');
+  await db.run('UPDATE sd_product_channel_map SET set_id = ?, matched_at = NOW(), updated_at = NOW() WHERE id = ?', set_id, req.params.id);
   res.json({ ok: true });
 }));
 
 router.put('/channel-map/:id/unmatch', requireOperate, asyncHandler(async (req, res) => {
   await ensureSupplyDeliverySchema();
-  await db.run('UPDATE sd_product_channel_map SET product_id = NULL, matched_at = NULL, updated_at = NOW() WHERE id = ?', req.params.id);
+  await db.run('UPDATE sd_product_channel_map SET set_id = NULL, matched_at = NULL, updated_at = NOW() WHERE id = ?', req.params.id);
   res.json({ ok: true });
 }));
 

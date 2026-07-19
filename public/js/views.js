@@ -12064,8 +12064,8 @@ export async function renderSupplyDelivery(main) {
     // Phase 2b — поставки, доставки, финмодель.
     wrap.append(renderSdSuppliesCard());
     wrap.append(renderSdDeliveriesCard());
-    // Продуктовый справочник (МойСклад) + сопоставление с каналом + справочники.
-    wrap.append(renderSdProductDirectoryCard());
+    // Книга сетов (упаковка на сете) + сопоставление канал-SKU → сет + справочники.
+    wrap.append(renderSdSetsCard());
     wrap.append(renderSdChannelMapCard(flag.is_admin));
     wrap.append(renderSdFinanceCard());
     wrap.append(renderSdDirectories());
@@ -12728,11 +12728,11 @@ function renderSdChannelMapCard(isAdmin) {
     info.textContent = `Сопоставлено ${data.matched} из ${data.total}`;
     if (!data.rows.length) { tbody.append(el('tr', {}, el('td', { colspan: '5' }, 'Пусто'))); return; }
     for (const m of data.rows) {
-      const matched = m.product_id
-        ? el('span', {}, `${m.product_sku || ''} ${m.product_name || ''}`)
+      const matched = m.set_id
+        ? el('span', {}, `сет: ${m.set_name || '#' + m.set_id}`)
         : el('em', { style: { color: '#dc2626' } }, 'не сопоставлено');
-      const matchBtn = el('button', { class: 'btn btn-sm', onClick: () => sdMatchProductModal(m.id, reload) }, m.product_id ? 'Изм.' : 'Сопоставить');
-      const unBtn = m.product_id ? el('button', { class: 'btn btn-sm', style: { marginLeft: '4px' }, onClick: async () => {
+      const matchBtn = el('button', { class: 'btn btn-sm', onClick: () => sdMatchSetModal(m.id, reload) }, m.set_id ? 'Изм.' : 'Сопоставить с сетом');
+      const unBtn = m.set_id ? el('button', { class: 'btn btn-sm', style: { marginLeft: '4px' }, onClick: async () => {
         try { await api.sdUnmatchChannel(m.id); reload(); } catch (e) { toast(e.message, 'error'); }
       } }, 'Снять') : null;
       const del = el('button', { class: 'btn btn-sm btn-danger', style: { marginLeft: '4px' }, onClick: async () => {
@@ -12862,4 +12862,155 @@ function sdShowWbBarcode(b) {
     body.append(el('div', {}, 'WB не вернул штрихкод.'));
   }
   openModal('Штрихкод поставки WB', body);
+}
+
+// ---- Книга сетов ----
+function renderSdSetsCard() {
+  const card = el('div', { class: 'card', style: { marginBottom: '12px' } });
+  card.append(el('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center' } },
+    el('h4', {}, 'Книга сетов (артикул маркетплейса + упаковка)'),
+    el('button', { class: 'btn btn-sm btn-primary', onClick: () => sdEditSet(null, reload) }, '+ Сет')));
+  card.append(el('div', { style: { fontSize: '12px', color: 'var(--text-muted)', marginBottom: '6px' } },
+    'Сет = артикул маркетплейса (комбинация артикулов склада) + упаковка/габариты. Канальные SKU сопоставляются с сетом ниже.'));
+  const searchI = el('input', { type: 'text', placeholder: 'Поиск сета', style: { width: '220px' } });
+  const findBtn = el('button', { class: 'btn btn-sm', style: { marginLeft: '6px' }, onClick: () => reload() }, 'Найти');
+  searchI.addEventListener('keydown', (e) => { if (e.key === 'Enter') reload(); });
+  card.append(el('div', { style: { marginBottom: '8px' } }, searchI, findBtn));
+  const tbody = el('tbody', {});
+  card.append(el('table', { class: 'table' },
+    el('thead', {}, el('tr', {}, el('th', {}, 'Сет'), el('th', {}, 'Состав'), el('th', {}, 'Упаковка'),
+      el('th', {}, 'Расход'), el('th', {}, 'Время, мин'), el('th', {}, 'Габариты'), el('th', {}, ''))), tbody));
+  async function reload() {
+    tbody.textContent = '';
+    let rows = [];
+    try { rows = await api.sdSets(searchI.value.trim()); } catch (e) { toast(e.message, 'error'); return; }
+    if (!rows.length) { tbody.append(el('tr', {}, el('td', { colspan: '7' }, 'Сетов нет'))); return; }
+    for (const s of rows) {
+      const dims = [s.dim_l, s.dim_w, s.dim_h].every((x) => x == null) ? '—' : `${s.dim_l ?? '?'}×${s.dim_w ?? '?'}×${s.dim_h ?? '?'}`;
+      const pkg = s.packaging_tariff_id ? `${s.packaging_name || '?'} (${s.packaging_unit || ''})` : '—';
+      const edit = el('button', { class: 'btn btn-sm', onClick: () => sdEditSet(s, reload) }, '✏');
+      const del = el('button', { class: 'btn btn-sm btn-danger', style: { marginLeft: '4px' }, onClick: async () => {
+        if (!(await confirm(`Удалить сет «${s.name}»?`))) return;
+        try { await api.sdDeleteSet(s.id); reload(); } catch (e) { toast(e.message, 'error'); }
+      } }, '🗑');
+      tbody.append(el('tr', {}, el('td', {}, s.name), el('td', {}, String(s.component_count)), el('td', {}, pkg),
+        el('td', {}, String(s.packaging_consumption ?? 0)), el('td', {}, String(s.packing_time_min ?? 0)), el('td', {}, dims), el('td', {}, edit, del)));
+    }
+  }
+  reload();
+  return card;
+}
+
+async function sdEditSet(setRow, onSaved) {
+  const tariffs = await api.sdTariffs().catch(() => []);
+  let full = setRow;
+  if (setRow) { try { full = await api.sdSet(setRow.id); } catch { full = setRow; } }
+  const nameI = el('input', { type: 'text', value: full?.name || '' });
+  const tarSel = el('select', {}, el('option', { value: '' }, '— упаковка —'),
+    ...tariffs.map((t) => el('option', { value: String(t.id), ...(Number(full?.packaging_tariff_id) === Number(t.id) ? { selected: 'selected' } : {}) }, `${t.name} (${t.cost}₽/${t.unit || 'шт'})`)));
+  const consI = el('input', { type: 'number', min: '0', step: 'any', value: full?.packaging_consumption ?? 0 });
+  const timeI = el('input', { type: 'number', min: '0', step: 'any', value: full?.packing_time_min ?? 0 });
+  const lI = el('input', { type: 'number', min: '0', step: 'any', value: full?.dim_l ?? '', style: { width: '70px' } });
+  const wI = el('input', { type: 'number', min: '0', step: 'any', value: full?.dim_w ?? '', style: { width: '70px' } });
+  const hI = el('input', { type: 'number', min: '0', step: 'any', value: full?.dim_h ?? '', style: { width: '70px' } });
+  const body = el('div', {},
+    el('div', { class: 'form-row' }, el('label', {}, 'Название сета (= артикул МП)'), nameI),
+    el('div', { class: 'form-row' }, el('label', {}, 'Тип упаковки'), tarSel),
+    el('div', { class: 'form-row' }, el('label', {}, 'Расход упаковки'), consI),
+    el('div', { class: 'form-row' }, el('label', {}, 'Время упаковки, мин'), timeI),
+    el('div', { class: 'form-row' }, el('label', {}, 'Габариты Д×Ш×В'), el('div', { style: { display: 'flex', gap: '6px' } }, lI, wI, hI)));
+  if (full && full.id) {
+    const comps = el('div', { style: { marginTop: '10px' } });
+    comps.append(el('div', { style: { fontWeight: '600', marginBottom: '4px' } }, 'Состав (артикулы склада):'));
+    const listBox = el('div', {});
+    comps.append(listBox);
+    function renderComps() {
+      listBox.textContent = '';
+      for (const c of (full.components || [])) {
+        const del = el('button', { class: 'btn btn-sm btn-danger', onClick: async () => {
+          try { await api.sdDeleteSetComponent(full.id, c.id); full.components = full.components.filter((x) => x.id !== c.id); renderComps(); } catch (e) { toast(e.message, 'error'); }
+        } }, '🗑');
+        listBox.append(el('div', { style: { display: 'flex', justifyContent: 'space-between', padding: '2px 0' } },
+          el('span', {}, `${c.sku || ''} ${c.name || ''} × ${c.quantity}`), del));
+      }
+      if (!(full.components || []).length) listBox.append(el('div', { style: { color: 'var(--text-muted)' } }, 'Состав пуст'));
+    }
+    renderComps();
+    comps.append(el('button', { class: 'btn btn-sm', style: { marginTop: '6px' }, onClick: () => sdAddSetComponent(full.id, async () => {
+      try { full = await api.sdSet(full.id); renderComps(); } catch { /* */ }
+    }) }, '+ Компонент'));
+    body.append(comps);
+  } else {
+    body.append(el('div', { style: { fontSize: '12px', color: 'var(--text-muted)', marginTop: '8px' } }, 'Состав добавишь после создания сета (открой его ✏).'));
+  }
+  await openModal(setRow ? 'Изменить сет' : 'Новый сет', body, { primaryLabel: 'Сохранить', onSubmit: async () => {
+    const payload = {
+      name: nameI.value.trim(),
+      packaging_tariff_id: tarSel.value ? Number(tarSel.value) : null,
+      packaging_consumption: Number(consI.value) || 0,
+      packing_time_min: Number(timeI.value) || 0,
+      dim_l: lI.value !== '' ? Number(lI.value) : null,
+      dim_w: wI.value !== '' ? Number(wI.value) : null,
+      dim_h: hI.value !== '' ? Number(hI.value) : null,
+    };
+    if (!payload.name) { toast('Укажите название сета', 'error'); return false; }
+    try { if (full && full.id) await api.sdUpdateSet(full.id, payload); else await api.sdCreateSet(payload); toast('Сет сохранён', 'success'); onSaved?.(); }
+    catch (e) { toast(e.message, 'error'); return false; }
+  } });
+}
+
+async function sdAddSetComponent(setId, onSaved) {
+  let selected = null;
+  const searchI = el('input', { type: 'text', placeholder: 'Поиск товара склада (SKU/название)', style: { width: '240px' } });
+  const qtyI = el('input', { type: 'number', min: '0', step: 'any', value: '1', style: { width: '80px', marginLeft: '6px' } });
+  const chosen = el('div', { style: { margin: '6px 0', fontWeight: '600' } }, 'Товар не выбран');
+  const resBox = el('div', { style: { maxHeight: '220px', overflow: 'auto' } });
+  async function doSearch() {
+    resBox.textContent = 'Поиск…';
+    let rows = [];
+    try { rows = await api.sdProductDirectory(searchI.value.trim()); } catch (e) { resBox.textContent = e.message; return; }
+    resBox.textContent = '';
+    if (!rows.length) { resBox.textContent = 'Ничего не найдено'; return; }
+    for (const r of rows.slice(0, 50)) {
+      const b = el('button', { class: 'btn btn-sm', style: { display: 'block', width: '100%', textAlign: 'left', margin: '2px 0' },
+        onClick: () => { selected = r.product_id; chosen.textContent = `Выбрано: ${r.sku || ''} ${r.name || ''}`; } }, `${r.sku || ''} — ${r.name || ''}`);
+      resBox.append(b);
+    }
+  }
+  const findBtn = el('button', { class: 'btn btn-sm', style: { marginLeft: '6px' }, onClick: doSearch }, 'Найти');
+  searchI.addEventListener('keydown', (e) => { if (e.key === 'Enter') doSearch(); });
+  const body = el('div', {}, el('div', { style: { display: 'flex', alignItems: 'center' } }, searchI, findBtn, el('span', { style: { marginLeft: '8px' } }, 'Кол-во'), qtyI), chosen, resBox);
+  await openModal('Добавить компонент', body, { primaryLabel: 'Добавить', onSubmit: async () => {
+    if (!selected) { toast('Выберите товар', 'error'); return false; }
+    try { await api.sdAddSetComponent(setId, { product_id: selected, quantity: Number(qtyI.value) || 1 }); toast('Добавлено', 'success'); onSaved?.(); }
+    catch (e) { toast(e.message, 'error'); return false; }
+  } });
+}
+
+async function sdMatchSetModal(mapId, onSaved) {
+  let selected = null;
+  const searchI = el('input', { type: 'text', placeholder: 'Поиск сета', style: { width: '240px' } });
+  const chosen = el('div', { style: { margin: '6px 0', fontWeight: '600' } }, 'Сет не выбран');
+  const resBox = el('div', { style: { maxHeight: '240px', overflow: 'auto' } });
+  async function doSearch() {
+    resBox.textContent = 'Поиск…';
+    let rows = [];
+    try { rows = await api.sdSets(searchI.value.trim()); } catch (e) { resBox.textContent = e.message; return; }
+    resBox.textContent = '';
+    if (!rows.length) { resBox.textContent = 'Сетов нет — сначала заведи их в «Книге сетов»'; return; }
+    for (const s of rows.slice(0, 50)) {
+      const b = el('button', { class: 'btn btn-sm', style: { display: 'block', width: '100%', textAlign: 'left', margin: '2px 0' },
+        onClick: () => { selected = s.id; chosen.textContent = `Выбрано: ${s.name}`; } }, s.name);
+      resBox.append(b);
+    }
+  }
+  const findBtn = el('button', { class: 'btn btn-sm', style: { marginLeft: '6px' }, onClick: doSearch }, 'Найти');
+  searchI.addEventListener('keydown', (e) => { if (e.key === 'Enter') doSearch(); });
+  const body = el('div', {}, el('div', { style: { display: 'flex' } }, searchI, findBtn), chosen, resBox);
+  doSearch();
+  await openModal('Сопоставить с сетом', body, { primaryLabel: 'Сопоставить', onSubmit: async () => {
+    if (!selected) { toast('Выберите сет', 'error'); return false; }
+    try { await api.sdMatchChannel(mapId, selected); toast('Сопоставлено', 'success'); onSaved?.(); }
+    catch (e) { toast(e.message, 'error'); return false; }
+  } });
 }
