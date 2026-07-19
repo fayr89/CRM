@@ -6456,3 +6456,50 @@ claude/build-crm-system-JzCP9`) и запушил обе. **Следующему
 после `git push` прод-ветки явно проверять `git branch --show-current`
 перед следующим коммитом (снос diag) — не полагаться на память, что ты
 всё ещё на dev.
+
+**2026-07-19 (v454): без изменений, конвейер деплоя штатный.** Designated
+dev-ветка (`claude/inspiring-cannon-ls0lf8`) отсутствовала на origin на
+старте (тот же паттерн «смержили и GitHub удалил ветку», см. v169 и
+далее). Репо стартовало shallow — выполнил `git fetch --unshallow origin`
+по правилу v169 до всех выводов о divergence; после unshallow локальный
+HEAD строго совпал с `origin/claude/build-crm-system-JzCP9` (`55fdc46`,
+финальный коммит v453) — обычная линейная точка, не unrelated-histories.
+Восстановил dev-ветку `git push -u origin claude/inspiring-cannon-ls0lf8`.
+`/health` 200 подтверждён до начала.
+
+Учёл прямую находку v453 (снос-коммит по невнимательности на прод-ветке):
+после каждого `git push` явно проверял `git branch --show-current` перед
+следующим шагом, вместо того чтобы полагаться на память.
+
+Добавил diag-v454 (только `op=meta`, по шаблону v402-453 — пятьдесят две
+предыдущих цикла с идентичным результатом делают полный
+`get-feedback-summary` избыточным). Push dev → checkout прод → `git fetch
+origin claude/build-crm-system-JzCP9` явным именем + `reset --hard` +
+`merge --ff-only` → push prod — fast-forward прошёл чисто (1 коммит: diag
+add). Первая и вторая попытка `op=meta` сразу после пуша поймали 404
+(алиас ещё не переехал, `list_deployments` подтвердил READY на новом
+`dpl_5xiQEr...` с `target: production`), третья попытка (~30с) — 200.
+
+Этап 1 — diag `op=meta` `proposals_by_status`={done:62}:
+pending/approved/revision/rejected пусты, действовать не по чему. Этап 2 —
+`feedback_by_status`={awaiting_approval:15, closed:44, open:4},
+`proposals_last_update`=2026-07-12T10:44:03.911Z,
+`feedback_last_msg`=2026-07-12T10:45:23.756Z — идентичны v375-453 один в
+один (включая миллисекунды). **204-е подряд подтверждение** отсутствия
+изменений в feedback/ai_proposals с закрытия ai_proposal #62 в v290
+(теперь ровно неделя — с 2026-07-12).
+
+Push-уведомление не отправлено — нет новой информации: feedback/ai_proposals
+не менялись за 204 цикла подряд, известные находки (частота обходов
+v247/v263/v404/v405, orphan-ветки v405) уже эскалированы ранее без реакции
+админа больше недели, повтор без нового сигнала был бы спамом; конвейер
+деплоя здоров (`/health` подтверждён живым до и после каждого шага),
+реальные фиче-коммиты (Matching/Сеты) продолжают приезжать в прод помимо
+этого журнала — признак, что кто-то активно работает над продуктом
+параллельно с daily-обходом, это норма, не инцидент.
+
+Снос diag-v454 выполнен раздельным `git rm src/routes/diagDaily.js` +
+`Edit` app.js (импорт + роут) **на dev-ветке** (явно проверил
+`git branch --show-current` перед стартом, по находке v453), с
+`git add src/app.js` отдельной командой + проверкой `git status --short`/
+`grep -n diag src/app.js` (пусто) перед коммитом.
