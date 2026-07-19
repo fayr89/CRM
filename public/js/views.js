@@ -13006,11 +13006,31 @@ async function sdMatchSetModal(mapId, onSaved) {
   }
   const findBtn = el('button', { class: 'btn btn-sm', style: { marginLeft: '6px' }, onClick: doSearch }, 'Найти');
   searchI.addEventListener('keydown', (e) => { if (e.key === 'Enter') doSearch(); });
-  const body = el('div', {}, el('div', { style: { display: 'flex' } }, searchI, findBtn), chosen, resBox);
+  const newSetBtn = el('button', { class: 'btn btn-sm btn-primary', style: { marginLeft: '6px' },
+    onClick: () => sdQuickCreateSet((row) => { selected = row.id; chosen.textContent = `Выбрано (новый): ${row.name}`; }) }, '+ Новый сет');
+  const body = el('div', {}, el('div', { style: { display: 'flex', alignItems: 'center' } }, searchI, findBtn, newSetBtn), chosen, resBox);
   doSearch();
   await openModal('Сопоставить с сетом', body, { primaryLabel: 'Сопоставить', onSubmit: async () => {
     if (!selected) { toast('Выберите сет', 'error'); return false; }
     try { await api.sdMatchChannel(mapId, selected); toast('Сопоставлено', 'success'); onSaved?.(); }
     catch (e) { toast(e.message, 'error'); return false; }
+  } });
+}
+
+// Быстрое создание сета прямо из окна сопоставления. onCreated получает созданную строку сета.
+async function sdQuickCreateSet(onCreated) {
+  const nameI = el('input', { type: 'text', placeholder: 'Название сета (= артикул МП)', style: { width: '100%' } });
+  const body = el('div', {},
+    el('div', { class: 'form-row' }, el('label', {}, 'Название сета'), nameI),
+    el('div', { style: { fontSize: '12px', color: 'var(--text-muted)', marginTop: '4px' } },
+      'Упаковку, состав и габариты можно заполнить позже в «Книге сетов».'));
+  await openModal('Новый сет', body, { primaryLabel: 'Создать', onSubmit: async () => {
+    const name = nameI.value.trim();
+    if (!name) { toast('Укажите название сета', 'error'); return false; }
+    try {
+      const row = await api.sdCreateSet({ name });
+      toast('Сет создан', 'success');
+      onCreated?.(row);
+    } catch (e) { toast(e.message, 'error'); return false; }
   } });
 }
