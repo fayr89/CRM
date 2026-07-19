@@ -254,6 +254,8 @@ export const api = {
   sdDeleteSet: (id) => request('DELETE', `/api/supply-delivery/sets/${id}`),
   sdAddSetComponent: (id, body) => request('POST', `/api/supply-delivery/sets/${id}/components`, { body }),
   sdDeleteSetComponent: (id, cid) => request('DELETE', `/api/supply-delivery/sets/${id}/components/${cid}`),
+  sdAddSetPackaging: (id, body) => request('POST', `/api/supply-delivery/sets/${id}/packaging`, { body }),
+  sdDeleteSetPackaging: (id, pid) => request('DELETE', `/api/supply-delivery/sets/${id}/packaging/${pid}`),
   // WB ФБС: процесс поставки
   sdWbCreateSupply: (id) => request('POST', `/api/supply-delivery/supplies/${id}/wb/create-supply`),
   sdWbNewOrders: (id) => request('GET', `/api/supply-delivery/supplies/${id}/wb/new-orders`),

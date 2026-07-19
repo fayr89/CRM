@@ -12879,22 +12879,22 @@ function renderSdSetsCard() {
   const tbody = el('tbody', {});
   card.append(el('table', { class: 'table' },
     el('thead', {}, el('tr', {}, el('th', {}, 'Сет'), el('th', {}, 'Состав'), el('th', {}, 'Упаковка'),
-      el('th', {}, 'Расход'), el('th', {}, 'Время, мин'), el('th', {}, 'Габариты'), el('th', {}, ''))), tbody));
+      el('th', {}, 'Время, мин'), el('th', {}, 'Габариты'), el('th', {}, ''))), tbody));
   async function reload() {
     tbody.textContent = '';
     let rows = [];
     try { rows = await api.sdSets(searchI.value.trim()); } catch (e) { toast(e.message, 'error'); return; }
-    if (!rows.length) { tbody.append(el('tr', {}, el('td', { colspan: '7' }, 'Сетов нет'))); return; }
+    if (!rows.length) { tbody.append(el('tr', {}, el('td', { colspan: '6' }, 'Сетов нет'))); return; }
     for (const s of rows) {
       const dims = [s.dim_l, s.dim_w, s.dim_h].every((x) => x == null) ? '—' : `${s.dim_l ?? '?'}×${s.dim_w ?? '?'}×${s.dim_h ?? '?'}`;
-      const pkg = s.packaging_tariff_id ? `${s.packaging_name || '?'} (${s.packaging_unit || ''})` : '—';
+      const pkg = Number(s.packaging_count) ? `${s.packaging_summary || '?'} (${s.packaging_count})` : '—';
       const edit = el('button', { class: 'btn btn-sm', onClick: () => sdEditSet(s, reload) }, '✏');
       const del = el('button', { class: 'btn btn-sm btn-danger', style: { marginLeft: '4px' }, onClick: async () => {
         if (!(await confirm(`Удалить сет «${s.name}»?`))) return;
         try { await api.sdDeleteSet(s.id); reload(); } catch (e) { toast(e.message, 'error'); }
       } }, '🗑');
       tbody.append(el('tr', {}, el('td', {}, s.name), el('td', {}, String(s.component_count)), el('td', {}, pkg),
-        el('td', {}, String(s.packaging_consumption ?? 0)), el('td', {}, String(s.packing_time_min ?? 0)), el('td', {}, dims), el('td', {}, edit, del)));
+        el('td', {}, String(s.packing_time_min ?? 0)), el('td', {}, dims), el('td', {}, edit, del)));
     }
   }
   reload();
@@ -12906,20 +12906,40 @@ async function sdEditSet(setRow, onSaved) {
   let full = setRow;
   if (setRow) { try { full = await api.sdSet(setRow.id); } catch { full = setRow; } }
   const nameI = el('input', { type: 'text', value: full?.name || '' });
-  const tarSel = el('select', {}, el('option', { value: '' }, '— упаковка —'),
-    ...tariffs.map((t) => el('option', { value: String(t.id), ...(Number(full?.packaging_tariff_id) === Number(t.id) ? { selected: 'selected' } : {}) }, `${t.name} (${t.cost}₽/${t.unit || 'шт'})`)));
-  const consI = el('input', { type: 'number', min: '0', step: 'any', value: full?.packaging_consumption ?? 0 });
   const timeI = el('input', { type: 'number', min: '0', step: 'any', value: full?.packing_time_min ?? 0 });
   const lI = el('input', { type: 'number', min: '0', step: 'any', value: full?.dim_l ?? '', style: { width: '70px' } });
   const wI = el('input', { type: 'number', min: '0', step: 'any', value: full?.dim_w ?? '', style: { width: '70px' } });
   const hI = el('input', { type: 'number', min: '0', step: 'any', value: full?.dim_h ?? '', style: { width: '70px' } });
   const body = el('div', {},
     el('div', { class: 'form-row' }, el('label', {}, 'Название сета (= артикул МП)'), nameI),
-    el('div', { class: 'form-row' }, el('label', {}, 'Тип упаковки'), tarSel),
-    el('div', { class: 'form-row' }, el('label', {}, 'Расход упаковки'), consI),
     el('div', { class: 'form-row' }, el('label', {}, 'Время упаковки, мин'), timeI),
     el('div', { class: 'form-row' }, el('label', {}, 'Габариты Д×Ш×В'), el('div', { style: { display: 'flex', gap: '6px' } }, lI, wI, hI)));
   if (full && full.id) {
+    // ----- Упаковка сета: несколько типов (стретч-плёнка + коробка + …) -----
+    const packBox = el('div', { style: { marginTop: '10px' } });
+    packBox.append(el('div', { style: { fontWeight: '600', marginBottom: '4px' } }, 'Упаковка (можно несколько типов):'));
+    const packList = el('div', {});
+    packBox.append(packList);
+    function renderPack() {
+      packList.textContent = '';
+      for (const p of (full.packaging || [])) {
+        const del = el('button', { class: 'btn btn-sm btn-danger', onClick: async () => {
+          try { await api.sdDeleteSetPackaging(full.id, p.id); full.packaging = full.packaging.filter((x) => x.id !== p.id); renderPack(); } catch (e) { toast(e.message, 'error'); }
+        } }, '🗑');
+        const unit = p.tariff_unit || 'шт';
+        const cost = Number(p.tariff_cost) || 0;
+        const lineCost = (Number(p.consumption) || 0) * cost;
+        packList.append(el('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '2px 0' } },
+          el('span', {}, `${p.tariff_name || '—'} · ${p.consumption} ${unit} × ${cost}₽ = ${lineCost.toFixed(2)}₽`), del));
+      }
+      if (!(full.packaging || []).length) packList.append(el('div', { style: { color: 'var(--text-muted)' } }, 'Упаковка не задана'));
+    }
+    renderPack();
+    packBox.append(el('button', { class: 'btn btn-sm', style: { marginTop: '6px' }, onClick: () => sdAddSetPackagingModal(full.id, tariffs, async () => {
+      try { full = await api.sdSet(full.id); renderPack(); } catch { /* */ }
+    }) }, '+ Упаковка'));
+    body.append(packBox);
+
     const comps = el('div', { style: { marginTop: '10px' } });
     comps.append(el('div', { style: { fontWeight: '600', marginBottom: '4px' } }, 'Состав (артикулы склада):'));
     const listBox = el('div', {});
@@ -12941,13 +12961,11 @@ async function sdEditSet(setRow, onSaved) {
     }) }, '+ Компонент'));
     body.append(comps);
   } else {
-    body.append(el('div', { style: { fontSize: '12px', color: 'var(--text-muted)', marginTop: '8px' } }, 'Состав добавишь после создания сета (открой его ✏).'));
+    body.append(el('div', { style: { fontSize: '12px', color: 'var(--text-muted)', marginTop: '8px' } }, 'Упаковку и состав добавишь после создания сета (открой его ✏).'));
   }
   await openModal(setRow ? 'Изменить сет' : 'Новый сет', body, { primaryLabel: 'Сохранить', onSubmit: async () => {
     const payload = {
       name: nameI.value.trim(),
-      packaging_tariff_id: tarSel.value ? Number(tarSel.value) : null,
-      packaging_consumption: Number(consI.value) || 0,
       packing_time_min: Number(timeI.value) || 0,
       dim_l: lI.value !== '' ? Number(lI.value) : null,
       dim_w: wI.value !== '' ? Number(wI.value) : null,
@@ -12979,10 +12997,30 @@ async function sdAddSetComponent(setId, onSaved) {
   }
   const findBtn = el('button', { class: 'btn btn-sm', style: { marginLeft: '6px' }, onClick: doSearch }, 'Найти');
   searchI.addEventListener('keydown', (e) => { if (e.key === 'Enter') doSearch(); });
+  // Живой поиск: показываем товары склада сразу и подгружаем по мере ввода.
+  let searchTimer = null;
+  searchI.addEventListener('input', () => { clearTimeout(searchTimer); searchTimer = setTimeout(doSearch, 300); });
   const body = el('div', {}, el('div', { style: { display: 'flex', alignItems: 'center' } }, searchI, findBtn, el('span', { style: { marginLeft: '8px' } }, 'Кол-во'), qtyI), chosen, resBox);
+  doSearch(); // сразу подгрузить текущие товары МойСклад (первые 50 по названию)
   await openModal('Добавить компонент', body, { primaryLabel: 'Добавить', onSubmit: async () => {
     if (!selected) { toast('Выберите товар', 'error'); return false; }
     try { await api.sdAddSetComponent(setId, { product_id: selected, quantity: Number(qtyI.value) || 1 }); toast('Добавлено', 'success'); onSaved?.(); }
+    catch (e) { toast(e.message, 'error'); return false; }
+  } });
+}
+
+// Добавление одного типа упаковки к сету (тариф + расход в его единицах).
+async function sdAddSetPackagingModal(setId, tariffs, onSaved) {
+  const tarSel = el('select', {}, el('option', { value: '' }, '— тип упаковки —'),
+    ...(tariffs || []).map((t) => el('option', { value: String(t.id) }, `${t.name} (${t.cost}₽/${t.unit || 'шт'})`)));
+  const consI = el('input', { type: 'number', min: '0', step: 'any', value: '1', style: { width: '110px' } });
+  const body = el('div', {},
+    el('div', { class: 'form-row' }, el('label', {}, 'Тип упаковки'), tarSel),
+    el('div', { class: 'form-row' }, el('label', {}, 'Расход (в ед. тарифа)'), consI),
+    (tariffs || []).length ? el('div', {}) : el('div', { style: { fontSize: '12px', color: 'var(--text-muted)' } }, 'Сначала заведи тарифы упаковки в разделе «Финансы → Упаковка».'));
+  await openModal('Добавить упаковку', body, { primaryLabel: 'Добавить', onSubmit: async () => {
+    if (!tarSel.value) { toast('Выберите тип упаковки', 'error'); return false; }
+    try { await api.sdAddSetPackaging(setId, { packaging_tariff_id: Number(tarSel.value), consumption: Number(consI.value) || 0 }); toast('Упаковка добавлена', 'success'); onSaved?.(); }
     catch (e) { toast(e.message, 'error'); return false; }
   } });
 }

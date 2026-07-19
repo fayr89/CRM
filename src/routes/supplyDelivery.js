@@ -437,11 +437,17 @@ async function loadDeliveryDetail(id) {
   };
   // Упаковка и зарплата ДЕРИВАЮТСЯ из позиций доставки через «сет»:
   //   позиция (канал-SKU/штрихкод) → sd_product_channel_map (по каналу поставки)
-  //   → sd_sets (упаковка/время). упаковка = Σ (расход × кол-во × цена ед. тарифа),
-  //   время = Σ (время сета × кол-во) → зарплата = время × ставка ₽/мин.
+  //   → sd_sets. Упаковка сета = Σ по строкам sd_set_packaging (несколько типов:
+  //   плёнка + коробка + …) = Σ (расход × цена тарифа); итого × кол-во позиции.
+  //   Время = Σ (время сета × кол-во) → зарплата = время × ставка ₽/мин.
   const agg = await db.get(
     `SELECT
-       COALESCE(SUM(st.packaging_consumption * i.quantity * COALESCE(t.cost, 0)), 0) AS packaging_cost,
+       COALESCE(SUM(i.quantity * (
+         SELECT COALESCE(SUM(sp.consumption * COALESCE(pt.cost, 0)), 0)
+         FROM sd_set_packaging sp
+         LEFT JOIN sd_packaging_tariffs pt ON pt.id = sp.packaging_tariff_id
+         WHERE sp.set_id = st.id
+       )), 0) AS packaging_cost,
        COALESCE(SUM(st.packing_time_min * i.quantity), 0) AS labor_minutes,
        COUNT(*) FILTER (WHERE st.id IS NULL) AS positions_unmapped,
        COUNT(*) AS positions_total
@@ -456,7 +462,6 @@ async function loadDeliveryDetail(id) {
        ORDER BY m.id LIMIT 1
      ) mm ON TRUE
      LEFT JOIN sd_sets st ON st.id = mm.set_id
-     LEFT JOIN sd_packaging_tariffs t ON t.id = st.packaging_tariff_id
      WHERE ds.delivery_id = ?`,
     id,
   );
@@ -650,11 +655,17 @@ router.get('/sets', requireOperate, asyncHandler(async (req, res) => {
   let where = '1=1';
   if (search) { where += ' AND st.name ILIKE ?'; params.push(`%${search}%`); }
   res.json(await db.all(
-    `SELECT st.*, t.name AS packaging_name, t.unit AS packaging_unit,
-            COALESCE(c.cnt, 0) AS component_count
+    `SELECT st.*,
+            COALESCE(c.cnt, 0) AS component_count,
+            COALESCE(pk.cnt, 0) AS packaging_count,
+            pk.summary AS packaging_summary
      FROM sd_sets st
-     LEFT JOIN sd_packaging_tariffs t ON t.id = st.packaging_tariff_id
      LEFT JOIN (SELECT set_id, COUNT(*) AS cnt FROM sd_set_components GROUP BY set_id) c ON c.set_id = st.id
+     LEFT JOIN (
+       SELECT sp.set_id, COUNT(*) AS cnt, STRING_AGG(COALESCE(t.name, '—'), ', ' ORDER BY sp.id) AS summary
+       FROM sd_set_packaging sp LEFT JOIN sd_packaging_tariffs t ON t.id = sp.packaging_tariff_id
+       GROUP BY sp.set_id
+     ) pk ON pk.set_id = st.id
      WHERE ${where}
      ORDER BY st.name LIMIT 500`,
     ...params,
@@ -683,7 +694,14 @@ router.get('/sets/:id', requireOperate, asyncHandler(async (req, res) => {
      WHERE sc.set_id = ? ORDER BY sc.id`,
     req.params.id,
   );
-  res.json({ ...set, components });
+  const packaging = await db.all(
+    `SELECT sp.id, sp.packaging_tariff_id, sp.consumption,
+            t.name AS tariff_name, t.unit AS tariff_unit, t.cost AS tariff_cost
+     FROM sd_set_packaging sp LEFT JOIN sd_packaging_tariffs t ON t.id = sp.packaging_tariff_id
+     WHERE sp.set_id = ? ORDER BY sp.id`,
+    req.params.id,
+  );
+  res.json({ ...set, components, packaging });
 }));
 
 router.put('/sets/:id', requireOperate, asyncHandler(async (req, res) => {
@@ -720,6 +738,30 @@ router.post('/sets/:id/components', requireOperate, asyncHandler(async (req, res
 router.delete('/sets/:id/components/:cid', requireOperate, asyncHandler(async (req, res) => {
   await ensureSupplyDeliverySchema();
   await db.run('DELETE FROM sd_set_components WHERE id = ? AND set_id = ?', req.params.cid, req.params.id);
+  res.json({ ok: true });
+}));
+
+// Упаковка сета — несколько типов (стретч-плёнка + коробка + …).
+router.post('/sets/:id/packaging', requireOperate, asyncHandler(async (req, res) => {
+  await ensureSupplyDeliverySchema();
+  const set = await db.get('SELECT id FROM sd_sets WHERE id = ?', req.params.id);
+  if (!set) throw NotFound('Сет не найден');
+  const d = z.object({
+    packaging_tariff_id: z.number().int().positive(),
+    consumption: z.number().nonnegative().optional().default(0),
+  }).parse(req.body);
+  const tar = await db.get('SELECT id FROM sd_packaging_tariffs WHERE id = ?', d.packaging_tariff_id);
+  if (!tar) throw NotFound('Тариф упаковки не найден');
+  await db.run(
+    'INSERT INTO sd_set_packaging (set_id, packaging_tariff_id, consumption) VALUES (?, ?, ?)',
+    req.params.id, d.packaging_tariff_id, d.consumption ?? 0,
+  );
+  res.json({ ok: true });
+}));
+
+router.delete('/sets/:id/packaging/:pid', requireOperate, asyncHandler(async (req, res) => {
+  await ensureSupplyDeliverySchema();
+  await db.run('DELETE FROM sd_set_packaging WHERE id = ? AND set_id = ?', req.params.pid, req.params.id);
   res.json({ ok: true });
 }));
 

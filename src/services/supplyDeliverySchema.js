@@ -188,6 +188,28 @@ export async function ensureSupplyDeliverySchema() {
        quantity REAL NOT NULL DEFAULT 1
      )`,
   );
+  // Упаковка сета — МНОГО типов на один сет (напр. стретч-плёнка + коробка).
+  // Каждая строка: тариф упаковки (тип + ед.изм + цена) + расход в его единицах.
+  // Стоимость упаковки сета = Σ (расход × цена тарифа).
+  await db.run(
+    `CREATE TABLE IF NOT EXISTS sd_set_packaging (
+       id SERIAL PRIMARY KEY,
+       set_id INTEGER NOT NULL REFERENCES sd_sets(id) ON DELETE CASCADE,
+       packaging_tariff_id INTEGER,
+       consumption REAL NOT NULL DEFAULT 0,
+       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+     )`,
+  );
+  // Одноразовая миграция старой одиночной упаковки (sd_sets.packaging_tariff_id/
+  // packaging_consumption) в строки sd_set_packaging. Флаг packaging_migrated
+  // гарантирует, что удалённые строки не воскресают при повторном холодном старте.
+  await db.run('ALTER TABLE sd_sets ADD COLUMN IF NOT EXISTS packaging_migrated BOOLEAN NOT NULL DEFAULT FALSE');
+  await db.run(
+    `INSERT INTO sd_set_packaging (set_id, packaging_tariff_id, consumption)
+     SELECT id, packaging_tariff_id, COALESCE(packaging_consumption, 0)
+     FROM sd_sets WHERE packaging_tariff_id IS NOT NULL AND packaging_migrated IS NOT TRUE`,
+  );
+  await db.run('UPDATE sd_sets SET packaging_migrated = TRUE WHERE packaging_migrated IS NOT TRUE');
   // Сопоставление канал-SKU → сет (а не → товар склада).
   await db.run('ALTER TABLE sd_product_channel_map ADD COLUMN IF NOT EXISTS set_id INTEGER');
   // WB ФБС: поставке нужен внешний supplyId WB + привязка к каналу (для ключа),
