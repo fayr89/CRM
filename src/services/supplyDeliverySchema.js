@@ -125,10 +125,24 @@ export async function ensureSupplyDeliverySchema() {
      )`,
   );
   // Упаковка: вместо норматива времени — единица измерения (шт/м/рулон…).
-  // Габариты упакованного изделия и расход упаковки — на уровне товара
-  // (продуктовый справочник, отдельный шаг). Старую колонку time_norm_min
-  // оставляем ради обратной совместимости, но не используем.
   await db.run(`ALTER TABLE sd_packaging_tariffs ADD COLUMN IF NOT EXISTS unit TEXT NOT NULL DEFAULT 'шт'`);
+  // Продуктовый справочник на базе номенклатуры МойСклада (products).
+  // На позицию: тип упаковки + расход упаковки (сколько уходит) + время
+  // упаковки (мин, для зарплаты = время × ставка ₽/мин) + габариты
+  // упакованного изделия. Ключ — product_id (внутренняя номенклатура).
+  // Колонки под matching с каналом (channel_sku по каналам) — отдельная
+  // таблица sd_product_channel_map, добавится при интеграции канала (Phase 3).
+  await db.run(
+    `CREATE TABLE IF NOT EXISTS sd_product_directory (
+       product_id INTEGER PRIMARY KEY REFERENCES products(id) ON DELETE CASCADE,
+       packaging_tariff_id INTEGER,
+       packaging_consumption REAL NOT NULL DEFAULT 0,
+       packing_time_min REAL NOT NULL DEFAULT 0,
+       dim_l REAL, dim_w REAL, dim_h REAL,
+       updated_by INTEGER,
+       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+     )`,
+  );
   ensured = true;
 }
 
@@ -151,23 +165,26 @@ export async function setLaborRatePerMin(rate, userId) {
   return clean;
 }
 
-// Финмодель доставки: прибыль склада = вознаграждение − (упаковка + обработка
-// позиций складом + логистика). Себестоимость товара НЕ входит (прибыль склада
-// как обособленного центра). «Обработка позиций» (расход склада за позицию,
-// задаёт офис) появится вместе с продуктовым справочником — пока 0.
-export function computeDeliveryFinance({ delivery, packaging, reward, itemStats, handlingCost }) {
-  const packaging_cost = (packaging || []).reduce((s, p) => s + (Number(p.unit_cost) || 0) * (Number(p.quantity) || 0), 0);
-  const handling_cost = Number(handlingCost) || 0;
+// Финмодель доставки: прибыль склада = начисление офиса (вознаграждение) −
+// (упаковка + зарплата + логистика). Упаковка и зарплата ДЕРИВАЮТСЯ из позиций
+// доставки × продуктовый справочник (расход упаковки × цена ед.; время × ставка
+// ₽/мин). Себестоимость товара НЕ входит (прибыль склада как обособл. центра).
+// packagingCost и laborMinutes считает вызывающий (SQL по позициям).
+export function computeDeliveryFinance({ delivery, packagingCost, laborMinutes, laborRatePerMin, reward, itemStats }) {
+  const packaging_cost = Number(packagingCost) || 0;
+  const labor_minutes = Number(laborMinutes) || 0;
+  const labor_cost = labor_minutes * (Number(laborRatePerMin) || 0);
   const logistics_cost = Number(delivery?.logistics_cost) || 0;
   let reward_base = 0;
   if (reward?.unit === 'per_item') reward_base = itemStats?.total_qty || 0;
   else if (reward?.unit === 'per_order') reward_base = itemStats?.supply_count || 0;
-  // per_hour временно неактуален (учёт времени убран) → база 0.
+  else if (reward?.unit === 'per_hour') reward_base = labor_minutes / 60;
   const reward_amount = (Number(reward?.amount) || 0) * reward_base;
-  const net_profit = reward_amount - (packaging_cost + handling_cost + logistics_cost);
+  const net_profit = reward_amount - (packaging_cost + labor_cost + logistics_cost);
   return {
     packaging_cost: round2(packaging_cost),
-    handling_cost: round2(handling_cost),
+    labor_minutes: round2(labor_minutes),
+    labor_cost: round2(labor_cost),
     logistics_cost: round2(logistics_cost),
     reward_unit: reward?.unit || 'per_order',
     reward_base: round2(reward_base),

@@ -235,6 +235,9 @@ export const api = {
   // Финансовые параметры (Phase 2b)
   sdFinanceSettings: () => request('GET', '/api/supply-delivery/finance-settings'),
   sdSaveFinanceSettings: (body) => request('PUT', '/api/supply-delivery/finance-settings', { body }),
+  // Продуктовый справочник (МойСклад-номенклатура)
+  sdProductDirectory: (search) => request('GET', '/api/supply-delivery/product-directory', { query: { search } }),
+  sdSaveProductDirectory: (productId, body) => request('PUT', `/api/supply-delivery/product-directory/${productId}`, { body }),
   // Поставки
   sdSupplies: () => request('GET', '/api/supply-delivery/supplies'),
   sdCreateSupply: (body) => request('POST', '/api/supply-delivery/supplies', { body }),

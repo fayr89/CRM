@@ -418,19 +418,45 @@ async function loadDeliveryDetail(id) {
      WHERE ds.delivery_id = ? ORDER BY s.id`,
     id,
   );
-  const packaging = await db.all('SELECT * FROM sd_delivery_packaging WHERE delivery_id = ? ORDER BY id', id);
   const itemStats = {
     supply_count: supplies.length,
     total_qty: supplies.reduce((s, x) => s + (Number(x.total_qty) || 0), 0),
   };
+  // Упаковка и зарплата ДЕРИВАЮТСЯ из позиций доставки × продуктовый справочник:
+  //   упаковка = Σ (расход упаковки × кол-во × цена ед. тарифа)
+  //   время    = Σ (время упаковки позиции × кол-во)  → зарплата = время × ставка ₽/мин
+  // Позиция сопоставляется с внутренним товаром по product_id, иначе по sku
+  // (LATERAL LIMIT 1 — без размножения строк на неуникальных sku).
+  const agg = await db.get(
+    `SELECT
+       COALESCE(SUM(pd.packaging_consumption * i.quantity * COALESCE(t.cost, 0)), 0) AS packaging_cost,
+       COALESCE(SUM(pd.packing_time_min * i.quantity), 0) AS labor_minutes,
+       COUNT(*) FILTER (WHERE pd.product_id IS NULL) AS positions_unmapped,
+       COUNT(*) AS positions_total
+     FROM sd_delivery_supplies ds
+     JOIN sd_supply_items i ON i.supply_id = ds.supply_id
+     LEFT JOIN LATERAL (
+       SELECT pr.id FROM products pr
+       WHERE (i.product_id IS NOT NULL AND pr.id = i.product_id)
+          OR (i.product_id IS NULL AND i.sku IS NOT NULL AND pr.sku = i.sku)
+       ORDER BY pr.id LIMIT 1
+     ) p ON TRUE
+     LEFT JOIN sd_product_directory pd ON pd.product_id = p.id
+     LEFT JOIN sd_packaging_tariffs t ON t.id = pd.packaging_tariff_id
+     WHERE ds.delivery_id = ?`,
+    id,
+  );
   const finance = computeDeliveryFinance({
     delivery,
-    packaging,
+    packagingCost: agg?.packaging_cost || 0,
+    laborMinutes: agg?.labor_minutes || 0,
+    laborRatePerMin: await getLaborRatePerMin(),
     reward: await getWarehouseReward(),
     itemStats,
-    handlingCost: 0, // расход склада за позицию — придёт с продуктовым справочником
   });
-  return { ...delivery, supplies, packaging, item_stats: itemStats, finance };
+  finance.positions_unmapped = Number(agg?.positions_unmapped) || 0;
+  finance.positions_total = Number(agg?.positions_total) || 0;
+  return { ...delivery, supplies, item_stats: itemStats, finance };
 }
 
 router.get('/deliveries', requireOperate, asyncHandler(async (_req, res) => {
@@ -533,6 +559,63 @@ router.delete('/deliveries/:id/packaging/:lineId', requireOperate, asyncHandler(
   await ensureSupplyDeliverySchema();
   await db.run('DELETE FROM sd_delivery_packaging WHERE id = ? AND delivery_id = ?', req.params.lineId, req.params.id);
   res.json(await loadDeliveryDetail(req.params.id));
+}));
+
+// ----- Продуктовый справочник (номенклатура МойСклада) -----
+router.get('/product-directory', requireOperate, asyncHandler(async (req, res) => {
+  await ensureSupplyDeliverySchema();
+  const search = (req.query.search || '').toString().trim();
+  const limit = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 50));
+  const params = [];
+  let where = "p.external_source = 'moysklad' AND p.active = TRUE AND p.is_markdown IS NOT TRUE";
+  if (search) {
+    where += ' AND (p.sku ILIKE ? OR p.name ILIKE ?)';
+    params.push(`%${search}%`, `%${search}%`);
+  }
+  const rows = await db.all(
+    `SELECT p.id AS product_id, p.sku, p.name,
+            d.packaging_tariff_id, d.packaging_consumption, d.packing_time_min,
+            d.dim_l, d.dim_w, d.dim_h,
+            t.name AS packaging_name, t.unit AS packaging_unit
+     FROM products p
+     LEFT JOIN sd_product_directory d ON d.product_id = p.id
+     LEFT JOIN sd_packaging_tariffs t ON t.id = d.packaging_tariff_id
+     WHERE ${where}
+     ORDER BY p.name LIMIT ?`,
+    ...params, limit,
+  );
+  res.json(rows);
+}));
+
+const productDirSchema = z.object({
+  packaging_tariff_id: z.number().int().positive().optional().nullable(),
+  packaging_consumption: z.number().nonnegative().optional().default(0),
+  packing_time_min: z.number().nonnegative().optional().default(0),
+  dim_l: z.number().nonnegative().optional().nullable(),
+  dim_w: z.number().nonnegative().optional().nullable(),
+  dim_h: z.number().nonnegative().optional().nullable(),
+});
+
+router.put('/product-directory/:productId', requireOperate, asyncHandler(async (req, res) => {
+  await ensureSupplyDeliverySchema();
+  const d = productDirSchema.parse(req.body);
+  const prod = await db.get('SELECT id FROM products WHERE id = ?', req.params.productId);
+  if (!prod) throw NotFound('Товар не найден');
+  const row = await db.get(
+    `INSERT INTO sd_product_directory
+       (product_id, packaging_tariff_id, packaging_consumption, packing_time_min, dim_l, dim_w, dim_h, updated_by, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW())
+     ON CONFLICT (product_id) DO UPDATE SET
+       packaging_tariff_id = EXCLUDED.packaging_tariff_id,
+       packaging_consumption = EXCLUDED.packaging_consumption,
+       packing_time_min = EXCLUDED.packing_time_min,
+       dim_l = EXCLUDED.dim_l, dim_w = EXCLUDED.dim_w, dim_h = EXCLUDED.dim_h,
+       updated_by = EXCLUDED.updated_by, updated_at = NOW()
+     RETURNING *`,
+    req.params.productId, d.packaging_tariff_id ?? null, d.packaging_consumption ?? 0, d.packing_time_min ?? 0,
+    d.dim_l ?? null, d.dim_w ?? null, d.dim_h ?? null, req.user.id,
+  );
+  res.json(row);
 }));
 
 export default router;
