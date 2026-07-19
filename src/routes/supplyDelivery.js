@@ -19,6 +19,7 @@ import {
   getLaborRatePerMin, setLaborRatePerMin, computeDeliveryFinance,
 } from '../services/supplyDeliverySchema.js';
 import { encryptSecret, decryptSecret } from '../services/secrets.js';
+import { fetchWbCards } from '../services/channelApis.js';
 
 const router = Router();
 router.use(authenticate);
@@ -616,6 +617,127 @@ router.put('/product-directory/:productId', requireOperate, asyncHandler(async (
     d.dim_l ?? null, d.dim_w ?? null, d.dim_h ?? null, req.user.id,
   );
   res.json(row);
+}));
+
+// ----- Matching номенклатуры канала ⇄ внутренней (Phase 3, WB первый) -----
+router.get('/channel-map', requireOperate, asyncHandler(async (req, res) => {
+  await ensureSupplyDeliverySchema();
+  const channel = (req.query.channel || 'wb').toString();
+  const status = (req.query.status || 'all').toString();
+  const search = (req.query.search || '').toString().trim();
+  const limit = Math.min(500, Math.max(1, parseInt(req.query.limit, 10) || 200));
+  const params = [channel];
+  let where = 'm.channel = ?';
+  if (status === 'matched') where += ' AND m.product_id IS NOT NULL';
+  else if (status === 'unmatched') where += ' AND m.product_id IS NULL';
+  if (search) {
+    where += ' AND (m.channel_barcode ILIKE ? OR m.channel_sku ILIKE ? OR m.channel_name ILIKE ?)';
+    params.push(`%${search}%`, `%${search}%`, `%${search}%`);
+  }
+  const rows = await db.all(
+    `SELECT m.*, p.sku AS product_sku, p.name AS product_name
+     FROM sd_product_channel_map m
+     LEFT JOIN products p ON p.id = m.product_id
+     WHERE ${where}
+     ORDER BY (m.product_id IS NULL) DESC, m.id DESC
+     LIMIT ?`,
+    ...params, limit,
+  );
+  const counts = await db.get(
+    `SELECT COUNT(*) AS total, COUNT(*) FILTER (WHERE product_id IS NOT NULL) AS matched
+     FROM sd_product_channel_map WHERE channel = ?`,
+    channel,
+  );
+  res.json({ rows, total: Number(counts?.total) || 0, matched: Number(counts?.matched) || 0 });
+}));
+
+router.post('/channel-map/import', requireOperate, asyncHandler(async (req, res) => {
+  await ensureSupplyDeliverySchema();
+  const d = z.object({
+    channel: z.enum(['wb', 'ozon', 'ym', 'avito']),
+    items: z.array(z.object({
+      barcode: z.string().max(120).optional().nullable(),
+      sku: z.string().max(120).optional().nullable(),
+      name: z.string().max(400).optional().nullable(),
+    })).max(5000),
+  }).parse(req.body);
+  let n = 0;
+  for (const it of d.items) {
+    if (!it.barcode && !it.sku) continue;
+    await db.run(
+      `INSERT INTO sd_product_channel_map (channel, channel_barcode, channel_sku, channel_name)
+       VALUES (?, ?, ?, ?)
+       ON CONFLICT (channel, COALESCE(channel_barcode, ''), COALESCE(channel_sku, ''))
+       DO UPDATE SET channel_name = EXCLUDED.channel_name, updated_at = NOW()`,
+      d.channel, it.barcode ?? null, it.sku ?? null, it.name ?? null,
+    );
+    n += 1;
+  }
+  res.json({ ok: true, imported: n });
+}));
+
+// Подтяжка номенклатуры WB через API (ключ берётся из справочника «Каналы»).
+router.post('/channel-map/pull-wb', requireOperate, asyncHandler(async (req, res) => {
+  await ensureSupplyDeliverySchema();
+  const { channel_account_id } = z.object({ channel_account_id: z.number().int().positive() }).parse(req.body);
+  const acc = await db.get('SELECT * FROM sd_channel_accounts WHERE id = ? AND channel = ?', channel_account_id, 'wb');
+  if (!acc) throw BadRequest('Не найден WB-канал с ключом. Заведите его в справочнике «Каналы».');
+  if (!acc.api_key_enc) throw BadRequest('У этого канала не задан API-ключ');
+  const key = decryptSecret(acc.api_key_enc);
+  let items;
+  try { items = await fetchWbCards(key, { limit: 1000 }); }
+  catch (e) { throw BadRequest(e.message); }
+  let n = 0;
+  for (const it of items) {
+    if (!it.channel_barcode && !it.channel_sku) continue;
+    await db.run(
+      `INSERT INTO sd_product_channel_map (channel, channel_barcode, channel_sku, channel_name, channel_extra)
+       VALUES ('wb', ?, ?, ?, ?::jsonb)
+       ON CONFLICT (channel, COALESCE(channel_barcode, ''), COALESCE(channel_sku, ''))
+       DO UPDATE SET channel_name = EXCLUDED.channel_name, channel_extra = EXCLUDED.channel_extra, updated_at = NOW()`,
+      it.channel_barcode ?? null, it.channel_sku ?? null, it.channel_name ?? null,
+      JSON.stringify(it.channel_extra || {}),
+    );
+    n += 1;
+  }
+  res.json({ ok: true, pulled: n });
+}));
+
+// Авто-сопоставление: артикул канала (channel_sku) = внутренний артикул (products.sku).
+router.post('/channel-map/auto-match', requireOperate, asyncHandler(async (req, res) => {
+  await ensureSupplyDeliverySchema();
+  const { channel } = z.object({ channel: z.enum(['wb', 'ozon', 'ym', 'avito']) }).parse(req.body);
+  const r = await db.run(
+    `UPDATE sd_product_channel_map m
+     SET product_id = p.id, matched_at = NOW(), updated_at = NOW()
+     FROM products p
+     WHERE m.channel = ? AND m.product_id IS NULL
+       AND m.channel_sku IS NOT NULL AND p.sku = m.channel_sku
+       AND p.external_source = 'moysklad'`,
+    channel,
+  );
+  res.json({ ok: true, matched: r.changes || 0 });
+}));
+
+router.put('/channel-map/:id/match', requireOperate, asyncHandler(async (req, res) => {
+  await ensureSupplyDeliverySchema();
+  const { product_id } = z.object({ product_id: z.number().int().positive() }).parse(req.body);
+  const prod = await db.get('SELECT id FROM products WHERE id = ?', product_id);
+  if (!prod) throw NotFound('Товар не найден');
+  await db.run('UPDATE sd_product_channel_map SET product_id = ?, matched_at = NOW(), updated_at = NOW() WHERE id = ?', product_id, req.params.id);
+  res.json({ ok: true });
+}));
+
+router.put('/channel-map/:id/unmatch', requireOperate, asyncHandler(async (req, res) => {
+  await ensureSupplyDeliverySchema();
+  await db.run('UPDATE sd_product_channel_map SET product_id = NULL, matched_at = NULL, updated_at = NOW() WHERE id = ?', req.params.id);
+  res.json({ ok: true });
+}));
+
+router.delete('/channel-map/:id', requireOperate, asyncHandler(async (req, res) => {
+  await ensureSupplyDeliverySchema();
+  await db.run('DELETE FROM sd_product_channel_map WHERE id = ?', req.params.id);
+  res.json({ ok: true });
 }));
 
 export default router;

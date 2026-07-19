@@ -143,6 +143,27 @@ export async function ensureSupplyDeliverySchema() {
        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
      )`,
   );
+  // Matching номенклатуры канала ⇄ внутренней (МойСклад). Одна строка = товар
+  // канала (штрихкод/артикул канала), сопоставленный с внутренним product_id.
+  // Источник — ручной импорт или подтяжка по API канала (WB и т.д.).
+  await db.run(
+    `CREATE TABLE IF NOT EXISTS sd_product_channel_map (
+       id SERIAL PRIMARY KEY,
+       channel TEXT NOT NULL,
+       channel_barcode TEXT,
+       channel_sku TEXT,
+       channel_name TEXT,
+       channel_extra JSONB,
+       product_id INTEGER REFERENCES products(id) ON DELETE SET NULL,
+       matched_at TIMESTAMPTZ,
+       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+     )`,
+  );
+  await db.run(
+    `CREATE UNIQUE INDEX IF NOT EXISTS uniq_sd_channel_map
+     ON sd_product_channel_map (channel, COALESCE(channel_barcode, ''), COALESCE(channel_sku, ''))`,
+  );
   ensured = true;
 }
 

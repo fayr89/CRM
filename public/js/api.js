@@ -238,6 +238,14 @@ export const api = {
   // Продуктовый справочник (МойСклад-номенклатура)
   sdProductDirectory: (search) => request('GET', '/api/supply-delivery/product-directory', { query: { search } }),
   sdSaveProductDirectory: (productId, body) => request('PUT', `/api/supply-delivery/product-directory/${productId}`, { body }),
+  // Сопоставление номенклатуры канала ⇄ внутренней (Phase 3)
+  sdChannelMap: (channel, status, search) => request('GET', '/api/supply-delivery/channel-map', { query: { channel, status, search } }),
+  sdImportChannelMap: (body) => request('POST', '/api/supply-delivery/channel-map/import', { body }),
+  sdPullWb: (channel_account_id) => request('POST', '/api/supply-delivery/channel-map/pull-wb', { body: { channel_account_id } }),
+  sdAutoMatchChannel: (channel) => request('POST', '/api/supply-delivery/channel-map/auto-match', { body: { channel } }),
+  sdMatchChannel: (id, product_id) => request('PUT', `/api/supply-delivery/channel-map/${id}/match`, { body: { product_id } }),
+  sdUnmatchChannel: (id) => request('PUT', `/api/supply-delivery/channel-map/${id}/unmatch`),
+  sdDeleteChannelMap: (id) => request('DELETE', `/api/supply-delivery/channel-map/${id}`),
   // Поставки
   sdSupplies: () => request('GET', '/api/supply-delivery/supplies'),
   sdCreateSupply: (body) => request('POST', '/api/supply-delivery/supplies', { body }),

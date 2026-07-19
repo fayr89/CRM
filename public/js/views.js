@@ -12064,8 +12064,9 @@ export async function renderSupplyDelivery(main) {
     // Phase 2b — поставки, доставки, финмодель.
     wrap.append(renderSdSuppliesCard());
     wrap.append(renderSdDeliveriesCard());
-    // Продуктовый справочник (МойСклад) + справочники офиса + финпараметры.
+    // Продуктовый справочник (МойСклад) + сопоставление с каналом + справочники.
     wrap.append(renderSdProductDirectoryCard());
+    wrap.append(renderSdChannelMapCard(flag.is_admin));
     wrap.append(renderSdFinanceCard());
     wrap.append(renderSdDirectories());
   } else if (!flag.is_admin) {
@@ -12663,6 +12664,118 @@ async function sdEditProduct(row, tariffs, onSaved) {
       dim_h: hI.value !== '' ? Number(hI.value) : null,
     };
     try { await api.sdSaveProductDirectory(row.product_id, payload); toast('Сохранено', 'success'); onSaved?.(); }
+    catch (e) { toast(e.message, 'error'); return false; }
+  } });
+}
+
+// ---- Сопоставление номенклатуры канала ⇄ внутренней (matching) ----
+function renderSdChannelMapCard(isAdmin) {
+  const card = el('div', { class: 'card', style: { marginBottom: '12px' } });
+  card.append(el('h4', {}, 'Сопоставление с каналом (matching)'));
+  card.append(el('div', { style: { fontSize: '12px', color: 'var(--text-muted)', marginBottom: '6px' } },
+    'Номенклатура канала ⇄ твоя МойСклад-номенклатура. Импортируй список канала (или подтяни из WB API), затем «Авто-сопоставить» по артикулу; остальное — вручную.'));
+  const chanSel = el('select', {}, ...Object.entries(SD_CHANNELS).map(([v, l]) => el('option', { value: v }, l)));
+  const statusSel = el('select', {}, el('option', { value: 'all' }, 'Все'),
+    el('option', { value: 'unmatched' }, 'Не сопоставленные'), el('option', { value: 'matched' }, 'Сопоставленные'));
+  const searchI = el('input', { type: 'text', placeholder: 'Поиск', style: { width: '150px' } });
+  const info = el('span', { style: { marginLeft: '8px', color: 'var(--text-muted)' } });
+  const findBtn = el('button', { class: 'btn btn-sm', onClick: () => reload() }, 'Показать');
+  const importBtn = el('button', { class: 'btn btn-sm', onClick: () => sdImportChannelModal(chanSel.value, reload) }, 'Импорт');
+  const autoBtn = el('button', { class: 'btn btn-sm', onClick: async () => {
+    try { const r = await api.sdAutoMatchChannel(chanSel.value); toast(`Сопоставлено: ${r.matched}`, 'success'); reload(); } catch (e) { toast(e.message, 'error'); }
+  } }, 'Авто-сопоставить');
+  const controls = el('div', { style: { marginBottom: '8px', display: 'flex', gap: '6px', alignItems: 'center', flexWrap: 'wrap' } },
+    chanSel, statusSel, searchI, findBtn, importBtn, autoBtn);
+  if (isAdmin) {
+    controls.append(el('button', { class: 'btn btn-sm', onClick: async () => {
+      try {
+        const d = await api.sdChannelAccounts();
+        const acc = (d.accounts || []).find((a) => a.channel === 'wb' && a.key_set);
+        if (!acc) { toast('Заведи WB-канал с ключом в «Каналы»', 'error'); return; }
+        toast('Тяну номенклатуру WB…', 'success');
+        const r = await api.sdPullWb(acc.id);
+        toast(`Подтянуто из WB: ${r.pulled}`, 'success'); reload();
+      } catch (e) { toast(e.message, 'error'); }
+    } }, 'Подтянуть из WB API'));
+  }
+  chanSel.addEventListener('change', () => reload());
+  statusSel.addEventListener('change', () => reload());
+  card.append(controls, info);
+  const tbody = el('tbody', {});
+  card.append(el('table', { class: 'table' },
+    el('thead', {}, el('tr', {}, el('th', {}, 'ШК канала'), el('th', {}, 'Артикул канала'), el('th', {}, 'Название'),
+      el('th', {}, 'Сопоставлен товар'), el('th', {}, ''))), tbody));
+  async function reload() {
+    tbody.textContent = '';
+    let data;
+    try { data = await api.sdChannelMap(chanSel.value, statusSel.value, searchI.value.trim()); } catch (e) { toast(e.message, 'error'); return; }
+    info.textContent = `Сопоставлено ${data.matched} из ${data.total}`;
+    if (!data.rows.length) { tbody.append(el('tr', {}, el('td', { colspan: '5' }, 'Пусто'))); return; }
+    for (const m of data.rows) {
+      const matched = m.product_id
+        ? el('span', {}, `${m.product_sku || ''} ${m.product_name || ''}`)
+        : el('em', { style: { color: '#dc2626' } }, 'не сопоставлено');
+      const matchBtn = el('button', { class: 'btn btn-sm', onClick: () => sdMatchProductModal(m.id, reload) }, m.product_id ? 'Изм.' : 'Сопоставить');
+      const unBtn = m.product_id ? el('button', { class: 'btn btn-sm', style: { marginLeft: '4px' }, onClick: async () => {
+        try { await api.sdUnmatchChannel(m.id); reload(); } catch (e) { toast(e.message, 'error'); }
+      } }, 'Снять') : null;
+      const del = el('button', { class: 'btn btn-sm btn-danger', style: { marginLeft: '4px' }, onClick: async () => {
+        try { await api.sdDeleteChannelMap(m.id); reload(); } catch (e) { toast(e.message, 'error'); }
+      } }, '🗑');
+      tbody.append(el('tr', {}, el('td', {}, m.channel_barcode || '—'), el('td', {}, m.channel_sku || '—'),
+        el('td', {}, m.channel_name || '—'), el('td', {}, matched), el('td', {}, matchBtn, unBtn, del)));
+    }
+  }
+  reload();
+  return card;
+}
+
+async function sdImportChannelModal(channel, onSaved) {
+  const ta = el('textarea', { style: { width: '100%', height: '160px' }, placeholder: 'штрихкод;артикул;название' });
+  const body = el('div', {},
+    el('div', { style: { fontSize: '12px', color: 'var(--text-muted)', marginBottom: '6px' } },
+      `Импорт номенклатуры канала «${SD_CHANNELS[channel] || channel}». Одна строка = товар, формат: штрихкод ; артикул ; название (разделитель ; или таб).`),
+    ta);
+  await openModal('Импорт номенклатуры канала', body, { primaryLabel: 'Импортировать', onSubmit: async () => {
+    const items = [];
+    for (const raw of ta.value.split('\n')) {
+      const line = raw.trim();
+      if (!line) continue;
+      const parts = line.split(/[;\t]/).map((x) => x.trim());
+      const [barcode, sku, name] = parts;
+      if (!barcode && !sku) continue;
+      items.push({ barcode: barcode || null, sku: sku || null, name: name || null });
+    }
+    if (!items.length) { toast('Нет строк', 'error'); return false; }
+    try { const r = await api.sdImportChannelMap({ channel, items }); toast(`Импортировано: ${r.imported}`, 'success'); onSaved?.(); }
+    catch (e) { toast(e.message, 'error'); return false; }
+  } });
+}
+
+async function sdMatchProductModal(mapId, onSaved) {
+  let selected = null;
+  const searchI = el('input', { type: 'text', placeholder: 'Поиск товара (SKU/название)', style: { width: '240px' } });
+  const chosen = el('div', { style: { margin: '6px 0', fontWeight: '600' } }, 'Товар не выбран');
+  const resBox = el('div', { style: { maxHeight: '240px', overflow: 'auto' } });
+  async function doSearch() {
+    resBox.textContent = 'Поиск…';
+    let rows = [];
+    try { rows = await api.sdProductDirectory(searchI.value.trim()); } catch (e) { resBox.textContent = e.message; return; }
+    resBox.textContent = '';
+    if (!rows.length) { resBox.textContent = 'Ничего не найдено'; return; }
+    for (const r of rows.slice(0, 50)) {
+      const b = el('button', { class: 'btn btn-sm', style: { display: 'block', width: '100%', textAlign: 'left', margin: '2px 0' },
+        onClick: () => { selected = r.product_id; chosen.textContent = `Выбрано: ${r.sku || ''} ${r.name || ''}`; } },
+        `${r.sku || ''} — ${r.name || ''}`);
+      resBox.append(b);
+    }
+  }
+  const findBtn = el('button', { class: 'btn btn-sm', style: { marginLeft: '6px' }, onClick: doSearch }, 'Найти');
+  searchI.addEventListener('keydown', (e) => { if (e.key === 'Enter') doSearch(); });
+  const body = el('div', {}, el('div', { style: { display: 'flex' } }, searchI, findBtn), chosen, resBox);
+  await openModal('Сопоставить с товаром', body, { primaryLabel: 'Сопоставить', onSubmit: async () => {
+    if (!selected) { toast('Выберите товар', 'error'); return false; }
+    try { await api.sdMatchChannel(mapId, selected); toast('Сопоставлено', 'success'); onSaved?.(); }
     catch (e) { toast(e.message, 'error'); return false; }
   } });
 }
