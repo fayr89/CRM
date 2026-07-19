@@ -6059,3 +6059,43 @@ v247/v263/v404/v405, orphan-ветки v405) уже эскалированы р�
 Снос diag-v444 выполнен раздельным `git rm src/routes/diagDaily.js` +
 `Edit` app.js (импорт + роут), с проверкой `git status --short`/`grep -n
 diag src/app.js` (пусто) перед коммитом и пушем в обе ветки.
+
+**2026-07-19 (v445): без изменений, конвейер деплоя штатный.** Designated
+dev-ветка (`claude/inspiring-cannon-sgf01l`) отсутствовала на origin на
+старте (`git ls-remote` пусто) — тот же паттерн «смержили и GitHub удалил
+ветку» (см. v169/v264/.../v444). Локальный HEAD уже строго совпадал с
+прод (`879cd24`, финальный коммит v444) — репо стартовало с этими
+коммитами уже примененными локально в рабочем дереве (чистом), просто
+без ref на origin. Первая проверка `git merge-base --is-ancestor` дала
+ложный отрицательный результат из-за устаревшего кэшированного
+remote-tracking ref для прод-ветки; явный `git fetch origin
+claude/build-crm-system-JzCP9` подтвердил, что прод на самом деле уже на
+том же `879cd24` — расхождения не было. Восстановил designated dev-ветку
+простым `git push -u origin claude/inspiring-cannon-sgf01l`. `/health` 200
+подтверждён до начала.
+
+Добавил diag-v445 (только `op=meta`, по шаблону v402-444 — сорок три
+предыдущих цикла с идентичным результатом делают полный
+`get-feedback-summary` избыточным). Push dev → checkout прод → `git fetch
+origin claude/build-crm-system-JzCP9` явным именем + `reset --hard` +
+`merge --ff-only` → push prod — fast-forward прошёл чисто (1 коммит: diag
+add). Первая попытка `op=meta` сразу после пуша поймала 404 (алиас ещё не
+переехал), повтор — 200.
+
+Этап 1 — diag `op=meta` `proposals_by_status`={done:62}:
+pending/approved/revision/rejected пусты, действовать не по чему. Этап 2 —
+`feedback_by_status`={awaiting_approval:15, closed:44, open:4},
+`proposals_last_update`=2026-07-12T10:44:03.911Z,
+`feedback_last_msg`=2026-07-12T10:45:23.756Z — идентичны v375-444 один в
+один (включая миллисекунды). **195-е подряд подтверждение** отсутствия
+изменений в feedback/ai_proposals с закрытия ai_proposal #62 в v290.
+
+Push-уведомление не отправлено — нет новой информации: feedback/ai_proposals
+не менялись за 195 циклов подряд, известные находки (частота обходов
+v247/v263/v404/v405, orphan-ветки v405) уже эскалированы ранее без реакции
+админа, повтор без нового сигнала был бы спамом; конвейер деплоя здоров
+(`/health` подтверждён живым до и после каждого шага).
+
+Снос diag-v445 выполнен раздельным `git rm src/routes/diagDaily.js` +
+`Edit` app.js (импорт + роут), с проверкой `git status --short`/`grep -n
+diag src/app.js` (пусто) перед коммитом и пушем в обе ветки.
