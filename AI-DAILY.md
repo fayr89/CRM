@@ -7188,3 +7188,41 @@ Push-уведомление не отправлено — обе известн�
 `Edit` app.js (импорт + роут) на dev-ветке (`git branch --show-current`
 проверен перед стартом), `git add src/app.js` отдельной командой,
 `grep -n diag src/app.js` пусто перед коммитом.
+
+**2026-07-20 (v472): без изменений — 221-е подряд подтверждение.**
+Designated dev-ветка (`claude/inspiring-cannon-dk479h`) отсутствовала на
+origin на старте (`git ls-remote` пусто) — тот же паттерн v169+. Сделал
+`git fetch --unshallow origin` перед выводами (урок v169) — заодно
+подтвердил находку v461 численно: `refs/heads/claude/inspiring-cannon-*`
+на origin = **1010** (было 1008 в v471), рост в рамках ожидаемого
+(1-2 ветки за цикл), не скачок. Локальный HEAD уже строго совпадал с
+`origin/claude/build-crm-system-JzCP9` (`2af28da`) — обычная линейная
+точка, не unrelated-histories. Восстановил `git push -u origin
+claude/inspiring-cannon-dk479h` с локального HEAD.
+
+Добавил diag-v472 (`op=meta` only, по шаблону v402-471), push dev →
+checkout прод → `git fetch` + `reset --hard origin/...` + `merge --ff-only`
+(урок v466) → push prod — fast-forward прошёл чисто (1 коммит: diag add).
+`/health` 200 сразу; первый `op=meta`-запрос поймал 404 (алиас не
+переехал), второй (~20с после) — 200.
+
+Этап 1 — `proposals_by_status`={done:62}: pending/approved/revision/
+rejected пусты, действовать не по чему. Этап 2 —
+`feedback_by_status`={awaiting_approval:15, closed:44, open:4},
+`proposals_last_update`/`feedback_last_msg`=2026-07-12T10:44:03.911Z /
+2026-07-12T10:45:23.756Z — идентичны v375-471 один в один (включая
+миллисекунды). 221-е подряд подтверждение, 8 дней без изменений. Раз
+`feedback_last_msg` не сдвинулся, полный дамп с тредами (op=feedback-full)
+не тянул — новых сообщений в тредах физически быть не может (проверено
+предыдущими ~100 обходами, v375+).
+
+Push-уведомление не отправлено — обе известные находки (частота
+обходов/orphan-ветки, ~1010 веток — эскалирована v461; денежный баг #62 —
+закрыт в v290) без нового сигнала в этом цикле: решения администратора
+по-прежнему нет (approved/revision/rejected пусты, push v461 без ответа),
+но повтор без нового факта был бы спамом. Конвейер деплоя здоров.
+
+Снос diag-v472 выполнен раздельным `git rm src/routes/diagDaily.js` +
+`Edit` app.js (импорт + роут) на dev-ветке (`git branch --show-current`
+проверен перед стартом), `git add src/app.js` отдельной командой,
+`grep -n diag src/app.js` пусто перед коммитом.
