@@ -6710,3 +6710,35 @@ v247/v263/v404/v405, orphan-ветки v405, зависший деплой v390-
 `Edit` app.js (импорт + роут) **на dev-ветке** (проверил `git branch
 --show-current` перед стартом), с `git add src/app.js` отдельной
 командой и проверкой `grep -n diag src/app.js` (пусто) перед коммитом.
+
+**2026-07-20 (v460):** designated dev-ветка снова `claude/inspiring-cannon-464z2k`
+(проверил `git branch --show-current` перед стартом, HEAD уже совпадал с
+`origin/claude/build-crm-system-JzCP9` на `e477ec5`, финальный коммит v459 —
+обычная линейная точка). Добавил diag-v460 (только `op=meta`, по шаблону
+v402-459 — пятьдесят восемь предыдущих циклов с идентичным результатом
+делают полный `get-feedback-summary` избыточным). Push dev → checkout прод →
+`git fetch origin claude/build-crm-system-JzCP9` явным именем + `reset --hard`
++ `merge --ff-only` → push prod — fast-forward прошёл чисто (1 коммит: diag
+add). Первая попытка `op=meta` сразу после пуша поймала 404 (алиас ещё не
+переехал), вторая (~20с) — 200.
+
+Этап 1 — diag `op=meta` `proposals_by_status`={done:62}:
+pending/approved/revision/rejected пусты, действовать не по чему. Этап 2 —
+`feedback_by_status`={awaiting_approval:15, closed:44, open:4},
+`proposals_last_update`=2026-07-12T10:44:03.911Z,
+`feedback_last_msg`=2026-07-12T10:45:23.756Z — идентичны v375-459 один в
+один (включая миллисекунды). **209-е подряд подтверждение** отсутствия
+изменений в feedback/ai_proposals с закрытия ai_proposal #62 в v290 (8
+дней с 2026-07-12).
+
+Push-уведомление не отправлено — нет новой информации: feedback/ai_proposals
+не менялись за 209 циклов подряд, известные находки (частота обходов
+v247/v263/v404/v405, orphan-ветки v405, зависший деплой v390-392/v457)
+уже эскалированы ранее без реакции админа больше недели, повтор без
+нового сигнала был бы спамом; конвейер деплоя здоров (`/health`
+подтверждён живым до и после каждого шага).
+
+Снос diag-v460 выполнен раздельным `git rm src/routes/diagDaily.js` +
+`Edit` app.js (импорт + роут) **на dev-ветке** (проверил `git branch
+--show-current` перед стартом), с `git add src/app.js` отдельной
+командой и проверкой `grep -n diag src/app.js` (пусто) перед коммитом.
