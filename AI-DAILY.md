@@ -6667,3 +6667,46 @@ Push-уведомление не отправлено — нет новой ин
 `Edit` app.js (импорт + роут) **на dev-ветке** (проверил `git branch
 --show-current` перед стартом), с проверкой `grep -n diag src/app.js`
 (пусто) перед коммитом.
+
+**2026-07-20 (v459): без изменений, конвейер деплоя штатный.** Designated
+dev-ветка (`claude/inspiring-cannon-y4jnki`) отсутствовала на origin на
+старте (тот же паттерн «смержили и GitHub удалил ветку», см. v169 и
+далее). Репо стартовало shallow — выполнил `git fetch --unshallow origin`
+по правилу v169 до всех выводов о divergence; после unshallow локальный
+HEAD строго совпал с `origin/claude/build-crm-system-JzCP9` (`70903b0`,
+финальный коммит v458) — обычная линейная точка, не unrelated-histories.
+Восстановил dev-ветку `git push -u origin claude/inspiring-cannon-y4jnki`
+с локального HEAD.
+
+По уроку v457 (никогда не fetch'ить несколько refspec одной командой)
+фетчил ветку прод отдельной командой.
+
+Добавил diag-v459 (только `op=meta`, по шаблону v402-458 — пятьдесят
+пять предыдущих циклов с идентичным результатом делают полный
+`get-feedback-summary` избыточным). Push dev → checkout прод → `git fetch
+origin claude/build-crm-system-JzCP9` явным именем + `reset --hard` +
+`merge --ff-only` → push prod — fast-forward прошёл чисто (1 коммит: diag
+add). Первая попытка `op=meta` сразу после пуша поймала 404 (алиас ещё не
+переехал), вторая (~20с) — 200.
+
+Этап 1 — diag `op=meta` `proposals_by_status`={done:62}:
+pending/approved/revision/rejected пусты, действовать не по чему. Этап 2 —
+`feedback_by_status`={awaiting_approval:15, closed:44, open:4},
+`proposals_last_update`=2026-07-12T10:44:03.911Z,
+`feedback_last_msg`=2026-07-12T10:45:23.756Z — идентичны v375-458 один в
+один (включая миллисекунды). **208-е подряд подтверждение** отсутствия
+изменений в feedback/ai_proposals с закрытия ai_proposal #62 в v290 (8
+дней с 2026-07-12).
+
+Push-уведомление не отправлено — нет новой информации: feedback/ai_proposals
+не менялись за 208 циклов подряд, известные находки (частота обходов
+v247/v263/v404/v405, orphan-ветки v405, зависший деплой v390-392/v457)
+уже эскалированы ранее без реакции админа больше недели, повтор без
+нового сигнала был бы спамом; конвейер деплоя здоров (`/health`
+подтверждён живым до и после каждого шага), инцидент v457 (зависший
+деплой) не повторился — этот цикл прошёл штатно за ~20с.
+
+Снос diag-v459 выполнен раздельным `git rm src/routes/diagDaily.js` +
+`Edit` app.js (импорт + роут) **на dev-ветке** (проверил `git branch
+--show-current` перед стартом), с `git add src/app.js` отдельной
+командой и проверкой `grep -n diag src/app.js` (пусто) перед коммитом.
