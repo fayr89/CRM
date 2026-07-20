@@ -12828,6 +12828,9 @@ function renderSdChannelMapCard(isAdmin) {
   // Фильтр по юрлицу (WB-каналу): пусто = все. Заполняется из /wb/accounts.
   const accSel = el('select', {}, el('option', { value: '' }, 'Все юрлица'));
   let wbAccounts = [];
+  // Видимость: по умолчанию прячем скрытые (таблица длинная, с телефона тяжело).
+  const visSel = el('select', {}, el('option', { value: 'active' }, 'Активные'),
+    el('option', { value: 'hidden' }, 'Скрытые'), el('option', { value: 'all' }, 'Все (со скрытыми)'));
   const searchI = el('input', { type: 'text', placeholder: 'Поиск', style: { width: '150px' } });
   const info = el('span', { style: { marginLeft: '8px', color: 'var(--text-muted)' } });
   const findBtn = el('button', { class: 'btn btn-sm', onClick: () => reload() }, 'Показать');
@@ -12835,8 +12838,13 @@ function renderSdChannelMapCard(isAdmin) {
   const autoBtn = el('button', { class: 'btn btn-sm', onClick: async () => {
     try { const r = await api.sdAutoMatchChannel(chanSel.value); toast(`Сопоставлено: ${r.matched}`, 'success'); reload(); } catch (e) { toast(e.message, 'error'); }
   } }, 'Авто-сопоставить');
+  // Массово скрыть уже сопоставленные — чтобы в списке осталось только то, что ещё нужно связать.
+  const hideMatchedBtn = el('button', { class: 'btn btn-sm', title: 'Скрыть из списка все сопоставленные строки этого канала', onClick: async () => {
+    if (!(await confirm('Скрыть все сопоставленные строки этого канала из рабочего списка? Их можно вернуть фильтром «Скрытые».'))) return;
+    try { const r = await api.sdHideMatchedChannel(chanSel.value); toast(`Скрыто: ${r.hidden}`, 'success'); reload(); } catch (e) { toast(e.message, 'error'); }
+  } }, 'Скрыть сопоставленные');
   const controls = el('div', { style: { marginBottom: '8px', display: 'flex', gap: '6px', alignItems: 'center', flexWrap: 'wrap' } },
-    chanSel, statusSel, accSel, searchI, findBtn, importBtn, autoBtn);
+    chanSel, statusSel, accSel, visSel, searchI, findBtn, importBtn, autoBtn, hideMatchedBtn);
   // Подтяжка из WB: по ВЫБРАННОМУ юрлицу, а при «Все юрлица» — по всем WB-каналам
   // с ключом (раньше бралось только первое юрлицо — это и был баг). Действие
   // админское (пишет много строк + ходит во внешний API), фильтр — для всех.
@@ -12866,11 +12874,13 @@ function renderSdChannelMapCard(isAdmin) {
   chanSel.addEventListener('change', () => { accSel.value = ''; syncChannelUi(); reload(); });
   statusSel.addEventListener('change', () => reload());
   accSel.addEventListener('change', () => reload());
+  visSel.addEventListener('change', () => reload());
   card.append(controls, info);
   const tbody = el('tbody', {});
-  card.append(el('table', { class: 'table' },
+  // overflow-x — чтобы широкая таблица горизонтально скроллилась на телефоне, а не ломала вёрстку.
+  card.append(el('div', { style: { overflowX: 'auto' } }, el('table', { class: 'table' },
     el('thead', {}, el('tr', {}, el('th', {}, 'ШК канала'), el('th', {}, 'Артикул канала'), el('th', {}, 'Название'),
-      el('th', {}, 'Юрлицо'), el('th', {}, 'Сопоставлен товар'), el('th', {}, ''))), tbody));
+      el('th', {}, 'Юрлицо'), el('th', {}, 'Сопоставлен товар'), el('th', {}, ''))), tbody)));
   async function loadAccounts() {
     try { wbAccounts = await api.sdWbAccounts(); } catch { wbAccounts = []; }
     for (const a of wbAccounts) accSel.append(el('option', { value: String(a.id) }, a.legal_entity || ('WB #' + a.id)));
@@ -12879,8 +12889,8 @@ function renderSdChannelMapCard(isAdmin) {
     tbody.textContent = '';
     let data;
     const accFilter = chanSel.value === 'wb' ? accSel.value : '';
-    try { data = await api.sdChannelMap(chanSel.value, statusSel.value, searchI.value.trim(), accFilter); } catch (e) { toast(e.message, 'error'); return; }
-    info.textContent = `Сопоставлено ${data.matched} из ${data.total}`;
+    try { data = await api.sdChannelMap(chanSel.value, statusSel.value, searchI.value.trim(), accFilter, visSel.value); } catch (e) { toast(e.message, 'error'); return; }
+    info.textContent = `Сопоставлено ${data.matched} из ${data.total}` + (data.hidden ? ` · скрыто ${data.hidden}` : '');
     if (!data.rows.length) { tbody.append(el('tr', {}, el('td', { colspan: '6' }, 'Пусто'))); return; }
     for (const m of data.rows) {
       const matched = m.set_id
@@ -12890,11 +12900,15 @@ function renderSdChannelMapCard(isAdmin) {
       const unBtn = m.set_id ? el('button', { class: 'btn btn-sm', style: { marginLeft: '4px' }, onClick: async () => {
         try { await api.sdUnmatchChannel(m.id); reload(); } catch (e) { toast(e.message, 'error'); }
       } }, 'Снять') : null;
+      // Скрыть/показать строку — быстро убрать из рабочего списка.
+      const hideBtn = el('button', { class: 'btn btn-sm', style: { marginLeft: '4px' }, title: m.hidden ? 'Показать' : 'Скрыть из списка',
+        onClick: async () => { try { await api.sdHideChannel(m.id, !m.hidden); reload(); } catch (e) { toast(e.message, 'error'); } } }, m.hidden ? '👁' : '🙈');
       const del = el('button', { class: 'btn btn-sm btn-danger', style: { marginLeft: '4px' }, onClick: async () => {
         try { await api.sdDeleteChannelMap(m.id); reload(); } catch (e) { toast(e.message, 'error'); }
       } }, '🗑');
-      tbody.append(el('tr', {}, el('td', {}, m.channel_barcode || '—'), el('td', {}, m.channel_sku || '—'),
-        el('td', {}, m.channel_name || '—'), el('td', {}, m.legal_entity || '—'), el('td', {}, matched), el('td', {}, matchBtn, unBtn, del)));
+      tbody.append(el('tr', { style: m.hidden ? { opacity: '0.55' } : {} },
+        el('td', {}, m.channel_barcode || '—'), el('td', {}, m.channel_sku || '—'),
+        el('td', {}, m.channel_name || '—'), el('td', {}, m.legal_entity || '—'), el('td', {}, matched), el('td', {}, matchBtn, unBtn, hideBtn, del)));
     }
   }
   loadAccounts();
@@ -13117,6 +13131,31 @@ async function sdEditSet(setRow, onSaved) {
       try { full = await api.sdSet(full.id); renderComps(); } catch { /* */ }
     }) }, '+ Компонент'));
     body.append(comps);
+
+    // ----- Артикулы маркетплейсов (каналы), привязанные к сету -----
+    const linksBox = el('div', { style: { marginTop: '10px' } });
+    linksBox.append(el('div', { style: { fontWeight: '600', marginBottom: '4px' } }, 'Артикулы на каналах (маркетплейсы):'));
+    const linksList = el('div', {});
+    linksBox.append(linksList);
+    function renderLinks() {
+      linksList.textContent = '';
+      for (const l of (full.channel_links || [])) {
+        const del = el('button', { class: 'btn btn-sm btn-danger', title: 'Отвязать', onClick: async () => {
+          try { await api.sdUnmatchChannel(l.id); full.channel_links = full.channel_links.filter((x) => x.id !== l.id); renderLinks(); } catch (e) { toast(e.message, 'error'); }
+        } }, '🗑');
+        const chLabel = SD_CHANNELS[l.channel] || l.channel;
+        const art = l.channel_sku || l.channel_barcode || '—';
+        const extra = [l.channel_name, l.legal_entity].filter(Boolean).join(' · ');
+        linksList.append(el('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '2px 0' } },
+          el('span', {}, el('b', {}, chLabel), ` · ${art}`, extra ? el('span', { style: { color: 'var(--text-muted)' } }, ` · ${extra}`) : null), del));
+      }
+      if (!(full.channel_links || []).length) linksList.append(el('div', { style: { color: 'var(--text-muted)' } }, 'Пока не привязан ни к одному каналу'));
+    }
+    renderLinks();
+    linksBox.append(el('button', { class: 'btn btn-sm btn-primary', style: { marginTop: '6px' }, onClick: () => sdAddChannelLinkModal(full.id, async () => {
+      try { full = await api.sdSet(full.id); renderLinks(); } catch { /* */ }
+    }) }, '+ Добавить канал и связь'));
+    body.append(linksBox);
   } else {
     body.append(el('div', { style: { fontSize: '12px', color: 'var(--text-muted)', marginTop: '8px' } }, 'Упаковку и состав добавишь после создания сета (открой его ✏).'));
   }
@@ -13131,6 +13170,56 @@ async function sdEditSet(setRow, onSaved) {
     if (!payload.name) { toast('Укажите название сета', 'error'); return false; }
     try { if (full && full.id) await api.sdUpdateSet(full.id, payload); else await api.sdCreateSet(payload); toast('Сет сохранён', 'success'); onSaved?.(); }
     catch (e) { toast(e.message, 'error'); return false; }
+  } });
+}
+
+// Привязать сет к артикулу маркетплейса: выбрать канал → найти существующий
+// артикул канала (подтянутый/импортированный) ИЛИ добавить вручную (ШК/артикул).
+async function sdAddChannelLinkModal(setId, onSaved) {
+  const chanSel = el('select', {}, ...Object.entries(SD_CHANNELS).map(([v, l]) => el('option', { value: v }, l)));
+  const searchI = el('input', { type: 'text', placeholder: 'Поиск артикула канала (ШК/артикул/название)', style: { width: '240px' } });
+  const resBox = el('div', { style: { maxHeight: '200px', overflow: 'auto', margin: '6px 0' } });
+  let selectedMapId = null;
+  const chosen = el('div', { style: { fontWeight: '600', margin: '4px 0' } }, 'Не выбрано');
+  async function doSearch() {
+    resBox.textContent = 'Поиск…';
+    let data;
+    try { data = await api.sdChannelMap(chanSel.value, 'all', searchI.value.trim(), '', 'all'); } catch (e) { resBox.textContent = e.message; return; }
+    resBox.textContent = '';
+    const rows = (data.rows || []).slice(0, 50);
+    if (!rows.length) { resBox.textContent = 'Ничего не найдено. Можно добавить вручную ниже.'; return; }
+    for (const m of rows) {
+      const label = `${m.channel_sku || m.channel_barcode || '—'} · ${m.channel_name || ''}${m.set_id ? ' (уже привязан)' : ''}`;
+      const b = el('button', { class: 'btn btn-sm', style: { display: 'block', width: '100%', textAlign: 'left', margin: '2px 0' },
+        onClick: () => { selectedMapId = m.id; chosen.textContent = `Выбрано: ${label}`; } }, label);
+      resBox.append(b);
+    }
+  }
+  const findBtn = el('button', { class: 'btn btn-sm', style: { marginLeft: '6px' }, onClick: doSearch }, 'Найти');
+  searchI.addEventListener('keydown', (e) => { if (e.key === 'Enter') doSearch(); });
+  chanSel.addEventListener('change', () => { selectedMapId = null; chosen.textContent = 'Не выбрано'; doSearch(); });
+  const mBarcode = el('input', { type: 'text', placeholder: 'штрихкод', style: { width: '130px' } });
+  const mSku = el('input', { type: 'text', placeholder: 'артикул', style: { width: '130px', marginLeft: '6px' } });
+  const mName = el('input', { type: 'text', placeholder: 'название (необяз.)', style: { width: '100%', marginTop: '4px' } });
+  const body = el('div', {},
+    el('div', { class: 'form-row' }, el('label', {}, 'Канал'), chanSel),
+    el('div', { style: { display: 'flex', alignItems: 'center', marginTop: '4px' } }, searchI, findBtn),
+    chosen, resBox,
+    el('div', { style: { borderTop: '1px solid var(--border, #ddd)', paddingTop: '6px', marginTop: '4px' } },
+      el('div', { style: { fontSize: '12px', color: 'var(--text-muted)', marginBottom: '4px' } }, 'Или добавить артикул вручную (создастся и сразу привяжется):'),
+      el('div', { style: { display: 'flex', alignItems: 'center' } }, mBarcode, mSku), mName));
+  doSearch();
+  await openModal('Добавить канал и связь', body, { primaryLabel: 'Привязать', onSubmit: async () => {
+    try {
+      if (selectedMapId) {
+        await api.sdAddSetChannelLink(setId, { channel: chanSel.value, map_id: selectedMapId });
+      } else if (mBarcode.value.trim() || mSku.value.trim()) {
+        await api.sdAddSetChannelLink(setId, { channel: chanSel.value, barcode: mBarcode.value.trim() || null, sku: mSku.value.trim() || null, name: mName.value.trim() || null });
+      } else {
+        toast('Выберите артикул из списка или заполните вручную', 'error'); return false;
+      }
+      toast('Привязано', 'success'); onSaved?.();
+    } catch (e) { toast(e.message, 'error'); return false; }
   } });
 }
 

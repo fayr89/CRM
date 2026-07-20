@@ -215,6 +215,8 @@ export async function ensureSupplyDeliverySchema() {
   // Из какого канал-аккаунта (юрлица/ключа) подтянута номенклатура — чтобы
   // тянуть/фильтровать по конкретному каналу, а не только по первому.
   await db.run('ALTER TABLE sd_product_channel_map ADD COLUMN IF NOT EXISTS channel_account_id INTEGER');
+  // Скрытие строк из рабочего списка (таблица разрослась, с телефона не удобно).
+  await db.run('ALTER TABLE sd_product_channel_map ADD COLUMN IF NOT EXISTS hidden BOOLEAN NOT NULL DEFAULT FALSE');
   // WB ФБС: поставке нужен внешний supplyId WB + привязка к каналу (для ключа),
   // позиции = сборочные задания WB (external_order_id + штрихкод).
   await db.run('ALTER TABLE sd_supplies ADD COLUMN IF NOT EXISTS channel_account_id INTEGER');

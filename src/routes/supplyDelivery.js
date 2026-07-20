@@ -701,7 +701,16 @@ router.get('/sets/:id', requireOperate, asyncHandler(async (req, res) => {
      WHERE sp.set_id = ? ORDER BY sp.id`,
     req.params.id,
   );
-  res.json({ ...set, components, packaging });
+  // Артикулы маркетплейсов, привязанные к этому сету (по каналам).
+  const channel_links = await db.all(
+    `SELECT m.id, m.channel, m.channel_barcode, m.channel_sku, m.channel_name,
+            m.channel_account_id, a.legal_entity
+     FROM sd_product_channel_map m
+     LEFT JOIN sd_channel_accounts a ON a.id = m.channel_account_id
+     WHERE m.set_id = ? ORDER BY m.channel, m.id`,
+    req.params.id,
+  );
+  res.json({ ...set, components, packaging, channel_links });
 }));
 
 router.put('/sets/:id', requireOperate, asyncHandler(async (req, res) => {
@@ -765,6 +774,42 @@ router.delete('/sets/:id/packaging/:pid', requireOperate, asyncHandler(async (re
   res.json({ ok: true });
 }));
 
+// Привязать к сету артикул маркетплейса (по каналам) прямо из карточки сета.
+// Либо связать существующую строку канала (map_id), либо создать её вручную
+// (channel + barcode/sku [+ name]) и сразу связать. Отвязка — через
+// PUT /channel-map/:mapId/unmatch.
+router.post('/sets/:id/channel-links', requireOperate, asyncHandler(async (req, res) => {
+  await ensureSupplyDeliverySchema();
+  const set = await db.get('SELECT id FROM sd_sets WHERE id = ?', req.params.id);
+  if (!set) throw NotFound('Сет не найден');
+  const d = z.object({
+    channel: z.enum(['wb', 'ozon', 'ym', 'avito']),
+    map_id: z.number().int().positive().optional().nullable(),
+    barcode: z.string().max(120).optional().nullable(),
+    sku: z.string().max(120).optional().nullable(),
+    name: z.string().max(400).optional().nullable(),
+  }).parse(req.body);
+  if (d.map_id) {
+    const r = await db.run(
+      'UPDATE sd_product_channel_map SET set_id = ?, matched_at = NOW(), updated_at = NOW() WHERE id = ? AND channel = ?',
+      req.params.id, d.map_id, d.channel,
+    );
+    if (!r.changes) throw NotFound('Строка канала не найдена');
+    return res.json({ ok: true });
+  }
+  if (!d.barcode && !d.sku) throw BadRequest('Укажите штрихкод или артикул канала');
+  await db.run(
+    `INSERT INTO sd_product_channel_map (channel, channel_barcode, channel_sku, channel_name, set_id, matched_at)
+     VALUES (?, ?, ?, ?, ?, NOW())
+     ON CONFLICT (channel, COALESCE(channel_barcode, ''), COALESCE(channel_sku, ''))
+     DO UPDATE SET set_id = EXCLUDED.set_id,
+                   channel_name = COALESCE(EXCLUDED.channel_name, sd_product_channel_map.channel_name),
+                   matched_at = NOW(), updated_at = NOW()`,
+    d.channel, d.barcode ?? null, d.sku ?? null, d.name ?? null, req.params.id,
+  );
+  res.json({ ok: true });
+}));
+
 // ----- Matching номенклатуры канала ⇄ сет (Phase 3, WB первый) -----
 router.get('/channel-map', requireOperate, asyncHandler(async (req, res) => {
   await ensureSupplyDeliverySchema();
@@ -774,10 +819,14 @@ router.get('/channel-map', requireOperate, asyncHandler(async (req, res) => {
   const limit = Math.min(500, Math.max(1, parseInt(req.query.limit, 10) || 200));
   const accId = parseInt(req.query.channel_account_id, 10);
   const hasAcc = Number.isInteger(accId) && accId > 0;
+  // Видимость: active (по умолчанию — прячем скрытые), hidden (только скрытые), all.
+  const visibility = (req.query.visibility || 'active').toString();
   const params = [channel];
   let where = 'm.channel = ?';
   if (status === 'matched') where += ' AND m.set_id IS NOT NULL';
   else if (status === 'unmatched') where += ' AND m.set_id IS NULL';
+  if (visibility === 'active') where += ' AND m.hidden = FALSE';
+  else if (visibility === 'hidden') where += ' AND m.hidden = TRUE';
   if (search) {
     where += ' AND (m.channel_barcode ILIKE ? OR m.channel_sku ILIKE ? OR m.channel_name ILIKE ?)';
     params.push(`%${search}%`, `%${search}%`, `%${search}%`);
@@ -793,16 +842,22 @@ router.get('/channel-map', requireOperate, asyncHandler(async (req, res) => {
      LIMIT ?`,
     ...params, limit,
   );
-  // Счётчики — по каналу (и по юрлицу, если фильтруем), без учёта статуса/поиска.
+  // Счётчики — по каналу (и по юрлицу, если фильтруем), без учёта статуса/поиска/видимости.
   const countParams = [channel];
   let countWhere = 'channel = ?';
   if (hasAcc) { countWhere += ' AND channel_account_id = ?'; countParams.push(accId); }
   const counts = await db.get(
-    `SELECT COUNT(*) AS total, COUNT(*) FILTER (WHERE set_id IS NOT NULL) AS matched
+    `SELECT COUNT(*) AS total, COUNT(*) FILTER (WHERE set_id IS NOT NULL) AS matched,
+            COUNT(*) FILTER (WHERE hidden = TRUE) AS hidden
      FROM sd_product_channel_map WHERE ${countWhere}`,
     ...countParams,
   );
-  res.json({ rows, total: Number(counts?.total) || 0, matched: Number(counts?.matched) || 0 });
+  res.json({
+    rows,
+    total: Number(counts?.total) || 0,
+    matched: Number(counts?.matched) || 0,
+    hidden: Number(counts?.hidden) || 0,
+  });
 }));
 
 router.post('/channel-map/import', requireOperate, asyncHandler(async (req, res) => {
@@ -910,6 +965,26 @@ router.delete('/channel-map/:id', requireOperate, asyncHandler(async (req, res) 
   await ensureSupplyDeliverySchema();
   await db.run('DELETE FROM sd_product_channel_map WHERE id = ?', req.params.id);
   res.json({ ok: true });
+}));
+
+// Скрыть/показать одну строку (чтобы не листать длинную таблицу на телефоне).
+router.put('/channel-map/:id/hidden', requireOperate, asyncHandler(async (req, res) => {
+  await ensureSupplyDeliverySchema();
+  const { hidden } = z.object({ hidden: z.boolean() }).parse(req.body);
+  await db.run('UPDATE sd_product_channel_map SET hidden = ?, updated_at = NOW() WHERE id = ?', hidden, req.params.id);
+  res.json({ ok: true });
+}));
+
+// Массово скрыть уже сопоставленные строки канала — оставить в списке только то,
+// что ещё нужно сопоставить.
+router.post('/channel-map/hide-matched', requireOperate, asyncHandler(async (req, res) => {
+  await ensureSupplyDeliverySchema();
+  const { channel } = z.object({ channel: z.enum(['wb', 'ozon', 'ym', 'avito']) }).parse(req.body);
+  const r = await db.run(
+    'UPDATE sd_product_channel_map SET hidden = TRUE, updated_at = NOW() WHERE channel = ? AND set_id IS NOT NULL AND hidden = FALSE',
+    channel,
+  );
+  res.json({ ok: true, hidden: r.changes || 0 });
 }));
 
 // ----- WB ФБС: процесс поставки (создать поставку → задания → штрихкод → доставка) -----
