@@ -6917,3 +6917,36 @@ Push-уведомление не отправлено — обе известн�
 `Edit` app.js (импорт + роут) на dev-ветке (`git branch --show-current`
 проверен перед стартом), `git add src/app.js` отдельной командой,
 `grep -n diag src/app.js` пусто перед коммитом.
+
+**2026-07-20 (v465): без изменений — 214-е подряд подтверждение.**
+Designated dev-ветка (`claude/inspiring-cannon-vbkiqd`) уже существовала
+на origin на старте (не пришлось восстанавливать). Локальный HEAD уже
+строго совпадал с `origin/claude/build-crm-system-JzCP9` (`be1d2ac`,
+финал v464) — обычная линейная точка, не unrelated-histories. Прод-ветку
+фетчил отдельной командой (урок v457).
+
+Добавил diag-v465 (`op=meta` only, по шаблону v402-464), push dev →
+checkout прод → fetch прод отдельной командой + `reset --hard` +
+`merge --ff-only` → push prod — fast-forward прошёл чисто (1 коммит: diag
+add). `/health` 200 до первого запроса; первый `op=meta` поймал 404
+(алиас не переехал), второй (~20с) — 200.
+
+Этап 1 — `proposals_by_status`={done:62}: pending/approved/revision/
+rejected пусты, действовать не по чему. Этап 2 —
+`feedback_by_status`={awaiting_approval:15, closed:44, open:4},
+`proposals_last_update`/`feedback_last_msg`=2026-07-12T10:44:03.911Z /
+2026-07-12T10:45:23.756Z — идентичны v375-464 один в один (включая
+миллисекунды). 214-е подряд подтверждение, 8 дней без изменений.
+
+Push-уведомление не отправлено — v461 уже эскалировал находку про
+масштаб/частоту обходов (~1000 orphan-веток `claude/inspiring-cannon-*`,
+обход бежит ~раз в час) push-уведомлением тем же днём; админ ещё не
+отреагировал (решение по-прежнему не найдено ни в approved/revision/
+rejected, ни в ответах на push). Повтор без нового сигнала был бы спамом.
+Денежный баг #62 закрыт в v290, новых находок в этом цикле нет. Конвейер
+деплоя здоров.
+
+Снос diag-v465 выполнен раздельным `git rm src/routes/diagDaily.js` +
+`Edit` app.js (импорт + роут) на dev-ветке (`git branch --show-current`
+проверен перед стартом), `git add src/app.js` отдельной командой,
+`grep -n diag src/app.js` пусто перед коммитом.
