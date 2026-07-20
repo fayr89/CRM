@@ -784,6 +784,7 @@ router.post('/sets/:id/channel-links', requireOperate, asyncHandler(async (req, 
   if (!set) throw NotFound('Сет не найден');
   const d = z.object({
     channel: z.enum(['wb', 'ozon', 'ym', 'avito']),
+    channel_account_id: z.number().int().positive().optional().nullable(),
     map_id: z.number().int().positive().optional().nullable(),
     barcode: z.string().max(120).optional().nullable(),
     sku: z.string().max(120).optional().nullable(),
@@ -799,13 +800,14 @@ router.post('/sets/:id/channel-links', requireOperate, asyncHandler(async (req, 
   }
   if (!d.barcode && !d.sku) throw BadRequest('Укажите штрихкод или артикул канала');
   await db.run(
-    `INSERT INTO sd_product_channel_map (channel, channel_barcode, channel_sku, channel_name, set_id, matched_at)
-     VALUES (?, ?, ?, ?, ?, NOW())
+    `INSERT INTO sd_product_channel_map (channel, channel_barcode, channel_sku, channel_name, channel_account_id, set_id, matched_at)
+     VALUES (?, ?, ?, ?, ?, ?, NOW())
      ON CONFLICT (channel, COALESCE(channel_barcode, ''), COALESCE(channel_sku, ''))
      DO UPDATE SET set_id = EXCLUDED.set_id,
+                   channel_account_id = COALESCE(EXCLUDED.channel_account_id, sd_product_channel_map.channel_account_id),
                    channel_name = COALESCE(EXCLUDED.channel_name, sd_product_channel_map.channel_name),
                    matched_at = NOW(), updated_at = NOW()`,
-    d.channel, d.barcode ?? null, d.sku ?? null, d.name ?? null, req.params.id,
+    d.channel, d.barcode ?? null, d.sku ?? null, d.name ?? null, d.channel_account_id ?? null, req.params.id,
   );
   res.json({ ok: true });
 }));
@@ -1056,6 +1058,15 @@ router.get('/wb/accounts', requireOperate, asyncHandler(async (_req, res) => {
   await ensureSupplyDeliverySchema();
   res.json(await db.all(
     "SELECT id, legal_entity FROM sd_channel_accounts WHERE channel = 'wb' AND active IS NOT FALSE ORDER BY legal_entity, id",
+  ));
+}));
+
+// Все каналы-аккаунты (канал + юрлицо, без ключей) — для сопоставления сета
+// с конкретным заведённым каналом (напр. «WB · ИП Иваненко»), а не абстрактным.
+router.get('/channel-accounts-lite', requireOperate, asyncHandler(async (_req, res) => {
+  await ensureSupplyDeliverySchema();
+  res.json(await db.all(
+    'SELECT id, channel, legal_entity FROM sd_channel_accounts WHERE active IS NOT FALSE ORDER BY channel, legal_entity, id',
   ));
 }));
 

@@ -13205,21 +13205,29 @@ async function sdEditSet(setRow, onSaved) {
   } });
 }
 
-// Привязать сет к артикулу маркетплейса: выбрать канал → найти существующий
-// артикул канала (подтянутый/импортированный) ИЛИ добавить вручную (ШК/артикул).
+// Привязать сет к артикулу маркетплейса конкретного ЗАВЕДЁННОГО канала-юрлица
+// (напр. «WB · ИП Иваненко»), а не абстрактного канала: показываем номенклатуру
+// именно этого юрлица. Можно выбрать существующий артикул или добавить вручную.
 async function sdAddChannelLinkModal(setId, onSaved) {
-  const chanSel = el('select', {}, ...Object.entries(SD_CHANNELS).map(([v, l]) => el('option', { value: v }, l)));
+  let accounts = [];
+  try { accounts = await api.sdChannelAccountsLite(); } catch { accounts = []; }
+  const acctSel = el('select', {}, ...accounts.map((a) => el('option', { value: String(a.id) }, `${SD_CHANNELS[a.channel] || a.channel} · ${a.legal_entity || ('#' + a.id)}`)));
+  const acctById = new Map(accounts.map((a) => [String(a.id), a]));
+  const currentAcct = () => acctById.get(acctSel.value) || null;
   const searchI = el('input', { type: 'text', placeholder: 'Поиск артикула канала (ШК/артикул/название)', style: { width: '240px' } });
   const resBox = el('div', { style: { maxHeight: '200px', overflow: 'auto', margin: '6px 0' } });
   let selectedMapId = null;
   const chosen = el('div', { style: { fontWeight: '600', margin: '4px 0' } }, 'Не выбрано');
   async function doSearch() {
+    const acct = currentAcct();
+    if (!acct) { resBox.textContent = 'Нет заведённых каналов — добавь их в справочнике «Каналы».'; return; }
     resBox.textContent = 'Поиск…';
     let data;
-    try { data = await api.sdChannelMap(chanSel.value, 'all', searchI.value.trim(), '', 'all'); } catch (e) { resBox.textContent = e.message; return; }
+    // Только номенклатура ЭТОГО юрлица (канал + channel_account_id).
+    try { data = await api.sdChannelMap(acct.channel, 'all', searchI.value.trim(), acct.id, 'all'); } catch (e) { resBox.textContent = e.message; return; }
     resBox.textContent = '';
     const rows = (data.rows || []).slice(0, 50);
-    if (!rows.length) { resBox.textContent = 'Ничего не найдено. Можно добавить вручную ниже.'; return; }
+    if (!rows.length) { resBox.textContent = 'Ничего не найдено для этого юрлица. Можно добавить вручную ниже.'; return; }
     for (const m of rows) {
       const label = `${m.channel_sku || m.channel_barcode || '—'} · ${m.channel_name || ''}${m.set_id ? ' (уже привязан)' : ''}`;
       const b = el('button', { class: 'btn btn-sm', style: { display: 'block', width: '100%', textAlign: 'left', margin: '2px 0' },
@@ -13229,24 +13237,28 @@ async function sdAddChannelLinkModal(setId, onSaved) {
   }
   const findBtn = el('button', { class: 'btn btn-sm', style: { marginLeft: '6px' }, onClick: doSearch }, 'Найти');
   searchI.addEventListener('keydown', (e) => { if (e.key === 'Enter') doSearch(); });
-  chanSel.addEventListener('change', () => { selectedMapId = null; chosen.textContent = 'Не выбрано'; doSearch(); });
+  acctSel.addEventListener('change', () => { selectedMapId = null; chosen.textContent = 'Не выбрано'; doSearch(); });
   const mBarcode = el('input', { type: 'text', placeholder: 'штрихкод', style: { width: '130px' } });
   const mSku = el('input', { type: 'text', placeholder: 'артикул', style: { width: '130px', marginLeft: '6px' } });
   const mName = el('input', { type: 'text', placeholder: 'название (необяз.)', style: { width: '100%', marginTop: '4px' } });
   const body = el('div', {},
-    el('div', { class: 'form-row' }, el('label', {}, 'Канал'), chanSel),
+    accounts.length
+      ? el('div', { class: 'form-row' }, el('label', {}, 'Канал (юрлицо)'), acctSel)
+      : el('div', { style: { color: '#dc2626', marginBottom: '6px' } }, 'Нет заведённых каналов. Открой справочник «Каналы» и добавь канал + юрлицо.'),
     el('div', { style: { display: 'flex', alignItems: 'center', marginTop: '4px' } }, searchI, findBtn),
     chosen, resBox,
     el('div', { style: { borderTop: '1px solid var(--border, #ddd)', paddingTop: '6px', marginTop: '4px' } },
-      el('div', { style: { fontSize: '12px', color: 'var(--text-muted)', marginBottom: '4px' } }, 'Или добавить артикул вручную (создастся и сразу привяжется):'),
+      el('div', { style: { fontSize: '12px', color: 'var(--text-muted)', marginBottom: '4px' } }, 'Или добавить артикул вручную (создастся и сразу привяжется к выбранному юрлицу):'),
       el('div', { style: { display: 'flex', alignItems: 'center' } }, mBarcode, mSku), mName));
-  doSearch();
+  if (accounts.length) doSearch();
   await openModal('Добавить канал и связь', body, { primaryLabel: 'Привязать', onSubmit: async () => {
+    const acct = currentAcct();
+    if (!acct) { toast('Выберите канал (юрлицо)', 'error'); return false; }
     try {
       if (selectedMapId) {
-        await api.sdAddSetChannelLink(setId, { channel: chanSel.value, map_id: selectedMapId });
+        await api.sdAddSetChannelLink(setId, { channel: acct.channel, channel_account_id: acct.id, map_id: selectedMapId });
       } else if (mBarcode.value.trim() || mSku.value.trim()) {
-        await api.sdAddSetChannelLink(setId, { channel: chanSel.value, barcode: mBarcode.value.trim() || null, sku: mSku.value.trim() || null, name: mName.value.trim() || null });
+        await api.sdAddSetChannelLink(setId, { channel: acct.channel, channel_account_id: acct.id, barcode: mBarcode.value.trim() || null, sku: mSku.value.trim() || null, name: mName.value.trim() || null });
       } else {
         toast('Выберите артикул из списка или заполните вручную', 'error'); return false;
       }

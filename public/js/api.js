@@ -268,6 +268,7 @@ export const api = {
   sdWbDeliver: (id) => request('POST', `/api/supply-delivery/supplies/${id}/wb/deliver`),
   sdWbReshipment: (channelAccountId) => request('GET', '/api/supply-delivery/wb/reshipment', { query: { channel_account_id: channelAccountId } }),
   sdWbAccounts: () => request('GET', '/api/supply-delivery/wb/accounts'),
+  sdChannelAccountsLite: () => request('GET', '/api/supply-delivery/channel-accounts-lite'),
   // Поставки
   sdSupplies: () => request('GET', '/api/supply-delivery/supplies'),
   sdCreateSupply: (body) => request('POST', '/api/supply-delivery/supplies', { body }),
