@@ -4851,6 +4851,13 @@ function renderDashboardContent(container, stats, me) {
     ),
   );
 
+  // Детальные продажи за день + по менеджеру — для админа/РОПа, самым верхом.
+  if (['admin', 'rop'].includes(me.role)) {
+    const dailyContainer = el('div');
+    container.append(dailyContainer);
+    renderDailySales(dailyContainer, me).catch((e) => console.error('[daily-sales]', e));
+  }
+
   container.append(
     el(
       'div',
@@ -5036,6 +5043,104 @@ async function renderInsightsWidgets(container, me) {
     ) : null,
   );
 
+  await load();
+}
+
+// Детальные продажи за день + по конкретному менеджеру (для admin/rop).
+async function renderDailySales(container, me) {
+  const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Moscow' }).format(new Date());
+  const dateI = el('input', { type: 'date', value: today, max: today, style: { padding: '4px 6px' } });
+  const mgrSel = el('select', {}, el('option', { value: '' }, 'Все менеджеры'));
+  let managersLoaded = false;
+
+  const summaryArea = el('div', { class: 'dashboard-grid' });
+  const breakdownArea = el('div');
+  const ordersArea = el('div');
+
+  async function load() {
+    clear(summaryArea);
+    clear(breakdownArea);
+    ordersArea.innerHTML = '<div class="empty">Загрузка…</div>';
+    let r;
+    try { r = await api.dailySales({ date: dateI.value, manager_id: mgrSel.value || '' }); }
+    catch (e) { clear(ordersArea); ordersArea.append(el('div', { class: 'empty' }, `Ошибка: ${e.message}`)); return; }
+
+    if (!managersLoaded) {
+      for (const m of (r.managers || [])) mgrSel.append(el('option', { value: String(m.id) }, m.name));
+      managersLoaded = true;
+    }
+
+    const s = r.summary || {};
+    summaryArea.append(
+      statCard('Заказов за день', s.orders || 0, 'без отменённых'),
+      statCard('Выручка', fmtMoney(s.revenue || 0), 'без отменённых'),
+      statCard('Средний чек', fmtMoney(s.avg_check || 0)),
+      statCard('Отменено', s.cancelled || 0, 'заказов'),
+    );
+
+    // Разбивки: по менеджерам (только когда «Все»), по площадкам, что продано.
+    const cols = [];
+    if (!mgrSel.value) {
+      const byMgr = (r.by_manager || [])
+        .filter((m) => (m.orders || 0) > 0 || (m.revenue || 0) > 0)
+        .map((m) => ({ label: m.name || '—', count: Math.round(m.revenue || 0) }));
+      cols.push(el('div', { class: 'dashboard-section' },
+        el('h4', {}, 'По менеджерам (выручка)'),
+        el('div', { class: 'card' }, ...renderBars(byMgr, 'label', 'count'))));
+    }
+    const byMkt = (r.by_marketplace || []).map((m) => ({ label: m.marketplace || '—', count: Math.round(m.amount || 0) }));
+    cols.push(el('div', { class: 'dashboard-section' },
+      el('h4', {}, 'По площадкам (выручка)'),
+      el('div', { class: 'card' }, ...renderBars(byMkt, 'label', 'count'))));
+    const tp = r.top_products || [];
+    const tpBody = el('tbody', {});
+    for (const p of tp) {
+      tpBody.append(el('tr', {},
+        el('td', {}, p.name || '—'),
+        el('td', { style: { color: 'var(--text-muted)' } }, p.sku || ''),
+        el('td', { style: { textAlign: 'right', whiteSpace: 'nowrap' } }, `${p.qty} шт`)));
+    }
+    cols.push(el('div', { class: 'dashboard-section' },
+      el('h4', {}, 'Что продано (топ-10)'),
+      el('div', { class: 'card' }, tp.length ? el('table', { class: 'table' }, tpBody) : el('div', { class: 'empty' }, 'Продаж нет'))));
+    breakdownArea.append(el('div', { class: 'dashboard-grid' }, ...cols));
+
+    // Список заказов за день.
+    clear(ordersArea);
+    const rows = r.orders || [];
+    if (!rows.length) { ordersArea.append(el('div', { class: 'empty' }, 'В этот день продаж не было')); return; }
+    const tbody = el('tbody', {});
+    for (const o of rows) {
+      const time = new Intl.DateTimeFormat('ru-RU', { hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Moscow' }).format(new Date(o.created_at));
+      tbody.append(el('tr', {},
+        el('td', { style: { whiteSpace: 'nowrap' } }, time),
+        el('td', {}, el('a', { href: `#/orders?id=${o.id}` }, `#${o.id}`)),
+        el('td', {}, o.client_name || '—'),
+        el('td', {}, o.marketplace || 'B2B'),
+        el('td', {}, o.manager_name || '—'),
+        el('td', {}, badge(o.status, 'order_status')),
+        el('td', { style: { textAlign: 'right' } }, String(o.items_count || 0)),
+        el('td', { style: { textAlign: 'right', fontWeight: 600, whiteSpace: 'nowrap' } }, fmtMoney(o.total_amount, o.currency))));
+    }
+    ordersArea.append(el('table', { class: 'table' },
+      el('thead', {}, el('tr', {},
+        el('th', {}, 'Время'), el('th', {}, '№'), el('th', {}, 'Клиент'), el('th', {}, 'Площадка'),
+        el('th', {}, 'Менеджер'), el('th', {}, 'Статус'), el('th', {}, 'Поз.'), el('th', {}, 'Сумма'))),
+      tbody));
+  }
+
+  dateI.addEventListener('change', load);
+  mgrSel.addEventListener('change', load);
+
+  container.append(
+    el('div', { class: 'dashboard-section' },
+      el('h3', { style: { display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' } },
+        '📊 Продажи за день',
+        el('span', { style: { fontSize: '13px', fontWeight: 400 } }, dateI),
+        el('span', { style: { fontSize: '13px', fontWeight: 400 } }, mgrSel)),
+      summaryArea,
+      breakdownArea,
+      el('div', { class: 'card', style: { marginTop: '8px', overflowX: 'auto' } }, ordersArea)));
   await load();
 }
 

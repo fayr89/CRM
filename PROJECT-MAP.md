@@ -66,7 +66,7 @@
 | `deals.js` | `/api/deals` | CRUD сделок + `/pipeline`, `/win`, `/lose` |
 | `activities.js` | `/api/activities` | CRUD задач + `/complete` |
 | `notes.js` | `/api/notes` | заметки |
-| `dashboard.js` | `/api/dashboard` | агрегаты для главной |
+| `dashboard.js` | `/api/dashboard` | агрегаты для главной: `/stats`, `/insights` (динамика/топ за неделю-квартал), `/recent`, **`/daily-sales`** (детально за КОНКРЕТНЫЙ день по МСК + фильтр по менеджеру: summary, by_status/marketplace/manager, top_products, список заказов; scope через `getAccessibleUserIds`; день = `(created_at AT TIME ZONE 'Europe/Moscow')::date`) |
 | `invitations.js` | `/api/invitations` | приглашения |
 | `orders.js` | `/api/orders` | **БОЛЬШОЙ** — заказы, импорт CSV, экспорт CSV (одна строка на товар, поддерживает `ids=`/`shipped_from`/`shipped_to`), лист сборки, возвраты, потери, recent-items, `/shipped-archive` (по умолчанию последние 200 отгруженных; с `shipped_from`/`shipped_to` — весь диапазон без лимита, для архива на странице Отгрузок) |
 | `payments.js` | `/api/payments` | платежи / подтверждение / отклонение |
@@ -160,7 +160,7 @@
 
 | Функция | URL хеш | Что показывает |
 |---|---|---|
-| `renderDashboard` | `#/dashboard` | главная: статы + последние события |
+| `renderDashboard` | `#/dashboard` | главная: статы + последние события. Для admin/rop сверху — **`renderDailySales`** (продажи за день: дата+менеджер, карточки, разбивки, «что продано», список заказов дня); ниже — `renderInsightsWidgets` (динамика/топ за период) |
 | `renderPipeline` | `#/pipeline` | канбан сделок (drag&drop по этапам) |
 | `renderResource(main, key, opts)` | `#/leads`, `#/contacts`, `#/companies`, `#/deals`, `#/activities`, `#/users` | универсальный CRUD-список ресурса (`RESOURCES[key]` — конфиг) |
 | `renderOrders(main, opts)` | `#/orders` | продажи с площадок. **directMode=false** в коде = «не B2B». Канбан («комбайн»): колонка «Ожидает товара» для sales/manager по умолчанию показывает только СВОИ заказы (по `manager_id`), кнопка в шапке «Показать чужие (N)» ⇄ «Только мои»; админ/РОП по умолчанию видят все. Данные уже приходят (бэк отдаёт все `waiting_stock`), фильтр клиентский; чужие карточки помечены 👤 менеджером |

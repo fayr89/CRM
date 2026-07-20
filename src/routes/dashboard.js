@@ -219,6 +219,97 @@ router.get(
   }),
 );
 
+// Детальные продажи за КОНКРЕТНЫЙ день (по Москве), с разбивкой по менеджерам
+// и, опционально, фильтром по одному менеджеру. Для админа/РОПа: «что продали
+// сегодня и кто». Всё в scope доступных менеджеров (admin/finance — все).
+router.get(
+  '/daily-sales',
+  asyncHandler(async (req, res) => {
+    const ordIds = await getAccessibleUserIds(req.user); // null = все (admin/finance)
+    // Дата в МСК (бизнес в РФ). По умолчанию — сегодня по Москве.
+    const reqDate = /^\d{4}-\d{2}-\d{2}$/.test(req.query.date || '') ? req.query.date : null;
+    const date = reqDate || new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Moscow' }).format(new Date());
+    const managerId = req.query.manager_id ? Number(req.query.manager_id) : null;
+
+    // WHERE: день по МСК + scope + опц. конкретный менеджер. Все запросы под o.*.
+    const parts = ["(o.created_at AT TIME ZONE 'Europe/Moscow')::date = ?::date"];
+    const params = [date];
+    if (ordIds !== null) { parts.push('o.manager_id = ANY(?)'); params.push(ordIds); }
+    if (managerId) { parts.push('o.manager_id = ?'); params.push(managerId); }
+    const whereSql = `WHERE ${parts.join(' AND ')}`;
+
+    const [summary, byStatus, byMarketplace, byManager, topProducts, orders, managers] = await Promise.all([
+      db.get(
+        `SELECT COUNT(*) FILTER (WHERE o.status <> 'cancelled')::int AS orders,
+                COALESCE(SUM(o.total_amount) FILTER (WHERE o.status <> 'cancelled'), 0)::float AS revenue,
+                COUNT(*) FILTER (WHERE o.status = 'cancelled')::int AS cancelled,
+                COUNT(*)::int AS orders_all
+         FROM orders o ${whereSql}`,
+        ...params,
+      ),
+      db.all(
+        `SELECT o.status, COUNT(*)::int AS count, COALESCE(SUM(o.total_amount), 0)::float AS amount
+         FROM orders o ${whereSql} GROUP BY o.status`,
+        ...params,
+      ),
+      db.all(
+        `SELECT COALESCE(o.marketplace, 'B2B') AS marketplace, COUNT(*)::int AS count,
+                COALESCE(SUM(o.total_amount) FILTER (WHERE o.status <> 'cancelled'), 0)::float AS amount
+         FROM orders o ${whereSql} GROUP BY COALESCE(o.marketplace, 'B2B') ORDER BY amount DESC`,
+        ...params,
+      ),
+      db.all(
+        `SELECT o.manager_id, u.name,
+                COUNT(*) FILTER (WHERE o.status <> 'cancelled')::int AS orders,
+                COALESCE(SUM(o.total_amount) FILTER (WHERE o.status <> 'cancelled'), 0)::float AS revenue
+         FROM orders o LEFT JOIN users u ON u.id = o.manager_id
+         ${whereSql} GROUP BY o.manager_id, u.name ORDER BY revenue DESC`,
+        ...params,
+      ),
+      db.all(
+        `SELECT oi.name, oi.sku, SUM(oi.quantity)::int AS qty, COUNT(DISTINCT o.id)::int AS orders
+         FROM order_items oi JOIN orders o ON o.id = oi.order_id
+         ${whereSql} AND o.status <> 'cancelled'
+         GROUP BY oi.name, oi.sku ORDER BY qty DESC LIMIT 10`,
+        ...params,
+      ),
+      db.all(
+        `SELECT o.id, o.reference_number, o.client_name, o.marketplace, o.warehouse,
+                o.status, o.total_amount, o.currency, o.manager_id, u.name AS manager_name, o.created_at,
+                (SELECT COUNT(*)::int FROM order_items oi WHERE oi.order_id = o.id) AS items_count
+         FROM orders o LEFT JOIN users u ON u.id = o.manager_id
+         ${whereSql} ORDER BY o.created_at DESC LIMIT 300`,
+        ...params,
+      ),
+      db.all(
+        `SELECT id, name FROM users
+         WHERE active IS NOT FALSE AND role IN ('admin', 'rop', 'manager', 'sales')
+         ${ordIds !== null ? 'AND id = ANY(?)' : ''} ORDER BY name`,
+        ...(ordIds !== null ? [ordIds] : []),
+      ),
+    ]);
+
+    const revenue = summary?.revenue || 0;
+    const ordersCount = summary?.orders || 0;
+    res.json({
+      date,
+      manager_id: managerId,
+      summary: {
+        orders: ordersCount,
+        revenue,
+        avg_check: ordersCount ? revenue / ordersCount : 0,
+        cancelled: summary?.cancelled || 0,
+      },
+      by_status: byStatus,
+      by_marketplace: byMarketplace,
+      by_manager: byManager,
+      top_products: topProducts,
+      orders,
+      managers,
+    });
+  }),
+);
+
 router.get(
   '/recent',
   asyncHandler(async (req, res) => {
