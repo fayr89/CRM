@@ -6950,3 +6950,49 @@ rejected, ни в ответах на push). Повтор без нового с
 `Edit` app.js (импорт + роут) на dev-ветке (`git branch --show-current`
 проверен перед стартом), `git add src/app.js` отдельной командой,
 `grep -n diag src/app.js` пусто перед коммитом.
+
+**2026-07-20 (v466): без изменений — 215-е подряд подтверждение.**
+Designated dev-ветка (`claude/inspiring-cannon-9prsiy`) отсутствовала на
+origin на старте — тот же паттерн v169+. Перед выводами сделал `git fetch
+--unshallow origin` (урок v169) — подтвердил заодно масштаб находки v461:
+после unshallow `git ls-remote` показывает orphan-ветки
+`claude/inspiring-cannon-*` в диапазоне тысячи (не пересчитывал точно,
+не новая информация к уже эскалированной находке). Локальный HEAD после
+unshallow строго совпадал с `origin/claude/build-crm-system-JzCP9`
+(`3cb3c89`, финал v465) — обычная линейная точка, не unrelated-histories.
+Восстановил dev-ветку `git push -u origin claude/inspiring-cannon-9prsiy`
+с локального HEAD. Прод-ветку фетчил отдельной командой (урок v457);
+**отдельная находка в этом цикле**: локальный ref `claude/build-crm-
+system-JzCP9` (в отличие от `origin/...`) не обновился одним `git fetch`
+и после `git checkout` показал «behind by 191 commits» — `git fetch`
+обновляет только remote-tracking ref, локальную ветку перед merge нужно
+явно `git reset --hard origin/claude/build-crm-system-JzCP9`, иначе
+fast-forward отработает от устаревшей точки. Сделал `reset --hard` перед
+`merge --ff-only`, дальше штатно.
+
+Добавил diag-v466 (`op=meta` only, по шаблону v402-465), push dev →
+checkout прод → `reset --hard` на актуальный origin + `merge --ff-only`
+→ push prod — fast-forward прошёл чисто (1 коммит: diag add). `/health`
+200 до первого запроса; первый `op=meta` поймал 404 (алиас не переехал),
+второй (~20с) — 200.
+
+Этап 1 — `proposals_by_status`={done:62}: pending/approved/revision/
+rejected пусты, действовать не по чему. Этап 2 —
+`feedback_by_status`={awaiting_approval:15, closed:44, open:4},
+`proposals_last_update`/`feedback_last_msg`=2026-07-12T10:44:03.911Z /
+2026-07-12T10:45:23.756Z — идентичны v375-465 один в один (включая
+миллисекунды). 215-е подряд подтверждение, 8 дней без изменений.
+
+Push-уведомление не отправлено — v461 уже эскалировал находку про
+масштаб/частоту обходов (~1000+ orphan-веток, обход бежит ~раз в час)
+push-уведомлением сегодня же; решения администратора по-прежнему нет
+(approved/revision/rejected пусты), но повтор без нового сигнала был бы
+спамом. Денежный баг #62 закрыт в v290. Новая находка этого цикла (stale
+локальный ref прод-ветки при `git fetch` без `reset --hard`) — процессная
+заметка для следующих обходов, не требует реакции админа, в push не
+выносил.
+
+Снос diag-v466 выполнен раздельным `git rm src/routes/diagDaily.js` +
+`Edit` app.js (импорт + роут) на dev-ветке (`git branch --show-current`
+проверен перед стартом), `git add src/app.js` отдельной командой,
+`grep -n diag src/app.js` пусто перед коммитом.
