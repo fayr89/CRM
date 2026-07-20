@@ -1746,9 +1746,16 @@ async function openOrderForm(order, onSaved, opts = {}) {
   const classI = el(
     'select',
     {},
+    // Пустой вариант нужен, чтобы для крупного Avito-заказа со скидкой по объёму
+    // менеджер осознанно выбрал B2B/B2C (там значение сбрасывается в пусто).
+    el('option', { value: '' }, '— укажите B2B/B2C —'),
     el('option', { value: 'B2C', selected: defaultClass === 'B2C' }, 'B2C (физлицо)'),
     el('option', { value: 'B2B', selected: defaultClass === 'B2B' }, 'B2B (компания)'),
   );
+  // «Тронута» ли классификация: при редактировании уже классифицированного заказа
+  // считаем, что да (не сбрасываем). Для нового — до явного выбора менеджером false.
+  let classTouched = isEdit && !!cur.client_classification;
+  classI.addEventListener('change', () => { classTouched = true; });
   const clientI = el('input', { type: 'text', value: cur.client_name || '', autocomplete: 'off' });
   const clientPhoneI = el('input', { type: 'tel', value: cur.client_phone || '', placeholder: '+7…', autocomplete: 'off' });
 
@@ -1789,7 +1796,7 @@ async function openOrderForm(order, onSaved, opts = {}) {
           onClick: () => {
             clientI.value = c.client_name || '';
             if (c.client_phone) clientPhoneI.value = c.client_phone;
-            if (c.client_classification) classI.value = c.client_classification;
+            if (c.client_classification) { classI.value = c.client_classification; classTouched = true; }
             hideClientSuggestions();
             // После выбора клиента из истории — мгновенно подтянуть его последние товары.
             if (typeof refreshRecentClientItems === 'function') refreshRecentClientItems();
@@ -2018,6 +2025,14 @@ async function openOrderForm(order, onSaved, opts = {}) {
     // items может быть ещё не инициализирован при первом вызове из itemsEditor — безопасно берём [].
     const safeList = list || (items && items.getItems ? items.getItems() : []);
     const p = computePricing(safeList);
+    // Крупный заказ на Avito со скидкой по объёму → скорее всего B2B: подсвечиваем,
+    // что ФИО и классификация обязательны (клиента заносим в справочник). Пока
+    // классификацию не выбрали осознанно — сбрасываем её в пусто. Enforcement — в onSubmit.
+    const volDiscount = !isB2B && marketI.value === 'Avito' && p.availTierPct < 0;
+    if (volDiscount && !classTouched && classI.value !== '') classI.value = '';
+    else if (!volDiscount && !classTouched && classI.value === '') classI.value = defaultClass;
+    clientI.style.borderColor = (volDiscount && !clientI.value.trim()) ? '#dc2626' : '';
+    classI.style.borderColor = (volDiscount && !classI.value) ? '#dc2626' : '';
     // Сумма транзакции всегда = сумма позиций заказа (read-only), пересчитываем при каждом изменении состава.
     commissionTxnI.value = p.actualTotal || '';
     recalcCommission('txn');
@@ -2081,6 +2096,12 @@ async function openOrderForm(order, onSaved, opts = {}) {
     if (!p.hasRule && !orderTiers.length && paymentMethods.length) {
       pricingPanel.append(
         el('div', { class: 'opp-hint' }, 'Выберите товары из каталога — подставится цена из прайса и посчитается отклонение.'),
+      );
+    }
+    if (volDiscount) {
+      pricingPanel.append(
+        el('div', { class: 'opp-hint', style: { color: '#b45309', fontWeight: 600 } },
+          '🧾 Крупный заказ на Avito со скидкой по объёму — заполните ФИО клиента и классификацию (B2B/B2C) для справочника.'),
       );
     }
   }
@@ -2318,6 +2339,17 @@ async function openOrderForm(order, onSaved, opts = {}) {
         return false;
       }
       const p = computePricing(orderItems);
+      // Крупный заказ на Avito со скидкой по объёму → скорее всего B2B. Требуем ФИО
+      // клиента и явную классификацию (B2B/B2C), чтобы завести его в справочник.
+      if (!isB2B && marketI.value === 'Avito' && p.availTierPct < 0) {
+        if (!clientI.value.trim() || !classI.value) {
+          clientI.style.borderColor = !clientI.value.trim() ? '#dc2626' : '';
+          classI.style.borderColor = !classI.value ? '#dc2626' : '';
+          toast('Крупный заказ на Avito со скидкой по объёму: укажите ФИО клиента и классификацию (B2B/B2C) — для справочника', 'error');
+          if (!clientI.value.trim()) clientI.focus(); else classI.focus();
+          return false;
+        }
+      }
       if (p.hasRule && Math.abs(p.deviation) >= 1) {
         const sign = p.deviation > 0 ? 'выше' : 'ниже';
         const ok = await confirm(

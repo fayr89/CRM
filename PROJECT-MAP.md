@@ -195,6 +195,12 @@
   `commissionTxnI` — **read-only**, синхронизируется в `renderPricingPanel()` из суммы позиций
   заказа (`p.actualTotal`) при каждом изменении состава товаров, вручную не редактируется (fb#35).
   Поле «Проект»: видимо только если `meEmail === 'andrreysirko@gmail.com'`.
+  **Крупный Avito-заказ со скидкой по объёму** (`marketplace==='Avito'` и `computePricing().availTierPct < 0`,
+  т.е. сумма достигла порога объёмной скидки) → ФИО клиента (`client_name`) и классификация
+  (`client_classification`) СТАНОВЯТСЯ обязательными: `renderPricingPanel` сбрасывает классификацию в
+  пусто (пока `classTouched===false`) + красит поля + баннер; `onSubmit` блокирует сохранение, пока не
+  заполнены (цель — занести вероятного B2B в справочник). Enforcement **фронтовый** (гайд для менеджера),
+  бэкенд-валидацию не трогали. У `classI` есть пустой вариант «— укажите B2B/B2C —».
 - `showOrderDetails(order, reload)` — модал с деталями заказа.
 - `openOrderImportModal(onDone, opts)` — модал импорта CSV. `opts.b2b=true` → b2b-шаблон.
 - `itemsEditor(initialItems, opts)` — редактор позиций (поиск, популярные, каталог).
