@@ -839,21 +839,39 @@ router.post('/channel-map/pull-wb', requireOperate, asyncHandler(async (req, res
   if (!acc.api_key_enc) throw BadRequest('У этого канала не задан API-ключ');
   const key = decryptSecret(acc.api_key_enc);
   let items;
-  try { items = await fetchWbCards(key, { limit: 1000 }); }
+  try { items = await fetchWbCards(key, { limit: 100 }); }
   catch (e) { throw BadRequest(e.message); }
-  let n = 0;
+  // Дедуп по ключу конфликта (channel_barcode|channel_sku): иначе при повторе
+  // штрихкода в одном батче Postgres падает «ON CONFLICT cannot affect row twice».
+  // Заодно ужимаем объём. Последняя запись по ключу побеждает.
+  const uniq = new Map();
   for (const it of items) {
     if (!it.channel_barcode && !it.channel_sku) continue;
+    uniq.set(`${it.channel_barcode || ''}|${it.channel_sku || ''}`, it);
+  }
+  const valid = [...uniq.values()];
+  // Батч-вставка чанками — каталог может быть большим (пагинация тянет всё),
+  // построчный upsert рискует упереться в лимит времени функции (60с).
+  let n = 0;
+  const CHUNK = 200;
+  for (let i = 0; i < valid.length; i += CHUNK) {
+    const chunk = valid.slice(i, i + CHUNK);
+    const rowsSql = [];
+    const params = [];
+    for (const it of chunk) {
+      rowsSql.push("('wb', ?, ?, ?, ?::jsonb, ?)");
+      params.push(it.channel_barcode ?? null, it.channel_sku ?? null, it.channel_name ?? null,
+        JSON.stringify(it.channel_extra || {}), channel_account_id);
+    }
     await db.run(
       `INSERT INTO sd_product_channel_map (channel, channel_barcode, channel_sku, channel_name, channel_extra, channel_account_id)
-       VALUES ('wb', ?, ?, ?, ?::jsonb, ?)
+       VALUES ${rowsSql.join(', ')}
        ON CONFLICT (channel, COALESCE(channel_barcode, ''), COALESCE(channel_sku, ''))
        DO UPDATE SET channel_name = EXCLUDED.channel_name, channel_extra = EXCLUDED.channel_extra,
                      channel_account_id = EXCLUDED.channel_account_id, updated_at = NOW()`,
-      it.channel_barcode ?? null, it.channel_sku ?? null, it.channel_name ?? null,
-      JSON.stringify(it.channel_extra || {}), channel_account_id,
+      ...params,
     );
-    n += 1;
+    n += chunk.length;
   }
   res.json({ ok: true, pulled: n, legal_entity: acc.legal_entity });
 }));
