@@ -163,7 +163,7 @@
 | `renderDashboard` | `#/dashboard` | главная: статы + последние события |
 | `renderPipeline` | `#/pipeline` | канбан сделок (drag&drop по этапам) |
 | `renderResource(main, key, opts)` | `#/leads`, `#/contacts`, `#/companies`, `#/deals`, `#/activities`, `#/users` | универсальный CRUD-список ресурса (`RESOURCES[key]` — конфиг) |
-| `renderOrders(main, opts)` | `#/orders` | продажи с площадок. **directMode=false** в коде = «не B2B» |
+| `renderOrders(main, opts)` | `#/orders` | продажи с площадок. **directMode=false** в коде = «не B2B». Канбан («комбайн»): колонка «Ожидает товара» для sales/manager по умолчанию показывает только СВОИ заказы (по `manager_id`), кнопка в шапке «Показать чужие (N)» ⇄ «Только мои»; админ/РОП по умолчанию видят все. Данные уже приходят (бэк отдаёт все `waiting_stock`), фильтр клиентский; чужие карточки помечены 👤 менеджером |
 | `renderDirectOrders` | `#/direct-orders` | B2B-заказы. Прокси `renderOrders(main, {..., directMode: true})` |
 | `renderShipping` | `#/shipping` | график отгрузок для склада. Для admin/warehouse внизу — lazy-loaded «Архив отгрузок» (`api.shippedArchive({shipped_from, shipped_to})`), сгруппированный по `shipped_at`, с фильтром по диапазону дат отгрузки и выгрузкой (Excel/PDF-этикетки) только выделенных строк (или всех по текущему фильтру, если ничего не выделено) — fb#59 |
 | `renderReturns` | `#/returns` | возвраты, обработка складом |

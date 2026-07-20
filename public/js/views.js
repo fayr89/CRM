@@ -2753,6 +2753,12 @@ export async function renderOrders(main, opts = {}) {
   }
 
   let state = { page: 1, status: '', marketplace: '', search: '', date_from: '', date_to: '', view: localStorage.getItem(viewStorageKey) || 'table' };
+  // Канбан, колонка «Ожидает товара»: менеджеру/продажнику по умолчанию показываем
+  // только СВОИ заказы, остальным (админ/РОП) — все. Кнопка в шапке колонки
+  // переключает показ чужих. Флаг живёт на время просмотра страницы.
+  const kanbanToggleRoles = ['sales', 'manager', 'admin', 'rop'].includes(me.role);
+  const kanbanScopedRole = ['sales', 'manager'].includes(me.role);
+  let showOthersWaiting = !kanbanScopedRole;
   const tableArea = el('div');
 
   async function reload() {
@@ -2908,9 +2914,31 @@ export async function renderOrders(main, opts = {}) {
 
     const grid = el('div', { class: 'pipeline orders-kanban' });
     for (const stage of stages) {
-      const stageRows = rows.filter((r) => r.status === stage);
+      let stageRows = rows.filter((r) => r.status === stage);
+      // «Ожидает товара»: скрываем чужие заказы по умолчанию (для менеджера/продажника),
+      // показываем по кнопке. Считаем чужих ДО фильтра — для счётчика на кнопке.
+      let waitingOthers = 0;
+      if (stage === 'waiting_stock' && kanbanToggleRoles) {
+        waitingOthers = stageRows.filter((r) => Number(r.manager_id) !== Number(me.id)).length;
+        if (!showOthersWaiting) stageRows = stageRows.filter((r) => Number(r.manager_id) === Number(me.id));
+      }
       const total = stageRows.reduce((s, r) => s + (r.total_amount || 0), 0);
       const cardsWrap = el('div', { class: 'pipeline-cards' });
+      const header = el(
+        'div',
+        { class: 'pipeline-column-header' },
+        el('span', {}, tr('order_status', stage)),
+        el('span', {}, `${stageRows.length} · ${fmtMoney(total, 'RUB')}`),
+      );
+      if (stage === 'waiting_stock' && kanbanToggleRoles) {
+        const toggleBtn = el('button', {
+          class: 'btn btn-sm',
+          style: { marginLeft: '6px', padding: '2px 8px', fontSize: '12px' },
+          title: 'Показывать заказы других менеджеров в «Ожидает товара»',
+          onClick: (e) => { e.stopPropagation(); showOthersWaiting = !showOthersWaiting; renderOrdersKanban(result); },
+        }, showOthersWaiting ? 'Только мои' : `Показать чужие${waitingOthers ? ` (${waitingOthers})` : ''}`);
+        header.append(toggleBtn);
+      }
       const column = el(
         'div',
         {
@@ -2937,12 +2965,7 @@ export async function renderOrders(main, opts = {}) {
             }
           },
         },
-        el(
-          'div',
-          { class: 'pipeline-column-header' },
-          el('span', {}, tr('order_status', stage)),
-          el('span', {}, `${stageRows.length} · ${fmtMoney(total, 'RUB')}`),
-        ),
+        header,
         cardsWrap,
       );
       if (stageRows.length === 0) {
@@ -3003,6 +3026,10 @@ export async function renderOrders(main, opts = {}) {
                   el('span', { style: { fontSize: '14px', color: 'var(--text-muted)', marginLeft: '6px' } }, '· ' + (r.client_name || 'Клиент')),
                 ),
               ),
+              // Чужой заказ в «Ожидает товара» (когда включён показ чужих) — помечаем менеджером.
+              (stage === 'waiting_stock' && kanbanToggleRoles && Number(r.manager_id) !== Number(me.id))
+                ? el('div', { class: 'meta', style: { color: '#b45309', fontWeight: 600 } }, '👤 ' + (r.manager_name || 'другой менеджер'))
+                : null,
               el(
                 'div',
                 { class: 'meta' },
