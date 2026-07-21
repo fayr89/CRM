@@ -451,6 +451,7 @@ async function loadDeliveryDetail(id) {
          WHERE sp.set_id = st.id
        )), 0) AS packaging_cost,
        COALESCE(SUM(st.packing_time_min * i.quantity), 0) AS labor_minutes,
+       COALESCE(SUM(COALESCE(st.warehouse_reward, 0) * i.quantity), 0) AS reward_total,
        COUNT(*) FILTER (WHERE st.id IS NULL) AS positions_unmapped,
        COUNT(*) AS positions_total
      FROM sd_delivery_supplies ds
@@ -472,8 +473,7 @@ async function loadDeliveryDetail(id) {
     packagingCost: agg?.packaging_cost || 0,
     laborMinutes: agg?.labor_minutes || 0,
     laborRatePerMin: await getLaborRatePerMin(),
-    reward: await getWarehouseReward(),
-    itemStats,
+    rewardTotal: agg?.reward_total || 0,
   });
   finance.positions_unmapped = Number(agg?.positions_unmapped) || 0;
   finance.positions_total = Number(agg?.positions_total) || 0;
@@ -643,6 +643,7 @@ router.put('/product-directory/:productId', requireOperate, asyncHandler(async (
 const setSchema = z.object({
   name: z.string().min(1).max(200),
   article: z.string().max(200).optional().nullable(),
+  warehouse_reward: z.number().nonnegative().optional().nullable(),
   packaging_tariff_id: z.number().int().positive().optional().nullable(),
   packaging_consumption: z.number().nonnegative().optional().default(0),
   packing_time_min: z.number().nonnegative().optional().default(0),
@@ -654,34 +655,51 @@ const setSchema = z.object({
 router.get('/sets', requireOperate, asyncHandler(async (req, res) => {
   await ensureSupplyDeliverySchema();
   const search = (req.query.search || '').toString().trim();
+  const filter = (req.query.filter || 'all').toString();
   const params = [];
   let where = '1=1';
   if (search) { where += ' AND st.name ILIKE ?'; params.push(`%${search}%`); }
-  res.json(await db.all(
+  // Фильтры незаполненных сетов: без вознаграждения склада / без габаритов.
+  if (filter === 'no_reward') where += ' AND (st.warehouse_reward IS NULL OR st.warehouse_reward = 0)';
+  else if (filter === 'no_dims') where += ' AND (st.dim_l IS NULL OR st.dim_w IS NULL OR st.dim_h IS NULL)';
+  const rows = await db.all(
     `SELECT st.*,
             COALESCE(c.cnt, 0) AS component_count,
             COALESCE(pk.cnt, 0) AS packaging_count,
-            pk.summary AS packaging_summary
+            pk.summary AS packaging_summary,
+            COALESCE(pk.cost, 0) AS packaging_cost
      FROM sd_sets st
      LEFT JOIN (SELECT set_id, COUNT(*) AS cnt FROM sd_set_components GROUP BY set_id) c ON c.set_id = st.id
      LEFT JOIN (
-       SELECT sp.set_id, COUNT(*) AS cnt, STRING_AGG(COALESCE(t.name, '—'), ', ' ORDER BY sp.id) AS summary
+       SELECT sp.set_id, COUNT(*) AS cnt,
+              STRING_AGG(COALESCE(t.name, '—'), ', ' ORDER BY sp.id) AS summary,
+              SUM(sp.consumption * COALESCE(t.cost, 0)) AS cost
        FROM sd_set_packaging sp LEFT JOIN sd_packaging_tariffs t ON t.id = sp.packaging_tariff_id
        GROUP BY sp.set_id
      ) pk ON pk.set_id = st.id
      WHERE ${where}
      ORDER BY st.name LIMIT 500`,
     ...params,
-  ));
+  );
+  // Предварительный доход сета = вознаграждение − упаковка − работа (мин × ставка).
+  const rate = await getLaborRatePerMin();
+  for (const r of rows) {
+    const reward = Number(r.warehouse_reward) || 0;
+    const packaging = Number(r.packaging_cost) || 0;
+    const labor = (Number(r.packing_time_min) || 0) * rate;
+    r.labor_cost = labor;
+    r.preliminary_income = reward - packaging - labor;
+  }
+  res.json(rows);
 }));
 
 router.post('/sets', requireOperate, asyncHandler(async (req, res) => {
   await ensureSupplyDeliverySchema();
   const d = setSchema.parse(req.body);
   const row = await db.get(
-    `INSERT INTO sd_sets (name, article, packaging_tariff_id, packaging_consumption, packing_time_min, dim_l, dim_w, dim_h, created_by)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *`,
-    d.name, d.article ?? null, d.packaging_tariff_id ?? null, d.packaging_consumption ?? 0, d.packing_time_min ?? 0,
+    `INSERT INTO sd_sets (name, article, warehouse_reward, packaging_tariff_id, packaging_consumption, packing_time_min, dim_l, dim_w, dim_h, created_by)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *`,
+    d.name, d.article ?? null, d.warehouse_reward ?? null, d.packaging_tariff_id ?? null, d.packaging_consumption ?? 0, d.packing_time_min ?? 0,
     d.dim_l ?? null, d.dim_w ?? null, d.dim_h ?? null, req.user.id,
   );
   res.json(row);
@@ -822,7 +840,10 @@ router.get('/sets/:id', requireOperate, asyncHandler(async (req, res) => {
      WHERE m.set_id = ? ORDER BY m.channel, m.id`,
     req.params.id,
   );
-  res.json({ ...set, components, packaging, channel_links });
+  // Ставка труда (₽/мин) — чтобы в редакторе показать предварительный доход
+  // (вознаграждение − упаковка − время×ставка) и пересчитывать вживую.
+  const laborRate = await getLaborRatePerMin();
+  res.json({ ...set, components, packaging, channel_links, labor_rate_per_min: laborRate });
 }));
 
 router.put('/sets/:id', requireOperate, asyncHandler(async (req, res) => {
@@ -831,9 +852,9 @@ router.put('/sets/:id', requireOperate, asyncHandler(async (req, res) => {
   const cur = await db.get('SELECT id FROM sd_sets WHERE id = ?', req.params.id);
   if (!cur) throw NotFound('Сет не найден');
   const row = await db.get(
-    `UPDATE sd_sets SET name = ?, article = ?, packaging_tariff_id = ?, packaging_consumption = ?, packing_time_min = ?,
+    `UPDATE sd_sets SET name = ?, article = ?, warehouse_reward = ?, packaging_tariff_id = ?, packaging_consumption = ?, packing_time_min = ?,
        dim_l = ?, dim_w = ?, dim_h = ?, updated_at = NOW() WHERE id = ? RETURNING *`,
-    d.name, d.article ?? null, d.packaging_tariff_id ?? null, d.packaging_consumption ?? 0, d.packing_time_min ?? 0,
+    d.name, d.article ?? null, d.warehouse_reward ?? null, d.packaging_tariff_id ?? null, d.packaging_consumption ?? 0, d.packing_time_min ?? 0,
     d.dim_l ?? null, d.dim_w ?? null, d.dim_h ?? null, req.params.id,
   );
   res.json(row);

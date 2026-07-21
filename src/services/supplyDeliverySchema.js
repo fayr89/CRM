@@ -215,6 +215,8 @@ export async function ensureSupplyDeliverySchema() {
   await db.run('ALTER TABLE sd_sets ADD COLUMN IF NOT EXISTS article TEXT');
   await db.run('ALTER TABLE sd_sets ADD COLUMN IF NOT EXISTS ms_bundle_id TEXT');
   await db.run('ALTER TABLE sd_sets ADD COLUMN IF NOT EXISTS ms_synced_at TIMESTAMPTZ');
+  // Вознаграждение склада — теперь на КАЖДОМ сете (свой «тариф»), а не глобально.
+  await db.run('ALTER TABLE sd_sets ADD COLUMN IF NOT EXISTS warehouse_reward REAL');
   await db.run('CREATE UNIQUE INDEX IF NOT EXISTS sd_sets_ms_bundle_id_uidx ON sd_sets (ms_bundle_id) WHERE ms_bundle_id IS NOT NULL');
   // Сопоставление канал-SKU → сет (а не → товар склада).
   await db.run('ALTER TABLE sd_product_channel_map ADD COLUMN IF NOT EXISTS set_id INTEGER');
@@ -257,24 +259,20 @@ export async function setLaborRatePerMin(rate, userId) {
 // доставки × продуктовый справочник (расход упаковки × цена ед.; время × ставка
 // ₽/мин). Себестоимость товара НЕ входит (прибыль склада как обособл. центра).
 // packagingCost и laborMinutes считает вызывающий (SQL по позициям).
-export function computeDeliveryFinance({ delivery, packagingCost, laborMinutes, laborRatePerMin, reward, itemStats }) {
+// rewardTotal — сумма вознаграждений по сетам позиций доставки (Σ set.warehouse_reward
+// × кол-во). Вознаграждение теперь задаётся НА СЕТЕ, а не глобально.
+export function computeDeliveryFinance({ delivery, packagingCost, laborMinutes, laborRatePerMin, rewardTotal }) {
   const packaging_cost = Number(packagingCost) || 0;
   const labor_minutes = Number(laborMinutes) || 0;
   const labor_cost = labor_minutes * (Number(laborRatePerMin) || 0);
   const logistics_cost = Number(delivery?.logistics_cost) || 0;
-  let reward_base = 0;
-  if (reward?.unit === 'per_item') reward_base = itemStats?.total_qty || 0;
-  else if (reward?.unit === 'per_order') reward_base = itemStats?.supply_count || 0;
-  else if (reward?.unit === 'per_hour') reward_base = labor_minutes / 60;
-  const reward_amount = (Number(reward?.amount) || 0) * reward_base;
+  const reward_amount = Number(rewardTotal) || 0;
   const net_profit = reward_amount - (packaging_cost + labor_cost + logistics_cost);
   return {
     packaging_cost: round2(packaging_cost),
     labor_minutes: round2(labor_minutes),
     labor_cost: round2(labor_cost),
     logistics_cost: round2(logistics_cost),
-    reward_unit: reward?.unit || 'per_order',
-    reward_base: round2(reward_base),
     reward_amount: round2(reward_amount),
     net_profit: round2(net_profit),
   };

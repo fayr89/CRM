@@ -12252,7 +12252,8 @@ function sdCollapsible(title, buildFn) {
 function renderSdDirectories() {
   const wrap = el('div', {});
   wrap.append(sdTariffsCard());
-  wrap.append(sdRewardCard());
+  // Вознаграждение склада теперь задаётся НА КАЖДОМ СЕТЕ (Книга сетов), а не глобально —
+  // старый глобальный справочник вознаграждения убран.
   wrap.append(sdThresholdsCard());
   return wrap;
 }
@@ -12701,7 +12702,7 @@ async function sdOpenDelivery(id, onChange) {
       fin.append(el('div', { style: { fontSize: '12px', color: '#dc2626', margin: '4px 0' } },
         `⚠️ ${f.positions_unmapped} из ${f.positions_total} позиций нет в продуктовом справочнике — их упаковка/время считаются как 0. Заполни справочник товара.`));
     }
-    fin.append(line(`Вознаграждение (${SD_REWARD_UNITS[f.reward_unit] || f.reward_unit || '—'}, база ${f.reward_base ?? 0}), ₽`, String(f.reward_amount ?? 0)));
+    fin.append(line('Вознаграждение (Σ по сетам позиций), ₽', String(f.reward_amount ?? 0)));
     const profit = line('ЧИСТАЯ ПРИБЫЛЬ СКЛАДА, ₽', String(f.net_profit ?? 0));
     profit.style.fontSize = '16px';
     profit.style.marginTop = '6px';
@@ -13103,18 +13104,21 @@ function renderSdSetsCard() {
   card.append(el('div', { style: { fontSize: '12px', color: 'var(--text-muted)', marginBottom: '6px' } },
     'Сет = артикул маркетплейса (комбинация артикулов склада) + упаковка/габариты. «Артикул» сета = ключ маппинга с МП (WB=артикул продавца, Ozon=штрихкод, ЯМ=SKU). Канальные SKU сопоставляются с сетом ниже.'));
   const searchI = el('input', { type: 'text', placeholder: 'Поиск сета', style: { width: '220px' } });
+  const filterSel = el('select', {}, el('option', { value: 'all' }, 'Все'),
+    el('option', { value: 'no_reward' }, 'Без вознаграждения'), el('option', { value: 'no_dims' }, 'Без габаритов'));
+  filterSel.addEventListener('change', () => reload());
   const findBtn = el('button', { class: 'btn btn-sm', style: { marginLeft: '6px' }, onClick: () => reload() }, 'Найти');
   searchI.addEventListener('keydown', (e) => { if (e.key === 'Enter') reload(); });
-  card.append(el('div', { style: { marginBottom: '8px' } }, searchI, findBtn));
+  card.append(el('div', { style: { marginBottom: '8px', display: 'flex', gap: '6px', alignItems: 'center', flexWrap: 'wrap' } }, searchI, filterSel, findBtn));
   const tbody = el('tbody', {});
   card.append(el('div', { style: { overflowX: 'auto' } }, el('table', { class: 'table' },
     el('thead', {}, el('tr', {}, el('th', {}, 'Сет'), el('th', {}, 'Артикул'), el('th', {}, 'Состав'), el('th', {}, 'Упаковка'),
-      el('th', {}, 'Время, мин'), el('th', {}, 'Габариты'), el('th', {}, ''))), tbody)));
+      el('th', {}, 'Время, мин'), el('th', {}, 'Габариты'), el('th', {}, 'Доход, ₽'), el('th', {}, ''))), tbody)));
   async function reload() {
     tbody.textContent = '';
     let rows = [];
-    try { rows = await api.sdSets(searchI.value.trim()); } catch (e) { toast(e.message, 'error'); return; }
-    if (!rows.length) { tbody.append(el('tr', {}, el('td', { colspan: '7' }, 'Сетов нет'))); return; }
+    try { rows = await api.sdSets(searchI.value.trim(), filterSel.value); } catch (e) { toast(e.message, 'error'); return; }
+    if (!rows.length) { tbody.append(el('tr', {}, el('td', { colspan: '8' }, 'Сетов нет'))); return; }
     for (const s of rows) {
       const dims = [s.dim_l, s.dim_w, s.dim_h].every((x) => x == null) ? '—' : `${s.dim_l ?? '?'}×${s.dim_w ?? '?'}×${s.dim_h ?? '?'}`;
       const pkg = Number(s.packaging_count) ? `${s.packaging_summary || '?'} (${s.packaging_count})` : '—';
@@ -13131,8 +13135,11 @@ function renderSdSetsCard() {
         try { await api.sdDeleteSet(s.id); reload(); } catch (e) { toast(e.message, 'error'); }
       } }, '🗑');
       const nameCell = el('td', {}, s.name, s.ms_bundle_id ? el('span', { class: 'badge ms-badge', style: { marginLeft: '6px' }, title: 'Связан с МойСклад' }, 'МС') : null);
+      const inc = Number(s.preliminary_income) || 0;
+      const incCell = el('td', { style: { fontWeight: '600', whiteSpace: 'nowrap', color: s.warehouse_reward == null ? 'var(--text-muted)' : (inc >= 0 ? '#16a34a' : '#dc2626') } },
+        s.warehouse_reward == null ? '— (нет вознагр.)' : inc.toFixed(2));
       tbody.append(el('tr', {}, nameCell, el('td', {}, s.article || '—'), el('td', {}, String(s.component_count)), el('td', {}, pkg),
-        el('td', {}, String(s.packing_time_min ?? 0)), el('td', {}, dims), el('td', {}, edit, pushMs, del)));
+        el('td', {}, String(s.packing_time_min ?? 0)), el('td', {}, dims), incCell, el('td', {}, edit, pushMs, del)));
     }
   }
   reload();
@@ -13191,6 +13198,7 @@ async function sdEditSet(setRow, onSaved) {
   if (setRow) { try { full = await api.sdSet(setRow.id); } catch { full = setRow; } }
   const nameI = el('input', { type: 'text', value: full?.name || '' });
   const articleI = el('input', { type: 'text', value: full?.article || '', placeholder: 'артикул сета (ключ маппинга с МП)' });
+  const rewardI = el('input', { type: 'number', min: '0', step: 'any', value: full?.warehouse_reward ?? '', placeholder: '₽ за сет' });
   const timeI = el('input', { type: 'number', min: '0', step: 'any', value: full?.packing_time_min ?? 0 });
   const lI = el('input', { type: 'number', min: '0', step: 'any', value: full?.dim_l ?? '', style: { width: '70px' } });
   const wI = el('input', { type: 'number', min: '0', step: 'any', value: full?.dim_w ?? '', style: { width: '70px' } });
@@ -13199,9 +13207,35 @@ async function sdEditSet(setRow, onSaved) {
     el('div', { class: 'form-row' }, el('label', {}, 'Название сета (= артикул МП)'), nameI),
     el('div', { class: 'form-row' }, el('label', {}, 'Артикул сета (WB=артикул продавца, Ozon=штрихкод, ЯМ=SKU)'), articleI),
     full?.ms_bundle_id ? el('div', { style: { fontSize: '12px', color: 'var(--text-muted)', marginBottom: '4px' } }, '🔗 Из МойСклад — состав синхронизируется при «Подтянуть из МС».') : null,
+    el('div', { class: 'form-row' }, el('label', {}, 'Вознаграждение склада, ₽ (за сет)'), rewardI),
     el('div', { class: 'form-row' }, el('label', {}, 'Время упаковки, мин'), timeI),
     el('div', { class: 'form-row' }, el('label', {}, 'Габариты Д×Ш×В'), el('div', { style: { display: 'flex', gap: '6px' } }, lI, wI, hI)));
   if (full && full.id) {
+    // ----- Предварительный доход = вознаграждение − упаковка(вся) − работа(мин×ставка) -----
+    const laborRate = Number(full.labor_rate_per_min) || 0;
+    const incomeBox = el('div', { style: { marginTop: '8px', padding: '8px', borderRadius: '6px', border: '1px solid var(--border, #e5e7eb)', fontSize: '13px' } });
+    function packagingCost() {
+      return (full.packaging || []).reduce((s, p) => s + (Number(p.consumption) || 0) * (Number(p.tariff_cost) || 0), 0);
+    }
+    function recalcIncome() {
+      const reward = Number(rewardI.value) || 0;
+      const pk = packagingCost();
+      const mins = Number(timeI.value) || 0;
+      const labor = mins * laborRate;
+      const income = reward - pk - labor;
+      incomeBox.textContent = '';
+      incomeBox.append(
+        el('div', { style: { fontWeight: '600', marginBottom: '2px' } }, 'Предварительный доход сета'),
+        el('div', {}, `Вознаграждение: ${reward.toFixed(2)} ₽`),
+        el('div', {}, `− Упаковка (вся): ${pk.toFixed(2)} ₽`),
+        el('div', {}, `− Работа: ${mins} мин × ${laborRate} ₽/мин = ${labor.toFixed(2)} ₽`),
+        el('div', { style: { fontWeight: '700', marginTop: '4px', color: income >= 0 ? '#16a34a' : '#dc2626' } }, `= Доход: ${income.toFixed(2)} ₽`),
+      );
+    }
+    rewardI.addEventListener('input', recalcIncome);
+    timeI.addEventListener('input', recalcIncome);
+    body.append(incomeBox);
+
     // ----- Упаковка сета: несколько типов (стретч-плёнка + коробка + …) -----
     const packBox = el('div', { style: { marginTop: '10px' } });
     packBox.append(el('div', { style: { fontWeight: '600', marginBottom: '4px' } }, 'Упаковка (можно несколько типов):'));
@@ -13220,6 +13254,7 @@ async function sdEditSet(setRow, onSaved) {
           el('span', {}, `${p.tariff_name || '—'} · ${p.consumption} ${unit} × ${cost}₽ = ${lineCost.toFixed(2)}₽`), del));
       }
       if (!(full.packaging || []).length) packList.append(el('div', { style: { color: 'var(--text-muted)' } }, 'Упаковка не задана'));
+      recalcIncome();
     }
     renderPack();
     packBox.append(el('button', { class: 'btn btn-sm', style: { marginTop: '6px' }, onClick: () => sdAddSetPackagingModal(full.id, tariffs, async () => {
@@ -13279,6 +13314,7 @@ async function sdEditSet(setRow, onSaved) {
     const payload = {
       name: nameI.value.trim(),
       article: articleI.value.trim() || null,
+      warehouse_reward: rewardI.value !== '' ? Number(rewardI.value) : null,
       packing_time_min: Number(timeI.value) || 0,
       dim_l: lI.value !== '' ? Number(lI.value) : null,
       dim_w: wI.value !== '' ? Number(wI.value) : null,
