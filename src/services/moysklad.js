@@ -145,6 +145,44 @@ export async function fetchMoyskladProducts(token) {
   return [...products, ...variants];
 }
 
+// Комплекты (bundle) из МойСклад = «сеты». Тянем список (с папкой), для каждого —
+// состав (components). folderName — фильтр по названию папки (напр. «Комплект RUS»).
+// Компонент ссылается на assortment (товар/модификация) — берём его UUID (= external_id
+// товара в CRM) и количество.
+export async function fetchMoyskladBundles(token, { folderName } = {}) {
+  const headers = authHeader(token);
+  const rows = await fetchAll('/entity/bundle?expand=productFolder', token, 100);
+  let bundles = rows;
+  if (folderName) {
+    const fn = folderName.toLowerCase();
+    bundles = rows.filter((b) =>
+      (b.productFolder?.name || '').toLowerCase().includes(fn) ||
+      (b.pathName || '').toLowerCase().includes(fn));
+  }
+  const out = [];
+  for (const b of bundles) {
+    let components = [];
+    try {
+      const res = await msFetch(`${BASE}/entity/bundle/${b.id}/components?limit=1000`, headers);
+      if (res.ok) { const d = await res.json(); components = d.rows || []; }
+    } catch {
+      // состав не критичен — сет заведём без него, менеджер дозаполнит
+    }
+    out.push({
+      externalId: b.id,
+      name: b.name || null,
+      article: b.article || b.code || null,
+      folder: b.productFolder?.name || b.pathName || null,
+      components: components.map((c) => ({
+        assortmentId: extractUuid(c.assortment?.meta?.href),
+        assortmentType: c.assortment?.meta?.type || null,
+        quantity: Number(c.quantity) || 1,
+      })).filter((c) => c.assortmentId),
+    });
+  }
+  return out;
+}
+
 export async function fetchMoyskladStock(token) {
   const rows = await fetchAll('/report/stock/all', token);
   const byId = new Map();

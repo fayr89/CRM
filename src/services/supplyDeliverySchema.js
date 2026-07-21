@@ -210,6 +210,12 @@ export async function ensureSupplyDeliverySchema() {
      FROM sd_sets WHERE packaging_tariff_id IS NOT NULL AND packaging_migrated IS NOT TRUE`,
   );
   await db.run('UPDATE sd_sets SET packaging_migrated = TRUE WHERE packaging_migrated IS NOT TRUE');
+  // Артикул сета = ключ маппинга с артикулом маркетплейса (WB=артикул продавца,
+  // Ozon=штрихкод, ЯМ=SKU). ms_bundle_id — UUID комплекта в МойСклад (для синка).
+  await db.run('ALTER TABLE sd_sets ADD COLUMN IF NOT EXISTS article TEXT');
+  await db.run('ALTER TABLE sd_sets ADD COLUMN IF NOT EXISTS ms_bundle_id TEXT');
+  await db.run('ALTER TABLE sd_sets ADD COLUMN IF NOT EXISTS ms_synced_at TIMESTAMPTZ');
+  await db.run('CREATE UNIQUE INDEX IF NOT EXISTS sd_sets_ms_bundle_id_uidx ON sd_sets (ms_bundle_id) WHERE ms_bundle_id IS NOT NULL');
   // Сопоставление канал-SKU → сет (а не → товар склада).
   await db.run('ALTER TABLE sd_product_channel_map ADD COLUMN IF NOT EXISTS set_id INTEGER');
   // Из какого канал-аккаунта (юрлица/ключа) подтянута номенклатура — чтобы

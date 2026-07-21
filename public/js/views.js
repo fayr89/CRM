@@ -12869,14 +12869,18 @@ function renderSdChannelMapCard(isAdmin) {
   const importBtn = el('button', { class: 'btn btn-sm', onClick: () => sdImportChannelModal(chanSel.value, reload) }, 'Импорт');
   const autoBtn = el('button', { class: 'btn btn-sm', onClick: async () => {
     try { const r = await api.sdAutoMatchChannel(chanSel.value); toast(`Сопоставлено: ${r.matched}`, 'success'); reload(); } catch (e) { toast(e.message, 'error'); }
-  } }, 'Авто-сопоставить');
+  } }, 'Авто (по SKU склада)');
+  // Авто-сопоставление по артикулу СЕТА: WB — артикул продавца, Ozon — штрихкод, ЯМ — SKU.
+  const autoArtBtn = el('button', { class: 'btn btn-sm', title: 'Сопоставить по артикулу сета (WB=артикул продавца, Ozon=штрихкод, ЯМ=SKU)', onClick: async () => {
+    try { const r = await api.sdAutoMatchArticle(chanSel.value); toast(`Сопоставлено по артикулу сета: ${r.matched}`, 'success'); reload(); } catch (e) { toast(e.message, 'error'); }
+  } }, 'Авто по артикулу сета');
   // Массово скрыть уже сопоставленные — чтобы в списке осталось только то, что ещё нужно связать.
   const hideMatchedBtn = el('button', { class: 'btn btn-sm', title: 'Скрыть из списка все сопоставленные строки этого канала', onClick: async () => {
     if (!(await confirm('Скрыть все сопоставленные строки этого канала из рабочего списка? Их можно вернуть фильтром «Скрытые».'))) return;
     try { const r = await api.sdHideMatchedChannel(chanSel.value); toast(`Скрыто: ${r.hidden}`, 'success'); reload(); } catch (e) { toast(e.message, 'error'); }
   } }, 'Скрыть сопоставленные');
   const controls = el('div', { style: { marginBottom: '8px', display: 'flex', gap: '6px', alignItems: 'center', flexWrap: 'wrap' } },
-    chanSel, statusSel, accSel, visSel, searchI, findBtn, importBtn, autoBtn, hideMatchedBtn);
+    chanSel, statusSel, accSel, visSel, searchI, findBtn, importBtn, autoBtn, autoArtBtn, hideMatchedBtn);
   // Подтяжка из WB: по ВЫБРАННОМУ юрлицу, а при «Все юрлица» — по всем WB-каналам
   // с ключом (раньше бралось только первое юрлицо — это и был баг). Действие
   // админское (пишет много строк + ходит во внешний API), фильтр — для всех.
@@ -13070,24 +13074,26 @@ function sdShowWbBarcode(b) {
 // ---- Книга сетов ----
 function renderSdSetsCard() {
   const card = el('div', { class: 'card', style: { marginBottom: '12px' } });
-  card.append(el('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center' } },
+  card.append(el('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '6px', flexWrap: 'wrap' } },
     el('h4', {}, 'Книга сетов (артикул маркетплейса + упаковка)'),
-    el('button', { class: 'btn btn-sm btn-primary', onClick: () => sdEditSet(null, reload) }, '+ Сет')));
+    el('div', { style: { display: 'flex', gap: '6px' } },
+      el('button', { class: 'btn btn-sm', onClick: () => sdPullMsSetsModal(reload) }, 'Подтянуть из МС'),
+      el('button', { class: 'btn btn-sm btn-primary', onClick: () => sdEditSet(null, reload) }, '+ Сет'))));
   card.append(el('div', { style: { fontSize: '12px', color: 'var(--text-muted)', marginBottom: '6px' } },
-    'Сет = артикул маркетплейса (комбинация артикулов склада) + упаковка/габариты. Канальные SKU сопоставляются с сетом ниже.'));
+    'Сет = артикул маркетплейса (комбинация артикулов склада) + упаковка/габариты. «Артикул» сета = ключ маппинга с МП (WB=артикул продавца, Ozon=штрихкод, ЯМ=SKU). Канальные SKU сопоставляются с сетом ниже.'));
   const searchI = el('input', { type: 'text', placeholder: 'Поиск сета', style: { width: '220px' } });
   const findBtn = el('button', { class: 'btn btn-sm', style: { marginLeft: '6px' }, onClick: () => reload() }, 'Найти');
   searchI.addEventListener('keydown', (e) => { if (e.key === 'Enter') reload(); });
   card.append(el('div', { style: { marginBottom: '8px' } }, searchI, findBtn));
   const tbody = el('tbody', {});
-  card.append(el('table', { class: 'table' },
-    el('thead', {}, el('tr', {}, el('th', {}, 'Сет'), el('th', {}, 'Состав'), el('th', {}, 'Упаковка'),
-      el('th', {}, 'Время, мин'), el('th', {}, 'Габариты'), el('th', {}, ''))), tbody));
+  card.append(el('div', { style: { overflowX: 'auto' } }, el('table', { class: 'table' },
+    el('thead', {}, el('tr', {}, el('th', {}, 'Сет'), el('th', {}, 'Артикул'), el('th', {}, 'Состав'), el('th', {}, 'Упаковка'),
+      el('th', {}, 'Время, мин'), el('th', {}, 'Габариты'), el('th', {}, ''))), tbody)));
   async function reload() {
     tbody.textContent = '';
     let rows = [];
     try { rows = await api.sdSets(searchI.value.trim()); } catch (e) { toast(e.message, 'error'); return; }
-    if (!rows.length) { tbody.append(el('tr', {}, el('td', { colspan: '6' }, 'Сетов нет'))); return; }
+    if (!rows.length) { tbody.append(el('tr', {}, el('td', { colspan: '7' }, 'Сетов нет'))); return; }
     for (const s of rows) {
       const dims = [s.dim_l, s.dim_w, s.dim_h].every((x) => x == null) ? '—' : `${s.dim_l ?? '?'}×${s.dim_w ?? '?'}×${s.dim_h ?? '?'}`;
       const pkg = Number(s.packaging_count) ? `${s.packaging_summary || '?'} (${s.packaging_count})` : '—';
@@ -13096,7 +13102,8 @@ function renderSdSetsCard() {
         if (!(await confirm(`Удалить сет «${s.name}»?`))) return;
         try { await api.sdDeleteSet(s.id); reload(); } catch (e) { toast(e.message, 'error'); }
       } }, '🗑');
-      tbody.append(el('tr', {}, el('td', {}, s.name), el('td', {}, String(s.component_count)), el('td', {}, pkg),
+      const nameCell = el('td', {}, s.name, s.ms_bundle_id ? el('span', { class: 'badge ms-badge', style: { marginLeft: '6px' }, title: 'Из МойСклад' }, 'МС') : null);
+      tbody.append(el('tr', {}, nameCell, el('td', {}, s.article || '—'), el('td', {}, String(s.component_count)), el('td', {}, pkg),
         el('td', {}, String(s.packing_time_min ?? 0)), el('td', {}, dims), el('td', {}, edit, del)));
     }
   }
@@ -13104,17 +13111,38 @@ function renderSdSetsCard() {
   return card;
 }
 
+// Подтянуть сеты (комплекты) из МойСклад из указанной папки. Read-only из МС.
+async function sdPullMsSetsModal(onDone) {
+  const folderI = el('input', { type: 'text', value: 'Комплект RUS', style: { width: '100%' } });
+  const body = el('div', {},
+    el('div', { class: 'form-row' }, el('label', {}, 'Папка комплектов в МойСклад'), folderI),
+    el('div', { style: { fontSize: '12px', color: 'var(--text-muted)', marginTop: '4px' } },
+      'Подтянет комплекты (сеты) из этой папки МойСклад: название + артикул + состав (компоненты сопоставятся с товарами каталога по МойСклад-id). В МойСклад ничего не пишется.'));
+  await openModal('Подтянуть сеты из МойСклад', body, { primaryLabel: 'Подтянуть', onSubmit: async () => {
+    try {
+      const r = await api.sdPullMsSets(folderI.value.trim() || 'Комплект RUS');
+      let msg = `Комплектов: ${r.bundles} (новых ${r.created}, обновлено ${r.updated}). Компонентов связано ${r.components_mapped}`;
+      if (r.components_unmapped) msg += `; не найдено в каталоге ${r.components_unmapped} (импортируй товары из МойСклад)`;
+      toast(msg, r.components_unmapped ? 'error' : 'success');
+      onDone?.();
+    } catch (e) { toast(e.message, 'error'); return false; }
+  } });
+}
+
 async function sdEditSet(setRow, onSaved) {
   const tariffs = await api.sdTariffs().catch(() => []);
   let full = setRow;
   if (setRow) { try { full = await api.sdSet(setRow.id); } catch { full = setRow; } }
   const nameI = el('input', { type: 'text', value: full?.name || '' });
+  const articleI = el('input', { type: 'text', value: full?.article || '', placeholder: 'артикул сета (ключ маппинга с МП)' });
   const timeI = el('input', { type: 'number', min: '0', step: 'any', value: full?.packing_time_min ?? 0 });
   const lI = el('input', { type: 'number', min: '0', step: 'any', value: full?.dim_l ?? '', style: { width: '70px' } });
   const wI = el('input', { type: 'number', min: '0', step: 'any', value: full?.dim_w ?? '', style: { width: '70px' } });
   const hI = el('input', { type: 'number', min: '0', step: 'any', value: full?.dim_h ?? '', style: { width: '70px' } });
   const body = el('div', {},
     el('div', { class: 'form-row' }, el('label', {}, 'Название сета (= артикул МП)'), nameI),
+    el('div', { class: 'form-row' }, el('label', {}, 'Артикул сета (WB=артикул продавца, Ozon=штрихкод, ЯМ=SKU)'), articleI),
+    full?.ms_bundle_id ? el('div', { style: { fontSize: '12px', color: 'var(--text-muted)', marginBottom: '4px' } }, '🔗 Из МойСклад — состав синхронизируется при «Подтянуть из МС».') : null,
     el('div', { class: 'form-row' }, el('label', {}, 'Время упаковки, мин'), timeI),
     el('div', { class: 'form-row' }, el('label', {}, 'Габариты Д×Ш×В'), el('div', { style: { display: 'flex', gap: '6px' } }, lI, wI, hI)));
   if (full && full.id) {
@@ -13194,6 +13222,7 @@ async function sdEditSet(setRow, onSaved) {
   await openModal(setRow ? 'Изменить сет' : 'Новый сет', body, { primaryLabel: 'Сохранить', onSubmit: async () => {
     const payload = {
       name: nameI.value.trim(),
+      article: articleI.value.trim() || null,
       packing_time_min: Number(timeI.value) || 0,
       dim_l: lI.value !== '' ? Number(lI.value) : null,
       dim_w: wI.value !== '' ? Number(wI.value) : null,

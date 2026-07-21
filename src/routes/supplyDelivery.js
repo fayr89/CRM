@@ -23,6 +23,8 @@ import {
   fetchWbCards, wbNewOrders, wbCreateSupply, wbAddOrderToSupply,
   wbSupplyBarcode, wbDeliverSupply, wbReshipmentOrders,
 } from '../services/channelApis.js';
+import { fetchMoyskladBundles } from '../services/moysklad.js';
+import { getMoyskladToken } from '../services/ms-jobs.js';
 
 const router = Router();
 router.use(authenticate);
@@ -640,6 +642,7 @@ router.put('/product-directory/:productId', requireOperate, asyncHandler(async (
 // ----- Книга сетов (артикул маркетплейса = комбинация артикулов склада) -----
 const setSchema = z.object({
   name: z.string().min(1).max(200),
+  article: z.string().max(200).optional().nullable(),
   packaging_tariff_id: z.number().int().positive().optional().nullable(),
   packaging_consumption: z.number().nonnegative().optional().default(0),
   packing_time_min: z.number().nonnegative().optional().default(0),
@@ -676,12 +679,59 @@ router.post('/sets', requireOperate, asyncHandler(async (req, res) => {
   await ensureSupplyDeliverySchema();
   const d = setSchema.parse(req.body);
   const row = await db.get(
-    `INSERT INTO sd_sets (name, packaging_tariff_id, packaging_consumption, packing_time_min, dim_l, dim_w, dim_h, created_by)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING *`,
-    d.name, d.packaging_tariff_id ?? null, d.packaging_consumption ?? 0, d.packing_time_min ?? 0,
+    `INSERT INTO sd_sets (name, article, packaging_tariff_id, packaging_consumption, packing_time_min, dim_l, dim_w, dim_h, created_by)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *`,
+    d.name, d.article ?? null, d.packaging_tariff_id ?? null, d.packaging_consumption ?? 0, d.packing_time_min ?? 0,
     d.dim_l ?? null, d.dim_w ?? null, d.dim_h ?? null, req.user.id,
   );
   res.json(row);
+}));
+
+// Подтянуть сеты из МойСклад: комплекты (bundle) из папки (по умолч. «Комплект RUS»)
+// → sd_sets (name + article + ms_bundle_id) + состав (компоненты → товары CRM по
+// external_id). ЧТЕНИЕ из МС (в МС ничего не пишем). Идемпотентно по ms_bundle_id.
+router.post('/sets/pull-ms', requireOperate, asyncHandler(async (req, res) => {
+  await ensureSupplyDeliverySchema();
+  const token = await getMoyskladToken();
+  if (!token) throw BadRequest('Не задан токен МойСклад (Настройки → Интеграция)');
+  const folder = (req.body?.folder ?? 'Комплект RUS').toString().trim() || null;
+  let bundles;
+  try { bundles = await fetchMoyskladBundles(token, { folderName: folder }); }
+  catch (e) { throw BadRequest('МойСклад: ' + e.message); }
+  let created = 0; let updated = 0; let compMapped = 0; let compUnmapped = 0;
+  for (const b of bundles) {
+    let set = await db.get('SELECT id FROM sd_sets WHERE ms_bundle_id = ?', b.externalId);
+    if (set) {
+      await db.run(
+        'UPDATE sd_sets SET name = ?, article = COALESCE(?, article), ms_synced_at = NOW(), updated_at = NOW() WHERE id = ?',
+        b.name || 'Комплект', b.article, set.id,
+      );
+      updated += 1;
+    } else {
+      set = await db.get(
+        `INSERT INTO sd_sets (name, article, ms_bundle_id, ms_synced_at, created_by)
+         VALUES (?, ?, ?, NOW(), ?) RETURNING id`,
+        b.name || 'Комплект', b.article, b.externalId, req.user.id,
+      );
+      created += 1;
+    }
+    // Состав из МС — источник истины для МС-сетов: пересобираем компоненты.
+    await db.run('DELETE FROM sd_set_components WHERE set_id = ?', set.id);
+    for (const c of b.components) {
+      const prod = await db.get(
+        "SELECT id FROM products WHERE external_source = 'moysklad' AND external_id = ?",
+        c.assortmentId,
+      );
+      if (prod) {
+        await db.run('INSERT INTO sd_set_components (set_id, product_id, quantity) VALUES (?, ?, ?)', set.id, prod.id, c.quantity);
+        compMapped += 1;
+      } else {
+        compUnmapped += 1;
+      }
+    }
+  }
+  await logAction(req, { action: 'supply_delivery.sets.pull_ms', entity_type: 'sd_set', details: { bundles: bundles.length, created, updated } });
+  res.json({ ok: true, bundles: bundles.length, created, updated, components_mapped: compMapped, components_unmapped: compUnmapped });
 }));
 
 router.get('/sets/:id', requireOperate, asyncHandler(async (req, res) => {
@@ -719,9 +769,9 @@ router.put('/sets/:id', requireOperate, asyncHandler(async (req, res) => {
   const cur = await db.get('SELECT id FROM sd_sets WHERE id = ?', req.params.id);
   if (!cur) throw NotFound('Сет не найден');
   const row = await db.get(
-    `UPDATE sd_sets SET name = ?, packaging_tariff_id = ?, packaging_consumption = ?, packing_time_min = ?,
+    `UPDATE sd_sets SET name = ?, article = ?, packaging_tariff_id = ?, packaging_consumption = ?, packing_time_min = ?,
        dim_l = ?, dim_w = ?, dim_h = ?, updated_at = NOW() WHERE id = ? RETURNING *`,
-    d.name, d.packaging_tariff_id ?? null, d.packaging_consumption ?? 0, d.packing_time_min ?? 0,
+    d.name, d.article ?? null, d.packaging_tariff_id ?? null, d.packaging_consumption ?? 0, d.packing_time_min ?? 0,
     d.dim_l ?? null, d.dim_w ?? null, d.dim_h ?? null, req.params.id,
   );
   res.json(row);
@@ -946,6 +996,25 @@ router.post('/channel-map/auto-match', requireOperate, asyncHandler(async (req, 
     channel,
   );
   res.json({ ok: true, matched: r.changes || 0 });
+}));
+
+// Авто-сопоставление по АРТИКУЛУ СЕТА. Поле артикула канала, равное артикулу сета,
+// зависит от площадки: WB — артикул продавца (channel_sku), Ozon — штрихкод
+// (channel_barcode), ЯМ — SKU (channel_sku). field — из фиксированного списка (не инъекция).
+router.post('/channel-map/auto-match-article', requireOperate, asyncHandler(async (req, res) => {
+  await ensureSupplyDeliverySchema();
+  const { channel } = z.object({ channel: z.enum(['wb', 'ozon', 'ym', 'avito']) }).parse(req.body);
+  const field = channel === 'ozon' ? 'channel_barcode' : 'channel_sku';
+  const r = await db.run(
+    `UPDATE sd_product_channel_map m
+     SET set_id = st.id, matched_at = NOW(), updated_at = NOW()
+     FROM sd_sets st
+     WHERE m.channel = ? AND m.set_id IS NULL
+       AND st.article IS NOT NULL AND st.article <> ''
+       AND m.${field} = st.article`,
+    channel,
+  );
+  res.json({ ok: true, matched: r.changes || 0, field });
 }));
 
 router.put('/channel-map/:id/match', requireOperate, asyncHandler(async (req, res) => {
