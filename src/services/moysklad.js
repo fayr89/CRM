@@ -145,40 +145,51 @@ export async function fetchMoyskladProducts(token) {
   return [...products, ...variants];
 }
 
-// Комплекты (bundle) из МойСклад = «сеты». Тянем список (с папкой), для каждого —
-// состав (components). folderName — фильтр по названию папки (напр. «Комплект RUS»).
-// Компонент ссылается на assortment (товар/модификация) — берём его UUID (= external_id
-// товара в CRM) и количество.
+// Комплекты (bundle) из МойСклад = «сеты». folderName — папка (напр. «Комплект RUS»):
+// фильтруем по ней НА СТОРОНЕ МС (иначе тянем весь аккаунт → таймаут функции). Состав
+// каждого комплекта тянем с ограниченной параллельностью (последовательный N+1 = таймаут).
 export async function fetchMoyskladBundles(token, { folderName } = {}) {
   const headers = authHeader(token);
-  const rows = await fetchAll('/entity/bundle?expand=productFolder', token, 100);
-  let bundles = rows;
+  let folderHref = null;
   if (folderName) {
+    const folders = await fetchAll('/entity/productfolder', token, 100);
     const fn = folderName.toLowerCase();
-    bundles = rows.filter((b) =>
-      (b.productFolder?.name || '').toLowerCase().includes(fn) ||
-      (b.pathName || '').toLowerCase().includes(fn));
-  }
-  const out = [];
-  for (const b of bundles) {
-    let components = [];
-    try {
-      const res = await msFetch(`${BASE}/entity/bundle/${b.id}/components?limit=1000`, headers);
-      if (res.ok) { const d = await res.json(); components = d.rows || []; }
-    } catch {
-      // состав не критичен — сет заведём без него, менеджер дозаполнит
+    const folder = folders.find((f) => (f.name || '').toLowerCase() === fn)
+      || folders.find((f) => (f.name || '').toLowerCase().includes(fn));
+    if (!folder?.meta?.href) {
+      throw new Error(`Папка «${folderName}» не найдена в МойСклад. Проверьте название (Товары → Товары и услуги).`);
     }
-    out.push({
-      externalId: b.id,
-      name: b.name || null,
-      article: b.article || b.code || null,
-      folder: b.productFolder?.name || b.pathName || null,
-      components: components.map((c) => ({
-        assortmentId: extractUuid(c.assortment?.meta?.href),
-        assortmentType: c.assortment?.meta?.type || null,
-        quantity: Number(c.quantity) || 1,
-      })).filter((c) => c.assortmentId),
-    });
+    folderHref = folder.meta.href;
+  }
+  const listEndpoint = folderHref ? `/entity/bundle?filter=productFolder=${folderHref}` : '/entity/bundle';
+  const rows = await fetchAll(listEndpoint, token, 100);
+  const out = rows.map((b) => ({
+    externalId: b.id,
+    name: b.name || null,
+    article: b.article || b.code || null,
+    folder: b.pathName || null,
+    components: [],
+  }));
+  const CONCURRENCY = 5;
+  for (let i = 0; i < rows.length; i += CONCURRENCY) {
+    const slice = rows.slice(i, i + CONCURRENCY);
+    await Promise.all(slice.map(async (b, j) => {
+      try {
+        const res = await msFetch(`${BASE}/entity/bundle/${b.id}/components?limit=1000`, headers);
+        if (res.ok) {
+          const d = await res.json();
+          out[i + j].components = (d.rows || []).map((c) => ({
+            assortmentId: extractUuid(c.assortment?.meta?.href),
+            assortmentType: c.assortment?.meta?.type || null,
+            quantity: Number(c.quantity) || 1,
+          })).filter((c) => c.assortmentId);
+        } else {
+          await res.text().catch(() => {});
+        }
+      } catch {
+        // состав не критичен — сет заведём без него
+      }
+    }));
   }
   return out;
 }

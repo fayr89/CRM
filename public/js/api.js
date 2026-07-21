@@ -36,7 +36,20 @@ async function request(method, path, { body, query } = {}) {
     body: body ? JSON.stringify(body) : undefined,
   });
   const text = await res.text();
-  const data = text ? JSON.parse(text) : null;
+  let data = null;
+  try {
+    data = text ? JSON.parse(text) : null;
+  } catch {
+    // Тело — не JSON (обычно HTML-страница ошибки/таймаута Vercel). Даём понятную
+    // ошибку вместо «Unexpected token '<'».
+    const err = new Error(
+      res.status === 504 || res.status === 502
+        ? `Операция не уложилась в лимит времени (HTTP ${res.status}). Попробуйте сузить объём.`
+        : `Сервер вернул не-JSON ответ (HTTP ${res.status}).`,
+    );
+    err.status = res.status;
+    throw err;
+  }
   if (!res.ok) {
     const err = new Error(data?.error || `HTTP ${res.status}`);
     err.status = res.status;
