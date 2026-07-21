@@ -13131,24 +13131,32 @@ async function sdPullMsSetsModal(onDone) {
     status);
   await openModal('Подтянуть сеты из МойСклад', body, { primaryLabel: 'Подтянуть', onSubmit: async () => {
     const folder = folderI.value.trim() || 'Комплект RUS';
-    let offset = 0; let hasMore = true; let guard = 0;
-    let created = 0; let updated = 0; let compMapped = 0; let compUnmapped = 0; let matched = 0; let example = null;
+    let offset = 0; let hasMore = true; let guard = 0; let folderHref = null;
+    let created = 0; let updated = 0; let compMapped = 0; let compUnmapped = 0; let matched = 0;
     try {
       while (hasMore && guard < 500) {
         guard += 1;
-        const r = await api.sdPullMsSets(folder, offset);
+        const r = await api.sdPullMsSets(folder, offset, folderHref);
+        folderHref = folderHref || r.folder_href;
         created += r.created || 0; updated += r.updated || 0;
         compMapped += r.components_mapped || 0; compUnmapped += r.components_unmapped || 0;
         matched += r.matched || 0;
-        example = example || r.first_path_example;
         hasMore = r.has_more; offset = r.next_offset;
-        status.textContent = `Просмотрено ~${offset} комплектов аккаунта · найдено в папке: ${matched} (новых ${created}, обновлено ${updated})…`;
+        status.textContent = `Обработано ~${offset} позиций папки · сетов: ${matched} (новых ${created}, обновлено ${updated})…`;
       }
       if (!matched) {
-        toast(`В папке «${folder}» комплектов не найдено.${example ? ` Пример пути в аккаунте: «${example}» — впишите точное имя папки.` : ''}`, 'error');
+        toast(`В папке «${folder}» комплектов (bundle) не найдено. Проверьте, что сеты — именно комплекты и лежат в этой папке.`, 'error');
         return false;
       }
+      // Сеты пришли с артикулами — сразу сопоставляем номенклатуру каналов по артикулу
+      // сета: WB = артикул продавца, Ozon = штрихкод, ЯМ = SKU.
+      status.textContent = 'Сопоставляю каналы по артикулу сета…';
+      let autoMatched = 0;
+      for (const ch of ['wb', 'ozon', 'ym']) {
+        try { const a = await api.sdAutoMatchArticle(ch); autoMatched += a.matched || 0; } catch { /* канал мог быть пуст */ }
+      }
       let msg = `Сеты из МС: найдено ${matched} (новых ${created}, обновлено ${updated}). Компонентов связано ${compMapped}`;
+      if (autoMatched) msg += `. Сопоставлено с каналами по артикулу: ${autoMatched}`;
       if (compUnmapped) msg += `; не найдено в каталоге ${compUnmapped} (импортируй товары из МойСклад)`;
       toast(msg, compUnmapped ? 'error' : 'success');
       onDone?.();

@@ -23,7 +23,7 @@ import {
   fetchWbCards, wbNewOrders, wbCreateSupply, wbAddOrderToSupply,
   wbSupplyBarcode, wbDeliverSupply, wbReshipmentOrders,
 } from '../services/channelApis.js';
-import { fetchMoyskladBundlesPage, pushMoyskladBundle } from '../services/moysklad.js';
+import { fetchMoyskladBundlesPage, resolveMsFolderHref, pushMoyskladBundle } from '../services/moysklad.js';
 import { getMoyskladToken } from '../services/ms-jobs.js';
 
 const router = Router();
@@ -696,11 +696,27 @@ router.post('/sets/pull-ms', requireOperate, asyncHandler(async (req, res) => {
   if (!token) throw BadRequest('Не задан токен МойСклад (Настройки → Интеграция)');
   const folder = (req.body?.folder ?? 'Комплект RUS').toString().trim() || null;
   const offset = Math.max(0, parseInt(req.body?.offset, 10) || 0);
-  // Одна страница комплектов за запрос (фронт листает по hasMore) — чтобы не ловить 504.
+  // Папку резолвим в href один раз (на offset=0) и фронт носит его дальше — иначе
+  // на каждой странице заново тянули бы список папок.
+  let folderHref = (req.body?.folder_href || '').toString().trim() || null;
+  try {
+    if (folder && !folderHref) folderHref = await resolveMsFolderHref(token, folder);
+  } catch (e) { throw BadRequest('МойСклад: ' + e.message); }
+  // Одна страница комплектов ПАПКИ за запрос (фронт листает по has_more) — не ловим 504.
   let page;
-  try { page = await fetchMoyskladBundlesPage(token, { folderName: folder, offset, limit: 100 }); }
+  try { page = await fetchMoyskladBundlesPage(token, { folderHref, offset, limit: 50 }); }
   catch (e) { throw BadRequest('МойСклад: ' + e.message); }
   const bundles = page.bundles;
+  // Батч-резолв товаров каталога по external_id всех компонентов страницы (вместо N+1).
+  const allExt = [...new Set(bundles.flatMap((b) => b.components.map((c) => c.assortmentId)))];
+  let prodByExt = new Map();
+  if (allExt.length) {
+    const prods = await db.all(
+      "SELECT id, external_id FROM products WHERE external_source = 'moysklad' AND external_id = ANY(?)",
+      allExt,
+    );
+    prodByExt = new Map(prods.map((p) => [p.external_id, p.id]));
+  }
   let created = 0; let updated = 0; let compMapped = 0; let compUnmapped = 0;
   for (const b of bundles) {
     let set = await db.get('SELECT id FROM sd_sets WHERE ms_bundle_id = ?', b.externalId);
@@ -718,19 +734,16 @@ router.post('/sets/pull-ms', requireOperate, asyncHandler(async (req, res) => {
       );
       created += 1;
     }
-    // Состав из МС — источник истины для МС-сетов: пересобираем компоненты.
+    // Состав из МС — источник истины: пересобираем. Батч-вставка вместо построчной.
     await db.run('DELETE FROM sd_set_components WHERE set_id = ?', set.id);
+    const rowsSql = []; const params = [];
     for (const c of b.components) {
-      const prod = await db.get(
-        "SELECT id FROM products WHERE external_source = 'moysklad' AND external_id = ?",
-        c.assortmentId,
-      );
-      if (prod) {
-        await db.run('INSERT INTO sd_set_components (set_id, product_id, quantity) VALUES (?, ?, ?)', set.id, prod.id, c.quantity);
-        compMapped += 1;
-      } else {
-        compUnmapped += 1;
-      }
+      const pid = prodByExt.get(c.assortmentId);
+      if (pid) { rowsSql.push('(?, ?, ?)'); params.push(set.id, pid, c.quantity); compMapped += 1; }
+      else compUnmapped += 1;
+    }
+    if (rowsSql.length) {
+      await db.run(`INSERT INTO sd_set_components (set_id, product_id, quantity) VALUES ${rowsSql.join(', ')}`, ...params);
     }
   }
   await logAction(req, { action: 'supply_delivery.sets.pull_ms', entity_type: 'sd_set', details: { matched: bundles.length, created, updated, offset } });
@@ -744,7 +757,7 @@ router.post('/sets/pull-ms', requireOperate, asyncHandler(async (req, res) => {
     next_offset: page.nextOffset,
     scanned: page.scanned,
     total: page.total,
-    first_path_example: page.firstPathExample,
+    folder_href: folderHref,
   });
 }));
 

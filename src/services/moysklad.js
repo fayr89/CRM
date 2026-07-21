@@ -145,25 +145,38 @@ export async function fetchMoyskladProducts(token) {
   return [...products, ...variants];
 }
 
-// Комплекты (bundle) из МойСклад = «сеты» — ОДНОЙ СТРАНИЦЕЙ (offset/limit). МС НЕ
-// поддерживает фильтр bundle по productFolder (ошибка 1034), поэтому папку фильтруем на
-// нашей стороне по `pathName` (приходит без expand). Состав страницы грузим параллельно
-// (по 5). Постранично — чтобы каждый запрос укладывался в лимит времени функции (60с);
-// фронт листает по `hasMore`/`nextOffset`.
-export async function fetchMoyskladBundlesPage(token, { folderName, offset = 0, limit = 100 } = {}) {
+// Найти href папки товаров по имени (для фильтра ассортимента по папке).
+export async function resolveMsFolderHref(token, folderName) {
+  const folders = await fetchAll('/entity/productfolder', token, 100);
+  const fn = (folderName || '').toLowerCase();
+  const folder = folders.find((f) => (f.name || '').toLowerCase() === fn)
+    || folders.find((f) => (f.name || '').toLowerCase().includes(fn));
+  if (!folder?.meta?.href) {
+    const names = folders.map((f) => f.name).filter(Boolean).slice(0, 8).join(', ');
+    throw new Error(`Папка «${folderName}» не найдена в МойСклад. Есть папки: ${names || '—'}.`);
+  }
+  return folder.meta.href;
+}
+
+// Одна страница комплектов ПАПКИ. Фильтруем по папке через /entity/assortment (он
+// поддерживает productFolder, в отличие от /entity/bundle — там ошибка 1034), берём
+// только type=bundle. Состав каждого комплекта — параллельно (5). Постранично, чтобы
+// каждый запрос укладывался в лимит времени функции; фронт листает по hasMore.
+export async function fetchMoyskladBundlesPage(token, { folderHref, offset = 0, limit = 50 } = {}) {
   const headers = authHeader(token);
-  const res = await msFetch(`${BASE}/entity/bundle?limit=${limit}&offset=${offset}`, headers);
+  const endpoint = folderHref
+    ? `${BASE}/entity/assortment?filter=productFolder=${folderHref}&limit=${limit}&offset=${offset}`
+    : `${BASE}/entity/bundle?limit=${limit}&offset=${offset}`;
+  const res = await msFetch(endpoint, headers);
   if (!res.ok) {
     const text = await res.text();
     throw msError(res.status, text);
   }
   const data = await res.json();
   const rows = data.rows || [];
-  const total = data.meta?.size ?? null;
   const hasMore = rows.length === limit;
-  const fn = folderName ? folderName.toLowerCase() : null;
-  const bundles = fn ? rows.filter((b) => (b.pathName || '').toLowerCase().includes(fn)) : rows;
-  const out = bundles.map((b) => ({
+  const bundleRows = folderHref ? rows.filter((r) => r.meta?.type === 'bundle') : rows;
+  const out = bundleRows.map((b) => ({
     externalId: b.id,
     name: b.name || null,
     article: b.article || b.code || null,
@@ -171,8 +184,8 @@ export async function fetchMoyskladBundlesPage(token, { folderName, offset = 0, 
     components: [],
   }));
   const CONCURRENCY = 5;
-  for (let i = 0; i < bundles.length; i += CONCURRENCY) {
-    const slice = bundles.slice(i, i + CONCURRENCY);
+  for (let i = 0; i < bundleRows.length; i += CONCURRENCY) {
+    const slice = bundleRows.slice(i, i + CONCURRENCY);
     await Promise.all(slice.map(async (b, j) => {
       try {
         const r = await msFetch(`${BASE}/entity/bundle/${b.id}/components?limit=1000`, headers);
@@ -191,8 +204,7 @@ export async function fetchMoyskladBundlesPage(token, { folderName, offset = 0, 
       }
     }));
   }
-  // firstPathExample — чтобы подсказать реальный путь, если папка не совпала.
-  return { bundles: out, hasMore, nextOffset: offset + limit, scanned: rows.length, total, firstPathExample: rows[0]?.pathName || null };
+  return { bundles: out, hasMore, nextOffset: offset + limit, scanned: rows.length, total: data.meta?.size ?? null };
 }
 
 // Найти meta папки товаров по имени (для размещения нового комплекта).
