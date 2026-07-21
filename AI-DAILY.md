@@ -7528,3 +7528,42 @@ Push-уведомление не отправлено — обе известн�
 `Edit` app.js (импорт + роут) на dev-ветке (`git branch --show-current`
 проверен перед стартом), `git add src/app.js` отдельной командой,
 `grep -n diag src/app.js` пусто перед коммитом.
+
+**2026-07-21 (v481): без изменений — 229-е подряд подтверждение.**
+Designated dev-ветка (`claude/inspiring-cannon-53nhby`) на старте
+существовала на origin, но указывала на старый коммит `0843dc5` (финал
+v388) — сильно отставший от прод (`f04a5ec`, финал v480). `git fetch
+--unshallow` + `git merge-base` показали: `0843dc5` — предок прод-ветки
+(т.е. просто устаревший чекпоинт, не расхождение), `git diff --stat`
+между ними на содержательных файлах (исключая diag/app.js/AI-DAILY.md)
+пуст. Восстановил dev = прод по правилу v476: `git checkout -B
+claude/inspiring-cannon-53nhby origin/claude/build-crm-system-JzCP9` +
+push (без unrelated-histories, обычный push существующей ветки).
+
+Добавил diag-v481 (`op=meta` only, по шаблону v402-480), push dev →
+checkout прод → `git fetch` + `reset --hard origin/...` + `merge --ff-only`
+(урок v466) → push prod — fast-forward прошёл чисто (2 файла, 33
+insertions). `/health` 200 сразу; первые два `op=meta`-запроса поймали
+404 (алиас не переехал), третий (~20с после) — 200.
+
+Этап 1 — `proposals_by_status`={done:62}: pending/approved/revision/
+rejected пусты, действовать не по чему. Этап 2 —
+`feedback_by_status`={awaiting_approval:15, closed:44, open:4},
+`proposals_last_update`/`feedback_last_msg`=2026-07-12T10:44:03.911Z /
+2026-07-12T10:45:23.756Z — идентичны v375-480 один в один (включая
+миллисекунды). 229-е подряд подтверждение, 9 дней без изменений. Раз
+`feedback_last_msg` не сдвинулся, полный дамп с тредами (op=feedback-full)
+не тянул — новых сообщений в тредах физически быть не может (проверено
+предыдущими ~100 обходами, v375+).
+
+Push-уведомление не отправлено — обе известные находки (частота
+обходов/orphan-ветки — эскалирована v461, push без ответа за 20 циклов;
+денежный баг #62 — закрыт в v290) без нового сигнала в этом цикле: решения
+администратора по-прежнему нет (approved/revision/rejected пусты), но
+повтор без нового факта был бы спамом. Конвейер деплоя здоров, Vercel MCP
+доступен штатно.
+
+Снос diag-v481 выполнен раздельным `git rm src/routes/diagDaily.js` +
+`Edit` app.js (импорт + роут) на dev-ветке (`git branch --show-current`
+проверен перед стартом), `git add src/app.js` отдельной командой,
+`grep -n diag src/app.js` пусто перед коммитом.
