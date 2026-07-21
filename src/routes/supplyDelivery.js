@@ -999,6 +999,40 @@ router.get('/channel-map', requireOperate, asyncHandler(async (req, res) => {
   });
 }));
 
+// Сверка габаритов: кабинет МП (channel_dim_*) ⇄ наш сет (sd_sets.dim_*). CRM —
+// эталон; отклонение = |МП − CRM| / CRM × 100 по каждой стороне; over = превышен порог.
+router.get('/size-map', requireOperate, asyncHandler(async (req, res) => {
+  await ensureSupplyDeliverySchema();
+  const channel = (req.query.channel || 'wb').toString();
+  const threshold = Math.max(0, parseFloat(req.query.threshold) || 10);
+  const rows = await db.all(
+    `SELECT m.id, m.channel, m.channel_sku, m.channel_barcode, m.channel_name,
+            m.channel_dim_l, m.channel_dim_w, m.channel_dim_h,
+            st.id AS set_id, st.name AS set_name, st.dim_l AS set_dim_l, st.dim_w AS set_dim_w, st.dim_h AS set_dim_h,
+            a.legal_entity
+     FROM sd_product_channel_map m
+     JOIN sd_sets st ON st.id = m.set_id
+     LEFT JOIN sd_channel_accounts a ON a.id = m.channel_account_id
+     WHERE m.channel = ?
+       AND (m.channel_dim_l IS NOT NULL OR m.channel_dim_w IS NOT NULL OR m.channel_dim_h IS NOT NULL)
+     ORDER BY m.id DESC LIMIT 1000`,
+    channel,
+  );
+  const dev = (mp, crm) => {
+    if (mp == null || crm == null || Number(crm) === 0) return null;
+    return Math.abs(Number(mp) - Number(crm)) / Number(crm) * 100;
+  };
+  const out = rows.map((r) => {
+    const dl = dev(r.channel_dim_l, r.set_dim_l);
+    const dw = dev(r.channel_dim_w, r.set_dim_w);
+    const dh = dev(r.channel_dim_h, r.set_dim_h);
+    const vals = [dl, dw, dh].filter((x) => x != null);
+    const maxDev = vals.length ? Math.max(...vals) : null;
+    return { ...r, dev_l: dl, dev_w: dw, dev_h: dh, max_dev: maxDev, over: maxDev != null && maxDev > threshold };
+  });
+  res.json({ rows: out, threshold, over_count: out.filter((r) => r.over).length });
+}));
+
 router.post('/channel-map/import', requireOperate, asyncHandler(async (req, res) => {
   await ensureSupplyDeliverySchema();
   const d = z.object({
@@ -1053,16 +1087,19 @@ router.post('/channel-map/pull-wb', requireOperate, asyncHandler(async (req, res
     const rowsSql = [];
     const params = [];
     for (const it of chunk) {
-      rowsSql.push("('wb', ?, ?, ?, ?::jsonb, ?)");
+      rowsSql.push("('wb', ?, ?, ?, ?::jsonb, ?, ?, ?, ?)");
       params.push(it.channel_barcode ?? null, it.channel_sku ?? null, it.channel_name ?? null,
-        JSON.stringify(it.channel_extra || {}), channel_account_id);
+        JSON.stringify(it.channel_extra || {}), channel_account_id,
+        it.channel_dim_l ?? null, it.channel_dim_w ?? null, it.channel_dim_h ?? null);
     }
     await db.run(
-      `INSERT INTO sd_product_channel_map (channel, channel_barcode, channel_sku, channel_name, channel_extra, channel_account_id)
+      `INSERT INTO sd_product_channel_map (channel, channel_barcode, channel_sku, channel_name, channel_extra, channel_account_id, channel_dim_l, channel_dim_w, channel_dim_h)
        VALUES ${rowsSql.join(', ')}
        ON CONFLICT (channel, COALESCE(channel_barcode, ''), COALESCE(channel_sku, ''))
        DO UPDATE SET channel_name = EXCLUDED.channel_name, channel_extra = EXCLUDED.channel_extra,
-                     channel_account_id = EXCLUDED.channel_account_id, updated_at = NOW()`,
+                     channel_account_id = EXCLUDED.channel_account_id,
+                     channel_dim_l = EXCLUDED.channel_dim_l, channel_dim_w = EXCLUDED.channel_dim_w, channel_dim_h = EXCLUDED.channel_dim_h,
+                     updated_at = NOW()`,
       ...params,
     );
     n += chunk.length;

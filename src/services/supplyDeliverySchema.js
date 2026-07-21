@@ -225,6 +225,10 @@ export async function ensureSupplyDeliverySchema() {
   await db.run('ALTER TABLE sd_product_channel_map ADD COLUMN IF NOT EXISTS channel_account_id INTEGER');
   // Скрытие строк из рабочего списка (таблица разрослась, с телефона не удобно).
   await db.run('ALTER TABLE sd_product_channel_map ADD COLUMN IF NOT EXISTS hidden BOOLEAN NOT NULL DEFAULT FALSE');
+  // Габариты из кабинета МП (см) — для сверки с нашими габаритами сета.
+  await db.run('ALTER TABLE sd_product_channel_map ADD COLUMN IF NOT EXISTS channel_dim_l REAL');
+  await db.run('ALTER TABLE sd_product_channel_map ADD COLUMN IF NOT EXISTS channel_dim_w REAL');
+  await db.run('ALTER TABLE sd_product_channel_map ADD COLUMN IF NOT EXISTS channel_dim_h REAL');
   // WB ФБС: поставке нужен внешний supplyId WB + привязка к каналу (для ключа),
   // позиции = сборочные задания WB (external_order_id + штрихкод).
   await db.run('ALTER TABLE sd_supplies ADD COLUMN IF NOT EXISTS channel_account_id INTEGER');

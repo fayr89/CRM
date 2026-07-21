@@ -118,15 +118,21 @@ export async function fetchWbCards(apiKey, { limit = 100, maxPages = 100 } = {})
       const vendorCode = c.vendorCode || null;
       const name = c.title || c.subjectName || vendorCode || null;
       const nmID = c.nmID ?? null;
+      // Габариты карточки WB (см): length/width/height.
+      const d = c.dimensions || {};
+      const dimL = Number(d.length) || null;
+      const dimW = Number(d.width) || null;
+      const dimH = Number(d.height) || null;
+      const base = { channel_name: name, channel_extra: { nmID }, channel_dim_l: dimL, channel_dim_w: dimW, channel_dim_h: dimH };
       const barcodes = [];
       for (const s of (c.sizes || [])) {
         for (const sku of (s.skus || [])) barcodes.push(sku);
       }
       if (!barcodes.length) {
-        out.push({ channel_barcode: null, channel_sku: vendorCode, channel_name: name, channel_extra: { nmID } });
+        out.push({ ...base, channel_barcode: null, channel_sku: vendorCode });
       } else {
         for (const bc of barcodes) {
-          out.push({ channel_barcode: String(bc), channel_sku: vendorCode, channel_name: name, channel_extra: { nmID } });
+          out.push({ ...base, channel_barcode: String(bc), channel_sku: vendorCode });
         }
       }
     }

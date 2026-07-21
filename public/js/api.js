@@ -256,6 +256,7 @@ export const api = {
   sdChannelMap: (channel, status, search, channelAccountId, visibility, offset) => request('GET', '/api/supply-delivery/channel-map', { query: { channel, status, search, channel_account_id: channelAccountId || '', visibility: visibility || 'active', offset: offset || 0 } }),
   sdHideChannel: (id, hidden) => request('PUT', `/api/supply-delivery/channel-map/${id}/hidden`, { body: { hidden } }),
   sdHideMatchedChannel: (channel) => request('POST', '/api/supply-delivery/channel-map/hide-matched', { body: { channel } }),
+  sdSizeMap: (channel, threshold) => request('GET', '/api/supply-delivery/size-map', { query: { channel, threshold } }),
   sdImportChannelMap: (body) => request('POST', '/api/supply-delivery/channel-map/import', { body }),
   sdPullWb: (channel_account_id) => request('POST', '/api/supply-delivery/channel-map/pull-wb', { body: { channel_account_id } }),
   sdAutoMatchChannel: (channel) => request('POST', '/api/supply-delivery/channel-map/auto-match', { body: { channel } }),

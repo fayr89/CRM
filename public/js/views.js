@@ -12217,6 +12217,7 @@ export async function renderSupplyDelivery(main) {
     wrap.append(sdCollapsible('🚚 Доставки', renderSdDeliveriesCard));
     wrap.append(sdCollapsible('🧩 Книга сетов', renderSdSetsCard));
     wrap.append(sdCollapsible('🔗 Сопоставление с каналом (matching)', () => renderSdChannelMapCard(flag.is_admin)));
+    wrap.append(sdCollapsible('📐 Сверка габаритов (МП ⇄ сет)', renderSdSizeMapCard));
     wrap.append(sdCollapsible('💰 Финансы — доставки', renderSdFinanceCard));
     wrap.append(sdCollapsible('📚 Справочники (офис)', renderSdDirectories));
   } else if (!flag.is_admin) {
@@ -12856,6 +12857,47 @@ async function sdEditProduct(row, tariffs, onSaved) {
     try { await api.sdSaveProductDirectory(row.product_id, payload); toast('Сохранено', 'success'); onSaved?.(); }
     catch (e) { toast(e.message, 'error'); return false; }
   } });
+}
+
+// ---- Сверка габаритов: кабинет МП ⇄ наш сет ----
+function renderSdSizeMapCard() {
+  const card = el('div', { class: 'card', style: { marginBottom: '12px' } });
+  card.append(el('h4', {}, 'Сверка габаритов (кабинет МП ⇄ наш сет)'));
+  card.append(el('div', { style: { fontSize: '12px', color: 'var(--text-muted)', marginBottom: '6px' } },
+    'Габариты из кабинета маркетплейса против габаритов сета (CRM — эталон). Если МП отклоняется от CRM больше порога — строка красная. Габариты МП подтягиваются вместе с номенклатурой (WB — есть; Ozon/ЯМ — после подтяжки).'));
+  const chanSel = el('select', {}, ...Object.entries(SD_CHANNELS).map(([v, l]) => el('option', { value: v }, l)));
+  const thrI = el('input', { type: 'number', min: '0', step: 'any', value: '10', style: { width: '80px' } });
+  const info = el('span', { style: { marginLeft: '8px', color: 'var(--text-muted)' } });
+  const findBtn = el('button', { class: 'btn btn-sm', onClick: () => reload() }, 'Показать');
+  chanSel.addEventListener('change', () => reload());
+  thrI.addEventListener('change', () => reload());
+  card.append(el('div', { style: { marginBottom: '8px', display: 'flex', gap: '6px', alignItems: 'center', flexWrap: 'wrap' } },
+    chanSel, el('span', {}, '% отклонения:'), thrI, findBtn, info));
+  const tbody = el('tbody', {});
+  card.append(el('div', { style: { overflowX: 'auto' } }, el('table', { class: 'table' },
+    el('thead', {}, el('tr', {}, el('th', {}, 'Артикул канала'), el('th', {}, 'Название'), el('th', {}, 'Юрлицо'),
+      el('th', {}, 'Сет'), el('th', {}, 'Габариты МП (Д×Ш×В)'), el('th', {}, 'Габариты сета'), el('th', {}, 'Макс. откл.'))), tbody)));
+  const fmtDims = (l, w, h) => [l, w, h].every((x) => x == null) ? '—' : `${l ?? '?'}×${w ?? '?'}×${h ?? '?'}`;
+  async function reload() {
+    tbody.textContent = '';
+    let data;
+    try { data = await api.sdSizeMap(chanSel.value, Number(thrI.value) || 10); } catch (e) { toast(e.message, 'error'); return; }
+    info.textContent = `Нарушений: ${data.over_count} из ${data.rows.length}`;
+    if (!data.rows.length) { tbody.append(el('tr', {}, el('td', { colspan: '7' }, 'Нет данных: подтяни номенклатуру с габаритами и сопоставь с сетами.'))); return; }
+    for (const r of data.rows) {
+      const devTxt = r.max_dev == null ? '—' : `${r.max_dev.toFixed(1)}%`;
+      tbody.append(el('tr', r.over ? { style: { background: 'rgba(220,38,38,0.12)' } } : {},
+        el('td', {}, r.channel_sku || r.channel_barcode || '—'),
+        el('td', {}, r.channel_name || '—'),
+        el('td', {}, r.legal_entity || '—'),
+        el('td', {}, r.set_name || ('#' + r.set_id)),
+        el('td', {}, fmtDims(r.channel_dim_l, r.channel_dim_w, r.channel_dim_h)),
+        el('td', {}, fmtDims(r.set_dim_l, r.set_dim_w, r.set_dim_h)),
+        el('td', { style: { fontWeight: '600', color: r.over ? '#dc2626' : 'inherit' } }, devTxt)));
+    }
+  }
+  reload();
+  return card;
 }
 
 // ---- Сопоставление номенклатуры канала ⇄ внутренней (matching) ----
