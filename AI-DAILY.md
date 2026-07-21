@@ -8045,3 +8045,39 @@ Push-уведомление не отправлено — известные н�
 `Edit` app.js (импорт + роут) на dev-ветке (`git branch --show-current`
 проверен перед стартом), `git add src/app.js` отдельной командой,
 `grep -n diag src/app.js` пусто перед коммитом.
+
+**2026-07-21 (v494): без изменений — 241-е подряд подтверждение.**
+Сессии назначена ветка `claude/inspiring-cannon-i5hdnd`, отсутствовала на
+origin на старте (`couldn't find remote ref`) — тот же паттерн v169+
+(смержили в прошлом обходе, GitHub удалил ветку). После `git fetch
+--unshallow` подтверждено: прод (`claude/build-crm-system-JzCP9`) строго
+на `7e2e439` (финал v493), без unrelated-histories. Восстановлена по
+правилу «PR уже смержен»: `git checkout -B claude/inspiring-cannon-i5hdnd
+origin/claude/build-crm-system-JzCP9` → push.
+
+Добавил diag-v494 (`op=meta` only, по шаблону v402-493), push dev →
+checkout прод → `git fetch` + `reset --hard origin/...` + `merge --ff-only`
+— fast-forward прошёл чисто (2 файла, 33 insertions), push прод ок.
+`/health` 200 сразу; первый `op=meta`-запрос поймал 404 (алиас не
+переехал, паттерн v491-493), второй (~20с после) — 200.
+
+Этап 1 — `proposals_by_status`={done:62}: pending/approved/revision/
+rejected пусты, действовать не по чему. Этап 2 —
+`feedback_by_status`={awaiting_approval:15, closed:44, open:4},
+`proposals_last_update`/`feedback_last_msg`=2026-07-12T10:44:03.911Z /
+2026-07-12T10:45:23.756Z — идентичны v375-493 один в один (включая
+миллисекунды). 241-е подряд подтверждение, 9 дней без изменений.
+`feedback_last_msg` не сдвинулся → полный дамп с тредами (op=feedback-full)
+не тянул — новых сообщений в тредах физически быть не может (проверено
+предыдущими ~108 обходами, v375+).
+
+Push-уведомление не отправлено — известные находки (частота
+обходов/orphan-ветки — эскалирована v247/v263/v404/v405, push без ответа
+за 30+ циклов; денежный баг #62 — закрыт в v290) без нового сигнала,
+требующего внимания. Повтор был бы спамом. Конвейер деплоя здоров, Vercel
+MCP доступен без сбоев в этом обходе.
+
+Снос diag-v494 выполнен раздельным `git rm src/routes/diagDaily.js` +
+`Edit` app.js (импорт + роут) на dev-ветке (`git branch --show-current`
+проверен перед стартом), `git add src/app.js` отдельной командой,
+`grep -n diag src/app.js` пусто перед коммитом.
