@@ -13098,13 +13098,20 @@ function renderSdSetsCard() {
       const dims = [s.dim_l, s.dim_w, s.dim_h].every((x) => x == null) ? '—' : `${s.dim_l ?? '?'}×${s.dim_w ?? '?'}×${s.dim_h ?? '?'}`;
       const pkg = Number(s.packaging_count) ? `${s.packaging_summary || '?'} (${s.packaging_count})` : '—';
       const edit = el('button', { class: 'btn btn-sm', onClick: () => sdEditSet(s, reload) }, '✏');
+      // Отправить в БОЕВОЙ МойСклад (создать новый комплект или обновить связанный).
+      const pushMs = el('button', { class: 'btn btn-sm', style: { marginLeft: '4px' }, title: 'Отправить в МойСклад (создать/обновить комплект)', onClick: async () => {
+        if (!(await confirm(s.ms_bundle_id
+          ? `Обновить комплект «${s.name}» в БОЕВОМ МойСклад (название/артикул/состав)?`
+          : `Создать «${s.name}» как новый комплект в БОЕВОМ МойСклад (папка «Комплект RUS»)?`))) return;
+        try { const r = await api.sdPushMsSet(s.id); toast(r.created ? 'Создан комплект в МойСклад' : 'Комплект в МойСклад обновлён', 'success'); reload(); } catch (e) { toast(e.message, 'error'); }
+      } }, '⬆ МС');
       const del = el('button', { class: 'btn btn-sm btn-danger', style: { marginLeft: '4px' }, onClick: async () => {
         if (!(await confirm(`Удалить сет «${s.name}»?`))) return;
         try { await api.sdDeleteSet(s.id); reload(); } catch (e) { toast(e.message, 'error'); }
       } }, '🗑');
-      const nameCell = el('td', {}, s.name, s.ms_bundle_id ? el('span', { class: 'badge ms-badge', style: { marginLeft: '6px' }, title: 'Из МойСклад' }, 'МС') : null);
+      const nameCell = el('td', {}, s.name, s.ms_bundle_id ? el('span', { class: 'badge ms-badge', style: { marginLeft: '6px' }, title: 'Связан с МойСклад' }, 'МС') : null);
       tbody.append(el('tr', {}, nameCell, el('td', {}, s.article || '—'), el('td', {}, String(s.component_count)), el('td', {}, pkg),
-        el('td', {}, String(s.packing_time_min ?? 0)), el('td', {}, dims), el('td', {}, edit, del)));
+        el('td', {}, String(s.packing_time_min ?? 0)), el('td', {}, dims), el('td', {}, edit, pushMs, del)));
     }
   }
   reload();

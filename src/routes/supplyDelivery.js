@@ -23,7 +23,7 @@ import {
   fetchWbCards, wbNewOrders, wbCreateSupply, wbAddOrderToSupply,
   wbSupplyBarcode, wbDeliverSupply, wbReshipmentOrders,
 } from '../services/channelApis.js';
-import { fetchMoyskladBundles } from '../services/moysklad.js';
+import { fetchMoyskladBundles, pushMoyskladBundle } from '../services/moysklad.js';
 import { getMoyskladToken } from '../services/ms-jobs.js';
 
 const router = Router();
@@ -732,6 +732,41 @@ router.post('/sets/pull-ms', requireOperate, asyncHandler(async (req, res) => {
   }
   await logAction(req, { action: 'supply_delivery.sets.pull_ms', entity_type: 'sd_set', details: { bundles: bundles.length, created, updated } });
   res.json({ ok: true, bundles: bundles.length, created, updated, components_mapped: compMapped, components_unmapped: compUnmapped });
+}));
+
+// Отправить сет в МойСклад: создать (если нет ms_bundle_id) или обновить комплект.
+// ПИШЕТ В БОЕВОЙ МС. Ручное действие (кнопка «Отправить в МС»). Состав берётся из
+// компонентов сета (только товары с external_id МойСклад).
+router.post('/sets/:id/push-ms', requireOperate, asyncHandler(async (req, res) => {
+  await ensureSupplyDeliverySchema();
+  const token = await getMoyskladToken();
+  if (!token) throw BadRequest('Не задан токен МойСклад (Настройки → Интеграция)');
+  const set = await db.get('SELECT * FROM sd_sets WHERE id = ?', req.params.id);
+  if (!set) throw NotFound('Сет не найден');
+  const comps = await db.all(
+    `SELECT sc.quantity, p.external_id, p.external_source
+     FROM sd_set_components sc JOIN products p ON p.id = sc.product_id
+     WHERE sc.set_id = ?`,
+    req.params.id,
+  );
+  const usable = comps.filter((c) => c.external_source === 'moysklad' && c.external_id);
+  if (!usable.length) throw BadRequest('У сета нет состава из МойСклад — добавь компоненты (товары МойСклад), потом отправляй');
+  let result;
+  try {
+    result = await pushMoyskladBundle(token, {
+      msBundleId: set.ms_bundle_id || null,
+      name: set.name,
+      article: set.article,
+      components: usable.map((c) => ({ externalId: c.external_id, quantity: Number(c.quantity) || 1 })),
+      folderName: 'Комплект RUS',
+    });
+  } catch (e) { throw BadRequest(e.message); }
+  await db.run(
+    'UPDATE sd_sets SET ms_bundle_id = COALESCE(ms_bundle_id, ?), article = COALESCE(article, ?), ms_synced_at = NOW(), updated_at = NOW() WHERE id = ?',
+    result.id || null, result.article || null, set.id,
+  );
+  await logAction(req, { action: 'supply_delivery.sets.push_ms', entity_type: 'sd_set', entity_id: set.id, details: { created: !set.ms_bundle_id, ms_id: result.id } });
+  res.json({ ok: true, ms_bundle_id: result.id || set.ms_bundle_id, created: !set.ms_bundle_id, article: result.article });
 }));
 
 router.get('/sets/:id', requireOperate, asyncHandler(async (req, res) => {

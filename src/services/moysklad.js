@@ -183,6 +183,58 @@ export async function fetchMoyskladBundles(token, { folderName } = {}) {
   return out;
 }
 
+// Найти meta папки товаров по имени (для размещения нового комплекта).
+export async function findMoyskladFolderMeta(token, name) {
+  if (!name) return null;
+  const rows = await fetchAll('/entity/productfolder', token, 100);
+  const fn = name.toLowerCase();
+  const f = rows.find((r) => (r.name || '').toLowerCase() === fn)
+    || rows.find((r) => (r.name || '').toLowerCase().includes(fn));
+  return f?.meta ? { meta: f.meta } : null;
+}
+
+// Тип ассортимента (product|variant) по UUID — нужен для meta-ссылки компонента.
+async function resolveAssortmentType(token, id) {
+  const headers = authHeader(token);
+  for (const type of ['product', 'variant']) {
+    const res = await msFetch(`${BASE}/entity/${type}/${id}`, headers);
+    try { await res.text(); } catch { /* тело не важно */ }
+    if (res.ok) return type;
+  }
+  return null;
+}
+
+// Создать (POST) или обновить (PUT) комплект в МойСклад. Пишет в БОЕВОЙ МС.
+// components: [{ externalId, quantity, type? }]. Возвращает { id, article, name }.
+export async function pushMoyskladBundle(token, { msBundleId, name, article, components, folderName }) {
+  const headers = { ...authHeader(token), 'Content-Type': 'application/json' };
+  if (!components || !components.length) throw new Error('У комплекта нет состава — нечего отправлять в МойСклад');
+  const comp = [];
+  for (const c of components) {
+    let type = c.type === 'product' || c.type === 'variant' ? c.type : await resolveAssortmentType(token, c.externalId);
+    if (!type) throw new Error(`Компонент ${c.externalId} не найден в МойСклад (ни товар, ни модификация)`);
+    comp.push({
+      quantity: Number(c.quantity) || 1,
+      assortment: { meta: { href: `${BASE}/entity/${type}/${c.externalId}`, type, mediaType: 'application/json' } },
+    });
+  }
+  const body = { name: name || 'Комплект', overhead: { value: 0, distribution: 'weight' }, components: comp };
+  if (article) body.article = article;
+  if (!msBundleId && folderName) {
+    const folder = await findMoyskladFolderMeta(token, folderName);
+    if (folder) body.productFolder = folder;
+  }
+  const url = msBundleId ? `${BASE}/entity/bundle/${msBundleId}` : `${BASE}/entity/bundle`;
+  const res = await fetch(url, {
+    method: msBundleId ? 'PUT' : 'POST',
+    headers, body: JSON.stringify(body), signal: AbortSignal.timeout(60000),
+  });
+  const text = await res.text().catch(() => '');
+  if (!res.ok) throw new Error(`МойСклад ${res.status}: ${text.slice(0, 800)}`);
+  const data = text ? JSON.parse(text) : {};
+  return { id: data.id || null, article: data.article || null, name: data.name || null };
+}
+
 export async function fetchMoyskladStock(token) {
   const rows = await fetchAll('/report/stock/all', token);
   const byId = new Map();

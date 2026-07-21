@@ -254,6 +254,7 @@ export const api = {
   sdSets: (search) => request('GET', '/api/supply-delivery/sets', { query: { search } }),
   sdCreateSet: (body) => request('POST', '/api/supply-delivery/sets', { body }),
   sdPullMsSets: (folder) => request('POST', '/api/supply-delivery/sets/pull-ms', { body: { folder } }),
+  sdPushMsSet: (id) => request('POST', `/api/supply-delivery/sets/${id}/push-ms`),
   sdSet: (id) => request('GET', `/api/supply-delivery/sets/${id}`),
   sdUpdateSet: (id, body) => request('PUT', `/api/supply-delivery/sets/${id}`, { body }),
   sdDeleteSet: (id) => request('DELETE', `/api/supply-delivery/sets/${id}`),
