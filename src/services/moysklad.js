@@ -145,22 +145,24 @@ export async function fetchMoyskladProducts(token) {
   return [...products, ...variants];
 }
 
-// Комплекты (bundle) из МойСклад = «сеты». МС НЕ поддерживает фильтр bundle по
-// productFolder (ошибка 1034), поэтому: тянем список комплектов без expand (это лёгкие
-// метаданные, включая `pathName` — путь папки), фильтруем по папке НА НАШЕЙ стороне, а
-// состав каждого комплекта грузим с параллельностью 5 (последовательный N+1 → таймаут).
-export async function fetchMoyskladBundles(token, { folderName } = {}) {
+// Комплекты (bundle) из МойСклад = «сеты» — ОДНОЙ СТРАНИЦЕЙ (offset/limit). МС НЕ
+// поддерживает фильтр bundle по productFolder (ошибка 1034), поэтому папку фильтруем на
+// нашей стороне по `pathName` (приходит без expand). Состав страницы грузим параллельно
+// (по 5). Постранично — чтобы каждый запрос укладывался в лимит времени функции (60с);
+// фронт листает по `hasMore`/`nextOffset`.
+export async function fetchMoyskladBundlesPage(token, { folderName, offset = 0, limit = 100 } = {}) {
   const headers = authHeader(token);
-  const rows = await fetchAll('/entity/bundle', token, 100);
-  let bundles = rows;
-  if (folderName) {
-    const fn = folderName.toLowerCase();
-    bundles = rows.filter((b) => (b.pathName || '').toLowerCase().includes(fn));
-    if (!bundles.length) {
-      const example = rows[0]?.pathName ? ` Пример пути комплекта в аккаунте: «${rows[0].pathName}».` : '';
-      throw new Error(`В МойСклад нет комплектов в папке «${folderName}».${example} Впишите точное имя папки.`);
-    }
+  const res = await msFetch(`${BASE}/entity/bundle?limit=${limit}&offset=${offset}`, headers);
+  if (!res.ok) {
+    const text = await res.text();
+    throw msError(res.status, text);
   }
+  const data = await res.json();
+  const rows = data.rows || [];
+  const total = data.meta?.size ?? null;
+  const hasMore = rows.length === limit;
+  const fn = folderName ? folderName.toLowerCase() : null;
+  const bundles = fn ? rows.filter((b) => (b.pathName || '').toLowerCase().includes(fn)) : rows;
   const out = bundles.map((b) => ({
     externalId: b.id,
     name: b.name || null,
@@ -173,23 +175,24 @@ export async function fetchMoyskladBundles(token, { folderName } = {}) {
     const slice = bundles.slice(i, i + CONCURRENCY);
     await Promise.all(slice.map(async (b, j) => {
       try {
-        const res = await msFetch(`${BASE}/entity/bundle/${b.id}/components?limit=1000`, headers);
-        if (res.ok) {
-          const d = await res.json();
+        const r = await msFetch(`${BASE}/entity/bundle/${b.id}/components?limit=1000`, headers);
+        if (r.ok) {
+          const d = await r.json();
           out[i + j].components = (d.rows || []).map((c) => ({
             assortmentId: extractUuid(c.assortment?.meta?.href),
             assortmentType: c.assortment?.meta?.type || null,
             quantity: Number(c.quantity) || 1,
           })).filter((c) => c.assortmentId);
         } else {
-          await res.text().catch(() => {});
+          await r.text().catch(() => {});
         }
       } catch {
         // состав не критичен — сет заведём без него
       }
     }));
   }
-  return out;
+  // firstPathExample — чтобы подсказать реальный путь, если папка не совпала.
+  return { bundles: out, hasMore, nextOffset: offset + limit, scanned: rows.length, total, firstPathExample: rows[0]?.pathName || null };
 }
 
 // Найти meta папки товаров по имени (для размещения нового комплекта).

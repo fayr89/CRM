@@ -23,7 +23,7 @@ import {
   fetchWbCards, wbNewOrders, wbCreateSupply, wbAddOrderToSupply,
   wbSupplyBarcode, wbDeliverSupply, wbReshipmentOrders,
 } from '../services/channelApis.js';
-import { fetchMoyskladBundles, pushMoyskladBundle } from '../services/moysklad.js';
+import { fetchMoyskladBundlesPage, pushMoyskladBundle } from '../services/moysklad.js';
 import { getMoyskladToken } from '../services/ms-jobs.js';
 
 const router = Router();
@@ -695,9 +695,12 @@ router.post('/sets/pull-ms', requireOperate, asyncHandler(async (req, res) => {
   const token = await getMoyskladToken();
   if (!token) throw BadRequest('Не задан токен МойСклад (Настройки → Интеграция)');
   const folder = (req.body?.folder ?? 'Комплект RUS').toString().trim() || null;
-  let bundles;
-  try { bundles = await fetchMoyskladBundles(token, { folderName: folder }); }
+  const offset = Math.max(0, parseInt(req.body?.offset, 10) || 0);
+  // Одна страница комплектов за запрос (фронт листает по hasMore) — чтобы не ловить 504.
+  let page;
+  try { page = await fetchMoyskladBundlesPage(token, { folderName: folder, offset, limit: 100 }); }
   catch (e) { throw BadRequest('МойСклад: ' + e.message); }
+  const bundles = page.bundles;
   let created = 0; let updated = 0; let compMapped = 0; let compUnmapped = 0;
   for (const b of bundles) {
     let set = await db.get('SELECT id FROM sd_sets WHERE ms_bundle_id = ?', b.externalId);
@@ -730,8 +733,19 @@ router.post('/sets/pull-ms', requireOperate, asyncHandler(async (req, res) => {
       }
     }
   }
-  await logAction(req, { action: 'supply_delivery.sets.pull_ms', entity_type: 'sd_set', details: { bundles: bundles.length, created, updated } });
-  res.json({ ok: true, bundles: bundles.length, created, updated, components_mapped: compMapped, components_unmapped: compUnmapped });
+  await logAction(req, { action: 'supply_delivery.sets.pull_ms', entity_type: 'sd_set', details: { matched: bundles.length, created, updated, offset } });
+  res.json({
+    ok: true,
+    matched: bundles.length,
+    created, updated,
+    components_mapped: compMapped,
+    components_unmapped: compUnmapped,
+    has_more: page.hasMore,
+    next_offset: page.nextOffset,
+    scanned: page.scanned,
+    total: page.total,
+    first_path_example: page.firstPathExample,
+  });
 }));
 
 // Отправить сет в МойСклад: создать (если нет ms_bundle_id) или обновить комплект.

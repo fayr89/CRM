@@ -13119,18 +13119,38 @@ function renderSdSetsCard() {
 }
 
 // Подтянуть сеты (комплекты) из МойСклад из указанной папки. Read-only из МС.
+// Листаем комплекты постранично (по 100) — чтобы каждый запрос укладывался в лимит
+// времени; прогресс показываем в окне.
 async function sdPullMsSetsModal(onDone) {
   const folderI = el('input', { type: 'text', value: 'Комплект RUS', style: { width: '100%' } });
+  const status = el('div', { style: { fontSize: '13px', marginTop: '6px', minHeight: '18px' } });
   const body = el('div', {},
     el('div', { class: 'form-row' }, el('label', {}, 'Папка комплектов в МойСклад'), folderI),
     el('div', { style: { fontSize: '12px', color: 'var(--text-muted)', marginTop: '4px' } },
-      'Подтянет комплекты (сеты) из этой папки МойСклад: название + артикул + состав (компоненты сопоставятся с товарами каталога по МойСклад-id). В МойСклад ничего не пишется.'));
+      'Подтянет комплекты (сеты) из этой папки: название + артикул + состав (компоненты сопоставятся с товарами каталога по МойСклад-id). Листается постранично, может занять время. В МойСклад ничего не пишется.'),
+    status);
   await openModal('Подтянуть сеты из МойСклад', body, { primaryLabel: 'Подтянуть', onSubmit: async () => {
+    const folder = folderI.value.trim() || 'Комплект RUS';
+    let offset = 0; let hasMore = true; let guard = 0;
+    let created = 0; let updated = 0; let compMapped = 0; let compUnmapped = 0; let matched = 0; let example = null;
     try {
-      const r = await api.sdPullMsSets(folderI.value.trim() || 'Комплект RUS');
-      let msg = `Комплектов: ${r.bundles} (новых ${r.created}, обновлено ${r.updated}). Компонентов связано ${r.components_mapped}`;
-      if (r.components_unmapped) msg += `; не найдено в каталоге ${r.components_unmapped} (импортируй товары из МойСклад)`;
-      toast(msg, r.components_unmapped ? 'error' : 'success');
+      while (hasMore && guard < 500) {
+        guard += 1;
+        const r = await api.sdPullMsSets(folder, offset);
+        created += r.created || 0; updated += r.updated || 0;
+        compMapped += r.components_mapped || 0; compUnmapped += r.components_unmapped || 0;
+        matched += r.matched || 0;
+        example = example || r.first_path_example;
+        hasMore = r.has_more; offset = r.next_offset;
+        status.textContent = `Просмотрено ~${offset} комплектов аккаунта · найдено в папке: ${matched} (новых ${created}, обновлено ${updated})…`;
+      }
+      if (!matched) {
+        toast(`В папке «${folder}» комплектов не найдено.${example ? ` Пример пути в аккаунте: «${example}» — впишите точное имя папки.` : ''}`, 'error');
+        return false;
+      }
+      let msg = `Сеты из МС: найдено ${matched} (новых ${created}, обновлено ${updated}). Компонентов связано ${compMapped}`;
+      if (compUnmapped) msg += `; не найдено в каталоге ${compUnmapped} (импортируй товары из МойСклад)`;
+      toast(msg, compUnmapped ? 'error' : 'success');
       onDone?.();
     } catch (e) { toast(e.message, 'error'); return false; }
   } });
