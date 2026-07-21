@@ -12208,40 +12208,49 @@ export async function renderSupplyDelivery(main) {
   }
 
   if (flag.is_admin) wrap.append(renderSdAdminPanel());
-  // Каналы + юрлица + API-ключи — только админ (ключи заводит только он).
-  if (flag.is_admin) wrap.append(renderSdChannelsCard());
 
   if (flag.can_operate) {
-    const box = el('div', { class: 'card' }, el('h3', {}, 'Структура модуля (скелет)'));
-    try {
-      const ov = await api.supplyDeliveryOverview();
-      box.append(el('div', { style: { marginBottom: '8px', color: 'var(--text-muted)' } }, ov.message || ''));
-      const ul = el('ul', {});
-      for (const s of (ov.sections || [])) {
-        ul.append(el('li', {}, `${s.title} — ${s.status === 'planned' ? 'запланировано' : s.status}`));
-      }
-      box.append(ul);
-    } catch (e) {
-      box.append(el('div', { class: 'error' }, e.message || 'нет данных'));
-    }
-    wrap.append(box);
-    // Phase 2b — поставки, доставки, финмодель.
-    wrap.append(renderSdSuppliesCard());
-    wrap.append(renderSdDeliveriesCard());
-    // Книга сетов (упаковка на сете) + сопоставление канал-SKU → сет + справочники.
-    wrap.append(renderSdSetsCard());
-    wrap.append(renderSdChannelMapCard(flag.is_admin));
-    wrap.append(renderSdFinanceCard());
-    wrap.append(renderSdDirectories());
+    // Всё свёрнуто по умолчанию + ленивая загрузка: содержимое секции строится и
+    // тянет данные ТОЛЬКО при раскрытии — страница открывается быстро, без кучи запросов.
+    if (flag.is_admin) wrap.append(sdCollapsible('🏷️ Каналы (юрлица + API-ключи)', renderSdChannelsCard));
+    wrap.append(sdCollapsible('📦 Поставки', renderSdSuppliesCard));
+    wrap.append(sdCollapsible('🚚 Доставки', renderSdDeliveriesCard));
+    wrap.append(sdCollapsible('🧩 Книга сетов', renderSdSetsCard));
+    wrap.append(sdCollapsible('🔗 Сопоставление с каналом (matching)', () => renderSdChannelMapCard(flag.is_admin)));
+    wrap.append(sdCollapsible('💰 Финансы — доставки', renderSdFinanceCard));
+    wrap.append(sdCollapsible('📚 Справочники (офис)', renderSdDirectories));
   } else if (!flag.is_admin) {
     wrap.append(el('div', { class: 'card' }, 'Зона выключена. Обратитесь к администратору, чтобы получить тестовый доступ.'));
   }
 }
 
+// Свёрнутая по умолчанию секция с ленивой загрузкой: buildFn зовётся только при
+// первом раскрытии (иначе страница тест-зоны тянет всё сразу и тормозит).
+function sdCollapsible(title, buildFn) {
+  let built = false;
+  const body = el('div', { style: { display: 'none' } });
+  const chevron = el('span', { style: { marginRight: '8px', display: 'inline-block', width: '12px' } }, '▸');
+  const header = el('div', {
+    style: {
+      display: 'flex', alignItems: 'center', cursor: 'pointer', fontWeight: '600', fontSize: '15px',
+      padding: '10px 12px', border: '1px solid var(--border, #e5e7eb)', borderRadius: '8px', marginBottom: '8px', userSelect: 'none',
+    },
+    onClick: () => {
+      const show = body.style.display === 'none';
+      body.style.display = show ? '' : 'none';
+      chevron.textContent = show ? '▾' : '▸';
+      if (show && !built) {
+        built = true;
+        try { body.append(buildFn()); } catch (e) { body.append(el('div', { class: 'card error' }, e.message || 'ошибка')); }
+      }
+    },
+  }, chevron, el('span', {}, title));
+  return el('div', { style: { marginBottom: '8px' } }, header, body);
+}
+
 // Справочники модуля (Phase 2a). Всё внутри тест-зоны, под гейтом.
 function renderSdDirectories() {
   const wrap = el('div', {});
-  wrap.append(el('h3', { style: { margin: '20px 0 8px' } }, '📚 Справочники (офис)'));
   wrap.append(sdTariffsCard());
   wrap.append(sdRewardCard());
   wrap.append(sdThresholdsCard());
