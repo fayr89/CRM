@@ -7775,3 +7775,38 @@ Push-уведомление не отправлено: ни решения ад�
 `Edit` app.js (импорт + роут) на dev-ветке (`git branch --show-current`
 проверен перед стартом), `git add src/app.js` отдельной командой,
 `grep -n diag src/app.js` пусто перед коммитом.
+
+**2026-07-21 (v487): без изменений — 235-е подряд подтверждение.**
+Designated dev-ветка (`claude/inspiring-cannon-oqd182`) на старте
+существовала локально (checked out), но отсутствовала на origin —
+паттерн v169+. Локальный HEAD уже строго совпадал с прод
+(`origin/claude/build-crm-system-JzCP9` = `8b3c265`, финал v486), без
+unrelated-histories. Просто запушил (`push -u`).
+
+Добавил diag-v487 (`op=meta` only, по шаблону v402-486), push dev →
+checkout прод → `git fetch` + `reset --hard origin/...` + `merge --ff-only`
+— fast-forward прошёл чисто (2 файла, 33 insertions). `/health` 200 сразу;
+первые два `op=meta`-запроса поймали 404 (алиас не переехал), третий
+(~20с после) — 200.
+
+Этап 1 — `proposals_by_status`={done:62}: pending/approved/revision/
+rejected пусты, действовать не по чему. Этап 2 —
+`feedback_by_status`={awaiting_approval:15, closed:44, open:4},
+`proposals_last_update`/`feedback_last_msg`=2026-07-12T10:44:03.911Z /
+2026-07-12T10:45:23.756Z — идентичны v375-486 один в один (включая
+миллисекунды). 235-е подряд подтверждение, 9 дней без изменений. Раз
+`feedback_last_msg` не сдвинулся, полный дамп с тредами (op=feedback-full)
+не тянул — новых сообщений в тредах физически быть не может (проверено
+предыдущими ~102 обходами, v375+).
+
+Push-уведомление не отправлено — обе известные находки (частота
+обходов/orphan-ветки — эскалирована v461, push без ответа за 25 циклов;
+денежный баг #62 — закрыт в v290) без нового сигнала в этом цикле: решения
+администратора по-прежнему нет (approved/revision/rejected пусты), но
+повтор без нового факта был бы спамом. Конвейер деплоя здоров, Vercel MCP
+доступен штатно.
+
+Снос diag-v487 выполнен раздельным `git rm src/routes/diagDaily.js` +
+`Edit` app.js (импорт + роут) на dev-ветке (`git branch --show-current`
+проверен перед стартом), `git add src/app.js` отдельной командой,
+`grep -n diag src/app.js` пусто перед коммитом.
