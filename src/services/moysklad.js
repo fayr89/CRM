@@ -145,25 +145,23 @@ export async function fetchMoyskladProducts(token) {
   return [...products, ...variants];
 }
 
-// Комплекты (bundle) из МойСклад = «сеты». folderName — папка (напр. «Комплект RUS»):
-// фильтруем по ней НА СТОРОНЕ МС (иначе тянем весь аккаунт → таймаут функции). Состав
-// каждого комплекта тянем с ограниченной параллельностью (последовательный N+1 = таймаут).
+// Комплекты (bundle) из МойСклад = «сеты». МС НЕ поддерживает фильтр bundle по
+// productFolder (ошибка 1034), поэтому: тянем список комплектов без expand (это лёгкие
+// метаданные, включая `pathName` — путь папки), фильтруем по папке НА НАШЕЙ стороне, а
+// состав каждого комплекта грузим с параллельностью 5 (последовательный N+1 → таймаут).
 export async function fetchMoyskladBundles(token, { folderName } = {}) {
   const headers = authHeader(token);
-  let folderHref = null;
+  const rows = await fetchAll('/entity/bundle', token, 100);
+  let bundles = rows;
   if (folderName) {
-    const folders = await fetchAll('/entity/productfolder', token, 100);
     const fn = folderName.toLowerCase();
-    const folder = folders.find((f) => (f.name || '').toLowerCase() === fn)
-      || folders.find((f) => (f.name || '').toLowerCase().includes(fn));
-    if (!folder?.meta?.href) {
-      throw new Error(`Папка «${folderName}» не найдена в МойСклад. Проверьте название (Товары → Товары и услуги).`);
+    bundles = rows.filter((b) => (b.pathName || '').toLowerCase().includes(fn));
+    if (!bundles.length) {
+      const example = rows[0]?.pathName ? ` Пример пути комплекта в аккаунте: «${rows[0].pathName}».` : '';
+      throw new Error(`В МойСклад нет комплектов в папке «${folderName}».${example} Впишите точное имя папки.`);
     }
-    folderHref = folder.meta.href;
   }
-  const listEndpoint = folderHref ? `/entity/bundle?filter=productFolder=${folderHref}` : '/entity/bundle';
-  const rows = await fetchAll(listEndpoint, token, 100);
-  const out = rows.map((b) => ({
+  const out = bundles.map((b) => ({
     externalId: b.id,
     name: b.name || null,
     article: b.article || b.code || null,
@@ -171,8 +169,8 @@ export async function fetchMoyskladBundles(token, { folderName } = {}) {
     components: [],
   }));
   const CONCURRENCY = 5;
-  for (let i = 0; i < rows.length; i += CONCURRENCY) {
-    const slice = rows.slice(i, i + CONCURRENCY);
+  for (let i = 0; i < bundles.length; i += CONCURRENCY) {
+    const slice = bundles.slice(i, i + CONCURRENCY);
     await Promise.all(slice.map(async (b, j) => {
       try {
         const res = await msFetch(`${BASE}/entity/bundle/${b.id}/components?limit=1000`, headers);
