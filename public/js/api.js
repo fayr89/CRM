@@ -253,7 +253,7 @@ export const api = {
   sdProductDirectory: (search) => request('GET', '/api/supply-delivery/product-directory', { query: { search } }),
   sdSaveProductDirectory: (productId, body) => request('PUT', `/api/supply-delivery/product-directory/${productId}`, { body }),
   // Сопоставление номенклатуры канала ⇄ внутренней (Phase 3)
-  sdChannelMap: (channel, status, search, channelAccountId, visibility) => request('GET', '/api/supply-delivery/channel-map', { query: { channel, status, search, channel_account_id: channelAccountId || '', visibility: visibility || 'active' } }),
+  sdChannelMap: (channel, status, search, channelAccountId, visibility, offset) => request('GET', '/api/supply-delivery/channel-map', { query: { channel, status, search, channel_account_id: channelAccountId || '', visibility: visibility || 'active', offset: offset || 0 } }),
   sdHideChannel: (id, hidden) => request('PUT', `/api/supply-delivery/channel-map/${id}/hidden`, { body: { hidden } }),
   sdHideMatchedChannel: (channel) => request('POST', '/api/supply-delivery/channel-map/hide-matched', { body: { channel } }),
   sdImportChannelMap: (body) => request('POST', '/api/supply-delivery/channel-map/import', { body }),

@@ -12917,36 +12917,48 @@ function renderSdChannelMapCard(isAdmin) {
   card.append(el('div', { style: { overflowX: 'auto' } }, el('table', { class: 'table' },
     el('thead', {}, el('tr', {}, el('th', {}, 'ШК канала'), el('th', {}, 'Артикул канала'), el('th', {}, 'Название'),
       el('th', {}, 'Юрлицо'), el('th', {}, 'Сопоставлен товар'), el('th', {}, ''))), tbody)));
+  let mapOffset = 0;
+  const moreWrap = el('div', { style: { marginTop: '8px', textAlign: 'center' } });
+  card.append(moreWrap);
   async function loadAccounts() {
     try { wbAccounts = await api.sdWbAccounts(); } catch { wbAccounts = []; }
     for (const a of wbAccounts) accSel.append(el('option', { value: String(a.id) }, a.legal_entity || ('WB #' + a.id)));
   }
-  async function reload() {
-    tbody.textContent = '';
+  function rowEl(m) {
+    const matched = m.set_id
+      ? el('span', {}, `сет: ${m.set_name || '#' + m.set_id}`)
+      : el('em', { style: { color: '#dc2626' } }, 'не сопоставлено');
+    const matchBtn = el('button', { class: 'btn btn-sm', onClick: () => sdMatchSetModal(m.id, reload) }, m.set_id ? 'Изм.' : 'Сопоставить с сетом');
+    const unBtn = m.set_id ? el('button', { class: 'btn btn-sm', style: { marginLeft: '4px' }, onClick: async () => {
+      try { await api.sdUnmatchChannel(m.id); reload(); } catch (e) { toast(e.message, 'error'); }
+    } }, 'Снять') : null;
+    // Скрыть/показать строку — быстро убрать из рабочего списка.
+    const hideBtn = el('button', { class: 'btn btn-sm', style: { marginLeft: '4px' }, title: m.hidden ? 'Показать' : 'Скрыть из списка',
+      onClick: async () => { try { await api.sdHideChannel(m.id, !m.hidden); reload(); } catch (e) { toast(e.message, 'error'); } } }, m.hidden ? '👁' : '🙈');
+    const del = el('button', { class: 'btn btn-sm btn-danger', style: { marginLeft: '4px' }, onClick: async () => {
+      try { await api.sdDeleteChannelMap(m.id); reload(); } catch (e) { toast(e.message, 'error'); }
+    } }, '🗑');
+    return el('tr', { style: m.hidden ? { opacity: '0.55' } : {} },
+      el('td', {}, m.channel_barcode || '—'), el('td', {}, m.channel_sku || '—'),
+      el('td', {}, m.channel_name || '—'), el('td', {}, m.legal_entity || '—'), el('td', {}, matched), el('td', {}, matchBtn, unBtn, hideBtn, del));
+  }
+  async function fetchPage(append) {
+    if (!append) { tbody.textContent = ''; mapOffset = 0; }
     let data;
     const accFilter = chanSel.value === 'wb' ? accSel.value : '';
-    try { data = await api.sdChannelMap(chanSel.value, statusSel.value, searchI.value.trim(), accFilter, visSel.value); } catch (e) { toast(e.message, 'error'); return; }
-    info.textContent = `Сопоставлено ${data.matched} из ${data.total}` + (data.hidden ? ` · скрыто ${data.hidden}` : '');
-    if (!data.rows.length) { tbody.append(el('tr', {}, el('td', { colspan: '6' }, 'Пусто'))); return; }
-    for (const m of data.rows) {
-      const matched = m.set_id
-        ? el('span', {}, `сет: ${m.set_name || '#' + m.set_id}`)
-        : el('em', { style: { color: '#dc2626' } }, 'не сопоставлено');
-      const matchBtn = el('button', { class: 'btn btn-sm', onClick: () => sdMatchSetModal(m.id, reload) }, m.set_id ? 'Изм.' : 'Сопоставить с сетом');
-      const unBtn = m.set_id ? el('button', { class: 'btn btn-sm', style: { marginLeft: '4px' }, onClick: async () => {
-        try { await api.sdUnmatchChannel(m.id); reload(); } catch (e) { toast(e.message, 'error'); }
-      } }, 'Снять') : null;
-      // Скрыть/показать строку — быстро убрать из рабочего списка.
-      const hideBtn = el('button', { class: 'btn btn-sm', style: { marginLeft: '4px' }, title: m.hidden ? 'Показать' : 'Скрыть из списка',
-        onClick: async () => { try { await api.sdHideChannel(m.id, !m.hidden); reload(); } catch (e) { toast(e.message, 'error'); } } }, m.hidden ? '👁' : '🙈');
-      const del = el('button', { class: 'btn btn-sm btn-danger', style: { marginLeft: '4px' }, onClick: async () => {
-        try { await api.sdDeleteChannelMap(m.id); reload(); } catch (e) { toast(e.message, 'error'); }
-      } }, '🗑');
-      tbody.append(el('tr', { style: m.hidden ? { opacity: '0.55' } : {} },
-        el('td', {}, m.channel_barcode || '—'), el('td', {}, m.channel_sku || '—'),
-        el('td', {}, m.channel_name || '—'), el('td', {}, m.legal_entity || '—'), el('td', {}, matched), el('td', {}, matchBtn, unBtn, hideBtn, del)));
+    try { data = await api.sdChannelMap(chanSel.value, statusSel.value, searchI.value.trim(), accFilter, visSel.value, mapOffset); } catch (e) { toast(e.message, 'error'); return; }
+    if (!append) info.textContent = `Сопоставлено ${data.matched} из ${data.total}` + (data.hidden ? ` · скрыто ${data.hidden}` : '');
+    for (const m of data.rows) tbody.append(rowEl(m));
+    if (!append && !data.rows.length) tbody.append(el('tr', {}, el('td', { colspan: '6' }, 'Пусто')));
+    mapOffset += data.rows.length;
+    moreWrap.textContent = '';
+    if (data.has_more) {
+      moreWrap.append(el('button', { class: 'btn btn-sm', onClick: () => fetchPage(true) }, `Показать ещё (загружено ${mapOffset})`));
+    } else if (mapOffset > (data.limit || 200)) {
+      moreWrap.append(el('span', { style: { color: 'var(--text-muted)', fontSize: '12px' } }, `Показаны все загруженные: ${mapOffset}`));
     }
   }
+  function reload() { return fetchPage(false); }
   loadAccounts();
   syncChannelUi();
   reload();

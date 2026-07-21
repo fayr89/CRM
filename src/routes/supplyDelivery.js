@@ -931,6 +931,7 @@ router.get('/channel-map', requireOperate, asyncHandler(async (req, res) => {
   const status = (req.query.status || 'all').toString();
   const search = (req.query.search || '').toString().trim();
   const limit = Math.min(500, Math.max(1, parseInt(req.query.limit, 10) || 200));
+  const offset = Math.max(0, parseInt(req.query.offset, 10) || 0);
   const accId = parseInt(req.query.channel_account_id, 10);
   const hasAcc = Number.isInteger(accId) && accId > 0;
   // Видимость: active (по умолчанию — прячем скрытые), hidden (только скрытые), all.
@@ -953,8 +954,8 @@ router.get('/channel-map', requireOperate, asyncHandler(async (req, res) => {
      LEFT JOIN sd_channel_accounts a ON a.id = m.channel_account_id
      WHERE ${where}
      ORDER BY (m.set_id IS NULL) DESC, m.id DESC
-     LIMIT ?`,
-    ...params, limit,
+     LIMIT ? OFFSET ?`,
+    ...params, limit, offset,
   );
   // Счётчики — по каналу (и по юрлицу, если фильтруем), без учёта статуса/поиска/видимости.
   const countParams = [channel];
@@ -971,6 +972,9 @@ router.get('/channel-map', requireOperate, asyncHandler(async (req, res) => {
     total: Number(counts?.total) || 0,
     matched: Number(counts?.matched) || 0,
     hidden: Number(counts?.hidden) || 0,
+    has_more: rows.length === limit,
+    offset,
+    limit,
   });
 }));
 
