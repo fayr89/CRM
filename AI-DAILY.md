@@ -7810,3 +7810,40 @@ Push-уведомление не отправлено — обе известн�
 `Edit` app.js (импорт + роут) на dev-ветке (`git branch --show-current`
 проверен перед стартом), `git add src/app.js` отдельной командой,
 `grep -n diag src/app.js` пусто перед коммитом.
+
+**2026-07-21 (v488): без изменений — 236-е подряд подтверждение.**
+Designated dev-ветка (`claude/inspiring-cannon-x848ke`) отсутствовала на
+origin на старте (`git ls-remote` пусто) — паттерн v169+. Локальный HEAD
+уже строго совпадал с прод (`c1cb091`, финал v487), без unrelated-histories.
+Первый `git fetch origin claude/build-crm-system-JzCP9` тоже поймал
+устаревший кэш проксирующего git (см. v485/v486) — повторный `fetch -v`
+сразу показал «forced update» до актуального `c1cb091`. Просто запушил
+(`push -u`).
+
+Добавил diag-v488 (`op=meta` only, по шаблону v402-487), push dev →
+checkout прод → `git fetch` + `reset --hard origin/...` + `merge --ff-only`
+— fast-forward прошёл чисто (2 файла, 33 insertions). `/health` 200 сразу;
+первый `op=meta`-запрос поймал 404 (алиас не переехал), второй (~20с
+после) — 200.
+
+Этап 1 — `proposals_by_status`={done:62}: pending/approved/revision/
+rejected пусты, действовать не по чему. Этап 2 —
+`feedback_by_status`={awaiting_approval:15, closed:44, open:4},
+`proposals_last_update`/`feedback_last_msg`=2026-07-12T10:44:03.911Z /
+2026-07-12T10:45:23.756Z — идентичны v375-487 один в один (включая
+миллисекунды). 236-е подряд подтверждение, 9 дней без изменений. Раз
+`feedback_last_msg` не сдвинулся, полный дамп с тредами (op=feedback-full)
+не тянул — новых сообщений в тредах физически быть не может (проверено
+предыдущими ~103 обходами, v375+).
+
+Push-уведомление не отправлено — обе известные находки (частота
+обходов/orphan-ветки — эскалирована v461, push без ответа за 26 циклов;
+денежный баг #62 — закрыт в v290) без нового сигнала в этом цикле: решения
+администратора по-прежнему нет (approved/revision/rejected пусты), но
+повтор без нового факта был бы спамом. Конвейер деплоя здоров, Vercel MCP
+доступен штатно.
+
+Снос diag-v488 выполнен раздельным `git rm src/routes/diagDaily.js` +
+`Edit` app.js (импорт + роут) на dev-ветке (`git branch --show-current`
+проверен перед стартом), `git add src/app.js` отдельной командой,
+`grep -n diag src/app.js` пусто перед коммитом.
