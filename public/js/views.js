@@ -12779,13 +12779,23 @@ async function sdEditChannel(acc, users, onSaved) {
     el('option', { value: v, ...(acc && acc.channel === v ? { selected: 'selected' } : {}) }, l)));
   const legalI = el('input', { type: 'text', value: acc?.legal_entity || '' });
   const keyI = el('input', { type: 'text', placeholder: acc?.key_set ? 'оставьте пустым — ключ не изменится' : 'API-ключ' });
+  const keyHint = el('div', { style: { fontSize: '11px', color: 'var(--text-muted)', marginTop: '2px' } });
+  function updateKeyHint() {
+    const v = chanS.value;
+    if (v === 'wb') keyHint.textContent = 'WB: токен из seller.wildberries.ru (категории Контент + Маркетплейс).';
+    else if (v === 'ozon') keyHint.textContent = 'Ozon: JSON {"client_id":"...","api_key":"..."} или строка «client_id:api_key».';
+    else if (v === 'ym') keyHint.textContent = 'ЯМ: JSON {"token":"...","business_id":"..."} или строка «business_id:token».';
+    else keyHint.textContent = '';
+  }
+  chanS.addEventListener('change', updateKeyHint);
+  updateKeyHint();
   const mgrS = el('select', {}, el('option', { value: '' }, '— менеджер канала —'),
     ...userList.map((u) => el('option', { value: String(u.id), ...(acc && Number(acc.manager_id) === Number(u.id) ? { selected: 'selected' } : {}) },
       `${u.name || u.email} (${tr('role', u.role) || u.role})`)));
   const body = el('div', {},
     el('div', { class: 'form-row' }, el('label', {}, 'Канал'), chanS),
     el('div', { class: 'form-row' }, el('label', {}, 'Юрлицо'), legalI),
-    el('div', { class: 'form-row' }, el('label', {}, 'API-ключ'), keyI),
+    el('div', { class: 'form-row' }, el('label', {}, 'API-ключ'), el('div', {}, keyI, keyHint)),
     el('div', { class: 'form-row' }, el('label', {}, 'Менеджер канала'), mgrS));
   await openModal(acc ? 'Изменить канал' : 'Новый канал', body, { primaryLabel: 'Сохранить', onSubmit: async () => {
     const payload = { channel: chanS.value, legal_entity: legalI.value.trim() || null, manager_id: mgrS.value ? Number(mgrS.value) : null };
@@ -12936,28 +12946,17 @@ function renderSdChannelMapCard(isAdmin) {
   // Подтяжка из WB: по ВЫБРАННОМУ юрлицу, а при «Все юрлица» — по всем WB-каналам
   // с ключом (раньше бралось только первое юрлицо — это и был баг). Действие
   // админское (пишет много строк + ходит во внешний API), фильтр — для всех.
+  // Подтяжка из МП — универсальная модалка: выбираешь галочками, что и откуда
+  // выгрузить (канал × юрлицо). Заменила «Подтянуть из WB API» (только WB).
   let pullBtn = null;
   if (isAdmin) {
-    pullBtn = el('button', { class: 'btn btn-sm', onClick: async () => {
-      const targets = accSel.value ? wbAccounts.filter((a) => String(a.id) === accSel.value) : wbAccounts.slice();
-      if (!targets.length) { toast('Нет WB-каналов с ключом. Заведи их в «Каналы».', 'error'); return; }
-      let total = 0; const errs = [];
-      toast(`Тяну номенклатуру WB (юрлиц: ${targets.length})…`, 'success');
-      for (const a of targets) {
-        try { const r = await api.sdPullWb(a.id); total += Number(r.pulled) || 0; }
-        catch (e) { errs.push(`${a.legal_entity || ('#' + a.id)}: ${e.message}`); }
-      }
-      if (errs.length) toast(`Подтянуто ${total}. Ошибки: ${errs.join(' | ')}`, 'error');
-      else toast(`Подтянуто из WB: ${total}`, 'success');
-      reload();
-    } }, 'Подтянуть из WB API');
+    pullBtn = el('button', { class: 'btn btn-sm btn-primary', onClick: () => sdPullFromMpModal(reload) }, '⬇ Подтянуть из МП');
     controls.append(pullBtn);
   }
-  // Фильтр по юрлицу и подтяжка актуальны только для WB.
+  // Фильтр по юрлицу актуален только для WB (у Ozon/ЯМ этот фильтр пока не используется в matching).
   function syncChannelUi() {
     const isWb = chanSel.value === 'wb';
     accSel.style.display = isWb ? '' : 'none';
-    if (pullBtn) pullBtn.style.display = isWb ? '' : 'none';
   }
   chanSel.addEventListener('change', () => { accSel.value = ''; syncChannelUi(); reload(); });
   statusSel.addEventListener('change', () => reload());
@@ -13015,6 +13014,69 @@ function renderSdChannelMapCard(isAdmin) {
   syncChannelUi();
   reload();
   return card;
+}
+
+// Универсальная подтяжка номенклатуры из МП: чекбоксы по всем заведённым каналам
+// (WB / Ozon / ЯМ), выбираешь точечно юрлица — тянем только их. Ошибки по каналам
+// отдельно, чтобы одно юрлицо не заблокировало остальные.
+async function sdPullFromMpModal(onDone) {
+  let accounts = [];
+  try { accounts = await api.sdChannelAccountsLite(); } catch (e) { toast(e.message, 'error'); return; }
+  const pullable = (accounts || []).filter((a) => ['wb', 'ozon', 'ym'].includes(a.channel));
+  if (!pullable.length) { toast('Нет каналов с ключами. Заведи их в «Каналы».', 'error'); return; }
+  const groups = { wb: [], ozon: [], ym: [] };
+  for (const a of pullable) groups[a.channel].push(a);
+  const checkboxes = new Map(); // acc.id → input
+  const body = el('div', {});
+  body.append(el('div', { style: { fontSize: '12px', color: 'var(--text-muted)', marginBottom: '8px' } },
+    'Выбери, что и откуда выгрузить. Каждый канал тянется независимо (ошибка одного не мешает остальным). Габариты и штрихкоды из кабинета МП сохраняются вместе с номенклатурой (для сверки размеров).'));
+  const status = el('div', { style: { fontSize: '13px', minHeight: '18px', marginTop: '8px' } });
+  for (const ch of ['wb', 'ozon', 'ym']) {
+    if (!groups[ch].length) continue;
+    const chLabel = SD_CHANNELS[ch] || ch.toUpperCase();
+    const group = el('div', { style: { marginBottom: '10px', paddingBottom: '6px', borderBottom: '1px solid var(--border, #e5e7eb)' } });
+    const groupHeader = el('div', { style: { display: 'flex', alignItems: 'center', gap: '6px', fontWeight: '600', marginBottom: '4px' } });
+    const allCb = el('input', { type: 'checkbox', checked: 'checked', style: { marginRight: '4px' } });
+    allCb.addEventListener('change', () => {
+      for (const a of groups[ch]) checkboxes.get(a.id).checked = allCb.checked;
+    });
+    groupHeader.append(allCb, el('span', {}, `${chLabel} (${groups[ch].length} юрлиц)`));
+    group.append(groupHeader);
+    for (const a of groups[ch]) {
+      const cb = el('input', { type: 'checkbox', checked: 'checked', style: { marginRight: '6px' } });
+      checkboxes.set(a.id, cb);
+      const label = el('label', { style: { display: 'flex', alignItems: 'center', paddingLeft: '20px', margin: '2px 0' } },
+        cb, el('span', {}, a.legal_entity || ('#' + a.id)));
+      group.append(label);
+    }
+    body.append(group);
+  }
+  body.append(status);
+  await openModal('Подтянуть номенклатуру из МП', body, { primaryLabel: 'Подтянуть выбранные', onSubmit: async () => {
+    const selected = pullable.filter((a) => checkboxes.get(a.id)?.checked);
+    if (!selected.length) { toast('Ничего не выбрано', 'error'); return false; }
+    let total = 0; const errs = [];
+    for (let i = 0; i < selected.length; i += 1) {
+      const a = selected[i];
+      status.textContent = `Тяну ${i + 1}/${selected.length}: ${(SD_CHANNELS[a.channel] || a.channel).toUpperCase()} · ${a.legal_entity || '#' + a.id}…`;
+      try {
+        const fn = a.channel === 'wb' ? api.sdPullWb : (a.channel === 'ozon' ? api.sdPullOzon : api.sdPullYm);
+        const r = await fn(a.id);
+        total += Number(r.pulled) || 0;
+      } catch (e) { errs.push(`${(SD_CHANNELS[a.channel] || a.channel).toUpperCase()} · ${a.legal_entity || '#' + a.id}: ${e.message}`); }
+    }
+    // Авто-мапинг по артикулу сета для каналов, где были подтяжки — как после «Подтянуть из МС».
+    const touchedChannels = [...new Set(selected.map((a) => a.channel))];
+    let autoMatched = 0;
+    for (const ch of touchedChannels) {
+      try { const a = await api.sdAutoMatchArticle(ch); autoMatched += a.matched || 0; } catch { /* канал мог быть пуст */ }
+    }
+    let msg = `Подтянуто позиций: ${total}`;
+    if (autoMatched) msg += `. Сопоставлено с сетами по артикулу: ${autoMatched}`;
+    if (errs.length) toast(`${msg}. Ошибки: ${errs.join(' | ')}`, 'error');
+    else toast(msg, 'success');
+    onDone?.();
+  } });
 }
 
 async function sdImportChannelModal(channel, onSaved) {

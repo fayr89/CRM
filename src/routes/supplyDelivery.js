@@ -20,7 +20,8 @@ import {
 } from '../services/supplyDeliverySchema.js';
 import { encryptSecret, decryptSecret } from '../services/secrets.js';
 import {
-  fetchWbCards, wbNewOrders, wbCreateSupply, wbAddOrderToSupply,
+  fetchWbCards, fetchOzonCards, fetchYmCards,
+  wbNewOrders, wbCreateSupply, wbAddOrderToSupply,
   wbSupplyBarcode, wbDeliverSupply, wbReshipmentOrders,
 } from '../services/channelApis.js';
 import { fetchMoyskladBundlesPage, resolveMsFolderHref, pushMoyskladBundle } from '../services/moysklad.js';
@@ -1058,28 +1059,17 @@ router.post('/channel-map/import', requireOperate, asyncHandler(async (req, res)
   res.json({ ok: true, imported: n });
 }));
 
-// Подтяжка номенклатуры WB через API (ключ берётся из справочника «Каналы»).
-router.post('/channel-map/pull-wb', requireOperate, asyncHandler(async (req, res) => {
-  await ensureSupplyDeliverySchema();
-  const { channel_account_id } = z.object({ channel_account_id: z.number().int().positive() }).parse(req.body);
-  const acc = await db.get('SELECT * FROM sd_channel_accounts WHERE id = ? AND channel = ?', channel_account_id, 'wb');
-  if (!acc) throw BadRequest('Не найден WB-канал с ключом. Заведите его в справочнике «Каналы».');
-  if (!acc.api_key_enc) throw BadRequest('У этого канала не задан API-ключ');
-  const key = decryptSecret(acc.api_key_enc);
-  let items;
-  try { items = await fetchWbCards(key, { limit: 100 }); }
-  catch (e) { throw BadRequest(e.message); }
-  // Дедуп по ключу конфликта (channel_barcode|channel_sku): иначе при повторе
-  // штрихкода в одном батче Postgres падает «ON CONFLICT cannot affect row twice».
-  // Заодно ужимаем объём. Последняя запись по ключу побеждает.
+// Общий батч-upsert номенклатуры канала (используется всеми pull-* эндпоинтами).
+// items = [{ channel_barcode, channel_sku, channel_name, channel_extra, channel_dim_* }].
+async function upsertChannelItems(channel, channelAccountId, items) {
+  // Дедуп по ключу конфликта: иначе при повторе штрихкода в одном батче Postgres
+  // падает «ON CONFLICT cannot affect row twice». Последняя запись по ключу побеждает.
   const uniq = new Map();
   for (const it of items) {
     if (!it.channel_barcode && !it.channel_sku) continue;
     uniq.set(`${it.channel_barcode || ''}|${it.channel_sku || ''}`, it);
   }
   const valid = [...uniq.values()];
-  // Батч-вставка чанками — каталог может быть большим (пагинация тянет всё),
-  // построчный upsert рискует упереться в лимит времени функции (60с).
   let n = 0;
   const CHUNK = 200;
   for (let i = 0; i < valid.length; i += CHUNK) {
@@ -1087,9 +1077,9 @@ router.post('/channel-map/pull-wb', requireOperate, asyncHandler(async (req, res
     const rowsSql = [];
     const params = [];
     for (const it of chunk) {
-      rowsSql.push("('wb', ?, ?, ?, ?::jsonb, ?, ?, ?, ?)");
-      params.push(it.channel_barcode ?? null, it.channel_sku ?? null, it.channel_name ?? null,
-        JSON.stringify(it.channel_extra || {}), channel_account_id,
+      rowsSql.push('(?, ?, ?, ?, ?::jsonb, ?, ?, ?, ?)');
+      params.push(channel, it.channel_barcode ?? null, it.channel_sku ?? null, it.channel_name ?? null,
+        JSON.stringify(it.channel_extra || {}), channelAccountId,
         it.channel_dim_l ?? null, it.channel_dim_w ?? null, it.channel_dim_h ?? null);
     }
     await db.run(
@@ -1104,6 +1094,51 @@ router.post('/channel-map/pull-wb', requireOperate, asyncHandler(async (req, res
     );
     n += chunk.length;
   }
+  return n;
+}
+
+// Подтяжка номенклатуры WB через API (ключ берётся из справочника «Каналы»).
+router.post('/channel-map/pull-wb', requireOperate, asyncHandler(async (req, res) => {
+  await ensureSupplyDeliverySchema();
+  const { channel_account_id } = z.object({ channel_account_id: z.number().int().positive() }).parse(req.body);
+  const acc = await db.get('SELECT * FROM sd_channel_accounts WHERE id = ? AND channel = ?', channel_account_id, 'wb');
+  if (!acc) throw BadRequest('Не найден WB-канал с ключом. Заведите его в справочнике «Каналы».');
+  if (!acc.api_key_enc) throw BadRequest('У этого канала не задан API-ключ');
+  const key = decryptSecret(acc.api_key_enc);
+  let items;
+  try { items = await fetchWbCards(key, { limit: 100 }); }
+  catch (e) { throw BadRequest(e.message); }
+  const n = await upsertChannelItems('wb', channel_account_id, items);
+  res.json({ ok: true, pulled: n, legal_entity: acc.legal_entity });
+}));
+
+// Подтяжка номенклатуры Ozon (Client-Id + Api-Key в JSON api_key_enc).
+router.post('/channel-map/pull-ozon', requireOperate, asyncHandler(async (req, res) => {
+  await ensureSupplyDeliverySchema();
+  const { channel_account_id } = z.object({ channel_account_id: z.number().int().positive() }).parse(req.body);
+  const acc = await db.get('SELECT * FROM sd_channel_accounts WHERE id = ? AND channel = ?', channel_account_id, 'ozon');
+  if (!acc) throw BadRequest('Не найден Ozon-канал с ключом. Заведите его в справочнике «Каналы».');
+  if (!acc.api_key_enc) throw BadRequest('У этого канала не задан ключ Ozon (Client-Id + Api-Key)');
+  const key = decryptSecret(acc.api_key_enc);
+  let items;
+  try { items = await fetchOzonCards(key); }
+  catch (e) { throw BadRequest(e.message); }
+  const n = await upsertChannelItems('ozon', channel_account_id, items);
+  res.json({ ok: true, pulled: n, legal_entity: acc.legal_entity });
+}));
+
+// Подтяжка номенклатуры Яндекс Маркет (business_id + OAuth-токен в JSON api_key_enc).
+router.post('/channel-map/pull-ym', requireOperate, asyncHandler(async (req, res) => {
+  await ensureSupplyDeliverySchema();
+  const { channel_account_id } = z.object({ channel_account_id: z.number().int().positive() }).parse(req.body);
+  const acc = await db.get('SELECT * FROM sd_channel_accounts WHERE id = ? AND channel = ?', channel_account_id, 'ym');
+  if (!acc) throw BadRequest('Не найден ЯМ-канал с ключом. Заведите его в справочнике «Каналы».');
+  if (!acc.api_key_enc) throw BadRequest('У этого канала не задан ключ ЯМ (токен + business_id)');
+  const key = decryptSecret(acc.api_key_enc);
+  let items;
+  try { items = await fetchYmCards(key); }
+  catch (e) { throw BadRequest(e.message); }
+  const n = await upsertChannelItems('ym', channel_account_id, items);
   res.json({ ok: true, pulled: n, legal_entity: acc.legal_entity });
 }));
 
