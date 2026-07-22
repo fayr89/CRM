@@ -8575,3 +8575,48 @@ Orphan-ветки: `git ls-remote --heads` показал 1049 в этом об�
 `Edit` app.js (импорт + роут) на dev-ветке (`git branch --show-current`
 проверен перед стартом), `git add src/app.js` отдельной командой,
 `grep -n diag src/app.js` пусто перед коммитом.
+
+**2026-07-22 (v508): обход не выполнен — Vercel MCP недоступен в сессии.**
+Сессии назначена ветка `claude/inspiring-cannon-4qebmi`; локальный HEAD уже
+строго совпадал с прод (`44e945f`, финал v507) — просто push ветки как есть.
+
+Добавил diag-v508 (`op=meta` only, по шаблону v402-507), push dev → checkout
+прод → `git fetch` + `reset --hard origin/...` + `merge --ff-only` — fast-forward
+прошёл чисто (2 файла, 33 insertions), push прод ок.
+
+Дальше застрял: коннектор `Vercel` в `ListConnectors` показывает
+`installState: connected`, `enabledInChat: true`, но ни один инструмент
+`mcp__Vercel__*` не резолвится через `ToolSearch` (проверено ~6 разными
+запросами: `"vercel"`, `"vercel deployment"`, `"select:mcp__Vercel__..."`,
+`"081f8cd7"` — префикс installedServerId из этого же `ListConnectors`,
+`"get_deployment list_deployments"`, `"check_domain_status..."` — везде
+`No matching deferred tools found`). Прямой `curl /health` тоже не прошёл
+(сетевой прокси вернул exit 56, соединение не установлено), `WebFetch`
+на `/health` — ожидаемый 403 (Vercel protection, см. CLAUDE.md). Итог:
+никакого способа прочитать `/health` или дёрнуть diag-эндпоинт в этом
+обходе не нашлось — ни Этап 1 (approved/revision/rejected proposals), ни
+Этап 2 (обход feedback) выполнить не удалось, т.к. оба требуют
+`web_fetch_vercel_url`.
+
+Раз diag-эндпоинт оказался бесполезен без возможности его вызвать, снёс
+его сразу же (не стал оставлять висеть в проде до следующего обхода):
+`git rm src/routes/diagDaily.js` + `Edit` app.js, коммит на dev, fast-forward
+в прод, push. Прод-ветка вернулась к состоянию без diag (те же файлы,
+что и после v507), содержательных изменений в этом обходе нет.
+
+Данных о текущем состоянии `proposals`/`feedback` в этом обходе нет —
+последние подтверждённые цифры (v507): `proposals_by_status={done:62}`,
+`feedback_by_status={awaiting_approval:15, closed:44, open:4}`,
+`proposals_last_update`/`feedback_last_msg`=2026-07-12T10:44:03.911Z /
+2026-07-12T10:45:23.756Z (без изменений 10 дней, 254 подтверждения подряд
+на v507).
+
+Это новый тип находки — не билд-инцидент на стороне Vercel (как v255,
+чинился сам за ~51 мин), а отказ MCP-инструмента в самой сессии. Похоже
+на flaky-подключение коннектора, а не на системную поломку (в предыдущих
+507 обходах `web_fetch_vercel_url` штатно резолвился и работал). Push-
+уведомление отправлено сразу по правилу «обход не смог выполниться» —
+не стал жечь повторные попытки/сессии на диагностику самого MCP-слоя,
+это не в репозитории. **Если увидишь это снова в следующем обходе** —
+не нужно больше 1-2 попыток `ToolSearch` на подтверждение, сразу к push
+и короткой пометке здесь, как и в этом случае.
