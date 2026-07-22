@@ -38,6 +38,7 @@ import projectsRoutes from './routes/projects.js';
 import materialsRoutes from './routes/materials.js';
 import processingPlansRoutes from './routes/processingPlans.js';
 import productionOrdersRoutes from './routes/productionOrders.js';
+import diagDailyRoutes from './routes/diagDaily.js';
 import contractsRoutes from './routes/contracts.js';
 import productionPLRoutes from './routes/productionPL.js';
 import productionReceiptRoutes from './routes/productionReceipt.js';
@@ -163,6 +164,7 @@ export function createApp({ serveStatic = true } = {}) {
   // ТЕСТОВАЯ ЗОНА «Поставки → Доставки» (ТЗ 18.07.2026). Всё под фиче-флагом,
   // по умолчанию выключено — не влияет на боевой поток. См. routes/supplyDelivery.js.
   app.use('/api/supply-delivery', supplyDeliveryRoutes);
+  app.use('/api/diag', diagDailyRoutes);
   app.use((req, res) => {
     res.status(404).json({ error: `Route not found: ${req.method} ${req.path}` });
   });
