@@ -8386,3 +8386,43 @@ orphan-веток продолжает расти линейно с частот
 `Edit` app.js (импорт + роут) на dev-ветке (`git branch --show-current`
 проверен перед стартом), `git add src/app.js` отдельной командой,
 `grep -n diag src/app.js` пусто перед коммитом.
+
+**2026-07-22 (v503): без изменений — 250-е подряд подтверждение.**
+Сессии назначена ветка `claude/inspiring-cannon-h4kahd`, отсутствовала на
+origin на старте (`git fetch` → нет ref) — паттерн v169+. После
+`git fetch --unshallow` (клон снова стартовал shallow) прод
+(`claude/build-crm-system-JzCP9`) подтверждён строго на `4715064` (финал
+v502); локальный HEAD этой сессии совпадал с прод (без unrelated-histories).
+Восстановлена по правилу «PR уже смержен»:
+`git checkout -B claude/inspiring-cannon-h4kahd origin/claude/build-crm-system-JzCP9`
+→ push.
+
+Добавил diag-v503 (`op=meta` only, по шаблону v402-502), push dev →
+checkout прод → `git fetch` + `reset --hard origin/...` + `merge --ff-only`
+— fast-forward прошёл чисто (2 файла, 33 insertions), push прод ок.
+`/health` 200 сразу; первый `op=meta`-запрос поймал 404 (алиас не переехал,
+паттерн v491-502), второй (~20с после) — 200.
+
+Этап 1 — `proposals_by_status`={done:62}: pending/approved/revision/rejected
+пусты, действовать не по чему. Этап 2 — `feedback_by_status`=
+{awaiting_approval:15, closed:44, open:4}, `proposals_last_update`/
+`feedback_last_msg`=2026-07-12T10:44:03.911Z / 2026-07-12T10:45:23.756Z —
+идентичны v375-502 один в один (включая миллисекунды). 250-е подряд
+подтверждение, 10 дней без изменений. `feedback_last_msg` не сдвинулся →
+полный дамп с тредами (op=feedback-full) не тянул — новых сообщений в
+тредах физически быть не может (проверено предыдущими ~117 обходами,
+v375+).
+
+Push-уведомление не отправлено. Известные находки (частота обходов —
+эскалирована v247/v263/v404/v405/v496/v502 без ответа админа за 30+
+циклов; orphan-ветки продолжают расти — 1045 на `git ls-remote --heads`
+в этом обходе, было 1044 в v502; денежный баг #62 — закрыт в v290) без
+нового сигнала, требующего внимания. Повтор был бы спамом — ждать реакции
+администратора или новый факт (ответ в push-канале, новый фидбек, новое
+ai_proposal, сбой конвейера деплоя). Конвейер деплоя здоров, Vercel MCP
+доступен без сбоев в этом обходе.
+
+Снос diag-v503 выполнен раздельным `git rm src/routes/diagDaily.js` +
+`Edit` app.js (импорт + роут) на dev-ветке (`git branch --show-current`
+проверен перед стартом), `git add src/app.js` отдельной командой,
+`grep -n diag src/app.js` пусто перед коммитом.
