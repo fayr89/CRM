@@ -174,6 +174,8 @@ export async function fetchOzonCards(plain, { pageSize = 200, maxPages = 200 } =
   const headers = { 'Client-Id': clientId, 'Api-Key': apiKey, 'Content-Type': 'application/json' };
   const out = [];
   let lastId = '';
+  let firstPageRaw = null;
+  let pagesFetched = 0;
   for (let page = 0; page < maxPages; page += 1) {
     let listRes;
     try {
@@ -184,9 +186,12 @@ export async function fetchOzonCards(plain, { pageSize = 200, maxPages = 200 } =
       });
     } catch (e) { throw new Error('Ozon API недоступен: ' + (e?.message || e)); }
     const text = await listRes.text().catch(() => '');
-    if (!listRes.ok) throw new Error(`Ozon API ${listRes.status}: ${text.slice(0, 300)}`);
+    if (!listRes.ok) throw new Error(`Ozon API ${listRes.status}: ${text.slice(0, 500)}`);
     const listData = text ? JSON.parse(text) : {};
-    const items = listData?.result?.items || [];
+    if (page === 0) firstPageRaw = listData;
+    // Разные версии Ozon возвращают items в result.items или items.
+    const items = listData?.result?.items || listData?.items || [];
+    pagesFetched += 1;
     if (!items.length) break;
     // Детали: батч по product_id (максимум 1000 на запрос).
     const productIds = items.map((x) => x.product_id).filter(Boolean);
@@ -228,8 +233,12 @@ export async function fetchOzonCards(plain, { pageSize = 200, maxPages = 200 } =
       }
     }
     // Пагинация: last_id из ответа. Пусто — конец.
-    lastId = listData?.result?.last_id || '';
+    lastId = listData?.result?.last_id || listData?.last_id || '';
     if (!lastId || items.length < pageSize) break;
+  }
+  if (!out.length && pagesFetched > 0) {
+    const keys = Object.keys(firstPageRaw || {}).slice(0, 10).join(', ');
+    throw new Error(`Ozon API ответил без товаров. Проверь Client-Id и Api-Key. Ключи ответа: [${keys}]. Начало: ${JSON.stringify(firstPageRaw).slice(0, 300)}`);
   }
   return out;
 }
@@ -252,13 +261,16 @@ export function parseYmCreds(plain) {
 }
 
 // Товары продавца ЯМ: POST /businesses/{businessId}/offer-mappings — постранично
-// по pageToken (курсор). Возвращает offer с полем weightDimensions (см).
+// по page_token (курсор). Ответ содержит offer с barcodes и weightDimensions (см).
+// Формат ответа v2 API убрал обёртку `result` — берём и с обёрткой, и без.
 export async function fetchYmCards(plain, { pageSize = 200, maxPages = 200 } = {}) {
   const { token, businessId } = parseYmCreds(plain);
   const url = `https://api.partner.market.yandex.ru/businesses/${encodeURIComponent(businessId)}/offer-mappings?limit=${pageSize}`;
   const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
   const out = [];
   let pageToken = '';
+  let pagesFetched = 0;
+  let firstPageRaw = null; // на случай, если пришло 0 — покажем сырой ответ для диагностики
   for (let page = 0; page < maxPages; page += 1) {
     let res;
     const u = pageToken ? `${url}&page_token=${encodeURIComponent(pageToken)}` : url;
@@ -270,31 +282,44 @@ export async function fetchYmCards(plain, { pageSize = 200, maxPages = 200 } = {
       });
     } catch (e) { throw new Error('ЯМ API недоступен: ' + (e?.message || e)); }
     const text = await res.text().catch(() => '');
-    if (!res.ok) throw new Error(`ЯМ API ${res.status}: ${text.slice(0, 300)}`);
+    if (!res.ok) throw new Error(`ЯМ API ${res.status}: ${text.slice(0, 500)}`);
     const data = text ? JSON.parse(text) : {};
-    const rows = data?.result?.offerMappings || [];
+    if (page === 0) firstPageRaw = data;
+    // v2 может отдавать offerMappings без result-обёртки; также встречается `offers`.
+    const rows = data?.result?.offerMappings
+      || data?.offerMappings
+      || data?.result?.offers
+      || data?.offers
+      || [];
+    pagesFetched += 1;
     if (!rows.length) break;
     for (const row of rows) {
-      const o = row?.offer || {};
-      const offerId = o.offerId || null; // SKU продавца — это «артикул сета» на ЯМ.
+      // row может быть { offer, mapping } или напрямую offer.
+      const o = row?.offer || row || {};
+      const offerId = o.offerId || o.shopSku || null;
       const name = o.name || offerId || null;
-      const bcs = o.barcodes || [];
+      const bcs = o.barcodes || o.gtin || [];
       const wd = o.weightDimensions || {};
       const base = {
         channel_name: name,
-        channel_extra: { shopSku: row?.mapping?.marketSku || null },
+        channel_extra: { marketSku: row?.mapping?.marketSku || o.marketSku || null },
         channel_dim_l: wd.length != null ? Number(wd.length) : null,
         channel_dim_w: wd.width != null ? Number(wd.width) : null,
         channel_dim_h: wd.height != null ? Number(wd.height) : null,
       };
-      if (!bcs.length) {
+      const bcArr = Array.isArray(bcs) ? bcs : (bcs ? [bcs] : []);
+      if (!bcArr.length) {
         out.push({ ...base, channel_barcode: null, channel_sku: offerId });
       } else {
-        for (const bc of bcs) out.push({ ...base, channel_barcode: String(bc), channel_sku: offerId });
+        for (const bc of bcArr) out.push({ ...base, channel_barcode: String(bc), channel_sku: offerId });
       }
     }
-    pageToken = data?.result?.paging?.nextPageToken || '';
+    pageToken = data?.result?.paging?.nextPageToken || data?.paging?.nextPageToken || '';
     if (!pageToken) break;
+  }
+  if (!out.length && pagesFetched > 0) {
+    const keys = Object.keys(firstPageRaw || {}).slice(0, 10).join(', ');
+    throw new Error(`ЯМ API ответил без товаров. Проверь business_id и права токена. Ключи ответа: [${keys}]. Начало: ${JSON.stringify(firstPageRaw).slice(0, 300)}`);
   }
   return out;
 }

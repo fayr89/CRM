@@ -1124,7 +1124,7 @@ router.post('/channel-map/pull-ozon', requireOperate, asyncHandler(async (req, r
   try { items = await fetchOzonCards(key); }
   catch (e) { throw BadRequest(e.message); }
   const n = await upsertChannelItems('ozon', channel_account_id, items);
-  res.json({ ok: true, pulled: n, legal_entity: acc.legal_entity });
+  res.json({ ok: true, pulled: n, received: items.length, legal_entity: acc.legal_entity });
 }));
 
 // Подтяжка номенклатуры Яндекс Маркет (business_id + OAuth-токен в JSON api_key_enc).
@@ -1139,7 +1139,7 @@ router.post('/channel-map/pull-ym', requireOperate, asyncHandler(async (req, res
   try { items = await fetchYmCards(key); }
   catch (e) { throw BadRequest(e.message); }
   const n = await upsertChannelItems('ym', channel_account_id, items);
-  res.json({ ok: true, pulled: n, legal_entity: acc.legal_entity });
+  res.json({ ok: true, pulled: n, received: items.length, legal_entity: acc.legal_entity });
 }));
 
 // Авто-сопоставление: артикул канала = артикул склада-компонента какого-то сета.
