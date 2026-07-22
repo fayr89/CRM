@@ -8302,3 +8302,43 @@ push-уведомлением в v496, без ответа админа и бе�
 `Edit` app.js (импорт + роут) на dev-ветке (`git branch --show-current`
 проверен перед стартом), `git add src/app.js` отдельной командой,
 `grep -n diag src/app.js` пусто перед коммитом.
+
+**2026-07-22 (v501): без изменений — 248-е подряд подтверждение.**
+Сессии назначена ветка `claude/inspiring-cannon-ca8ja0`, отсутствовала на
+origin на старте (`git fetch` → нет ref) — паттерн v169+. После
+`git fetch --unshallow` (клон снова стартовал shallow, глубина ~50) прод
+(`claude/build-crm-system-JzCP9`) подтверждён строго на `952795d` (финал
+v500); локальный HEAD этой сессии совпадал с прод (без unrelated-histories).
+Восстановлена по правилу «PR уже смержен»:
+`git checkout -B claude/inspiring-cannon-ca8ja0 origin/claude/build-crm-system-JzCP9`
+→ push.
+
+Добавил diag-v501 (`op=meta` only, по шаблону v402-500), push dev →
+checkout прод → `git fetch` + `reset --hard origin/...` + `merge --ff-only`
+— fast-forward прошёл чисто (2 файла, 33 insertions), push прод ок.
+`/health` 200 сразу; первый `op=meta`-запрос поймал 404 (алиас не переехал,
+паттерн v491-500), второй (~20с после) — 200.
+
+Этап 1 — `proposals_by_status`={done:62}: pending/approved/revision/
+rejected пусты, действовать не по чему. Этап 2 —
+`feedback_by_status`={awaiting_approval:15, closed:44, open:4},
+`proposals_last_update`/`feedback_last_msg`=2026-07-12T10:44:03.911Z /
+2026-07-12T10:45:23.756Z — идентичны v375-500 один в один (включая
+миллисекунды). 248-е подряд подтверждение, 10 дней без изменений.
+`feedback_last_msg` не сдвинулся → полный дамп с тредами (op=feedback-full)
+не тянул — новых сообщений в тредах физически быть не может (проверено
+предыдущими ~115 обходами, v375+).
+
+Push-уведомление не отправлено. Известные находки (частота обходов/orphan-
+ветки, 4 билда/цикл, растущее число веток — 1042 на `git ls-remote --heads`
+в этом обходе, было 1037 в v496) уже эскалированы push-уведомлением в v496,
+без ответа админа и без нового факта, требующего внимания (calendar-day
+переход сам по себе не новый факт по собственному критерию из v497-500).
+Повтор был бы спамом — ждать реакции админа или новый факт (ответ в push-
+канале, новый фидбек, новое ai_proposal, сбой конвейера деплоя). Конвейер
+деплоя здоров, Vercel MCP доступен без сбоев в этом обходе.
+
+Снос diag-v501 выполнен раздельным `git rm src/routes/diagDaily.js` +
+`Edit` app.js (импорт + роут) на dev-ветке (`git branch --show-current`
+проверен перед стартом), `git add src/app.js` отдельной командой,
+`grep -n diag src/app.js` пусто перед коммитом.
