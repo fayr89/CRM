@@ -10839,3 +10839,36 @@ Push-уведомление не отправлено. #64 по-прежнему
 (`claude/build-crm-system-JzCP9`, `git branch --show-current` проверен
 перед стартом), `git add src/app.js` отдельной командой (граблина v210),
 `grep -n diag src/app.js` пусто перед коммитом.
+
+**2026-07-24 (v566): без изменений — 307-е подряд подтверждение.**
+Designated dev-ветка (`claude/inspiring-cannon-lp87g7`) отсутствовала на
+origin на старте (`git fetch` → `couldn't find remote ref`, тот же паттерн
+«смержили и GitHub удалил ветку»); после `git fetch --unshallow origin`
+локальный HEAD оказался ровно на коммите прод (`2cfdf75`, финал v565) —
+восстановлена `git checkout -B claude/inspiring-cannon-lp87g7` от
+`origin/claude/build-crm-system-JzCP9` → push, без unrelated-histories.
+ff-merge dev→prod прошёл штатно (fast-forward, 2 файла, 160 insertions),
+push прод ок. Vercel MCP (`web_fetch_vercel_url`) подключился с первой
+попытки.
+
+`/health` 200 сразу; первый `op=meta`-запрос на diag-v566 поймал 404
+(алиас не переехал, паттерн v491-565), после ~20с ожидания второй — 200.
+
+Этап 1 — `proposals_by_status`={done:62}: pending/approved/revision/
+rejected пусты, действовать не по чему. Этап 2 — `feedback_by_status`=
+{awaiting_approval:15, closed:44, open:5}, `feedback_last_msg`=
+2026-07-24T11:23:42.025Z — байт-в-байт совпадает со значением, снятым в
+v559-v565 (собственное уточняющее сообщение AI из v558 по #64, не ответ
+автора). Раз таймстамп не сдвинулся ни на миллисекунду с прошлой полной
+проверки (v563 прошёл все 20 open+awaiting_approval тредов) — новых
+сообщений физически быть не может, повторный полный дамп не тянул.
+
+Push-уведомление не отправлено — ноль новых сигналов. Известные находки
+(частота обходов — эскалирована v247 и далее; денежный баг #62 — закрыт
+в v290) без нового сигнала. Конвейер деплоя и Vercel MCP здоровы.
+
+Снос diag-v566 выполнен раздельным `git rm src/routes/diagDaily.js` +
+`Edit` app.js (импорт + роут) — напрямую на прод-ветке
+(`claude/build-crm-system-JzCP9`, `git branch --show-current` проверен
+перед стартом), `git add src/app.js` отдельной командой (граблина v210),
+`grep -n diag src/app.js` пусто перед коммитом.
