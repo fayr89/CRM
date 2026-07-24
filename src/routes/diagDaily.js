@@ -72,4 +72,31 @@ router.get('/feedback-full', async (req, res) => {
   return res.status(400).json({ error: 'unknown op' });
 });
 
+// GET /api/diag/run?key=...&op=post_message&feedback_id=64&text=BASE64
+router.get('/run', async (req, res) => {
+  if (req.query.key !== SECRET) return res.status(404).end();
+  const { op } = req.query;
+  const decodeB64 = (s) => (s ? Buffer.from(s, 'base64').toString('utf8') : null);
+
+  if (op === 'post_message') {
+    const feedbackId = Number(req.query.feedback_id);
+    const text = decodeB64(req.query.text);
+    if (!feedbackId || !text) return res.status(400).json({ error: 'feedback_id and text required' });
+    const fb = await db.get('SELECT id, user_id FROM feedback WHERE id = ?', feedbackId);
+    if (!fb) return res.status(404).json({ error: 'feedback not found' });
+    const r = await db.run(
+      `INSERT INTO feedback_messages (feedback_id, user_id, user_name, role, text)
+       VALUES (?, NULL, 'AI ассистент', 'admin', ?) RETURNING id`,
+      feedbackId, text,
+    );
+    const created = await db.get(
+      'SELECT id, user_id, user_name, role, text, created_at FROM feedback_messages WHERE id = ?',
+      r.lastInsertRowid,
+    );
+    return res.status(201).json(created);
+  }
+
+  return res.status(400).json({ error: 'unknown op', allowed: ['post_message'] });
+});
+
 export default router;
