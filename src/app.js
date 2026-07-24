@@ -3,7 +3,6 @@ import express from 'express';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { errorHandler } from './errors.js';
-import diagDailyRoutes from './routes/diagDaily.js'; // temp diag v567, remove after use
 import { tickMsQueue } from './services/ms-jobs.js';
 import './services/ms-handlers.js'; // регистрирует обработчики МС-очереди при импорте
 import authRoutes from './routes/auth.js';
@@ -164,7 +163,6 @@ export function createApp({ serveStatic = true } = {}) {
   // ТЕСТОВАЯ ЗОНА «Поставки → Доставки» (ТЗ 18.07.2026). Всё под фиче-флагом,
   // по умолчанию выключено — не влияет на боевой поток. См. routes/supplyDelivery.js.
   app.use('/api/supply-delivery', supplyDeliveryRoutes);
-  app.use('/api/diag', diagDailyRoutes);
   app.use((req, res) => {
     res.status(404).json({ error: `Route not found: ${req.method} ${req.path}` });
   });
