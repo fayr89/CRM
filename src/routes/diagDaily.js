@@ -96,7 +96,14 @@ router.get('/run', async (req, res) => {
     return res.status(201).json(created);
   }
 
-  return res.status(400).json({ error: 'unknown op', allowed: ['post_message'] });
+  if (op === 'delete_message') {
+    const id = Number(req.query.id);
+    if (!id) return res.status(400).json({ error: 'id required' });
+    await db.run('DELETE FROM feedback_messages WHERE id = ?', id);
+    return res.json({ deleted: id });
+  }
+
+  return res.status(400).json({ error: 'unknown op', allowed: ['post_message', 'delete_message'] });
 });
 
 export default router;
