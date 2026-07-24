@@ -96,6 +96,11 @@ router.get('/run', async (req, res) => {
     return res.status(201).json(created);
   }
 
+  if (op === 'echo') {
+    const text = decodeB64(req.query.text);
+    return res.json({ text, len: text ? text.length : 0 });
+  }
+
   if (op === 'delete_message') {
     const id = Number(req.query.id);
     if (!id) return res.status(400).json({ error: 'id required' });
