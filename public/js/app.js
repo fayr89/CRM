@@ -664,7 +664,10 @@ function startNotificationsPolling(counter) {
     }
   };
   tick();
-  notifTimer = setInterval(tick, 20000);
+  // Раньше опрашивали каждые 20с (3 запр/мин × N юзеров = заметная нагрузка на
+  // /api/notifications). 60с — компромисс: пуш-уведомления браузера всё равно
+  // приходят мгновенно, а polling это только фолбэк для бейджа + непрочитанные.
+  notifTimer = setInterval(tick, 60000);
 }
 
 let feedbackTimer = null;
