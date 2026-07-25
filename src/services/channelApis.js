@@ -249,15 +249,29 @@ export async function fetchOzonCards(plain, { pageSize = 200, maxPages = 200 } =
 export function parseYmCreds(plain) {
   if (!plain) throw new Error('Не задан ключ ЯМ (нужны токен + business_id)');
   const s = String(plain).trim();
+  let businessId = null; let token = null;
   try {
     const j = JSON.parse(s);
-    const token = j.token || j.oauth || j.Token;
-    const businessId = j.business_id || j.businessId || j.BusinessId;
-    if (token && businessId) return { token: String(token), businessId: String(businessId) };
-  } catch { /* не JSON */ }
-  const m = s.match(/^([^\s:]+)\s*[:|]\s*(.+)$/);
-  if (m) return { businessId: m[1].trim(), token: m[2].trim() };
-  throw new Error('ЯМ: неверный формат ключа. Ожидаю JSON {"token":"...","business_id":"..."} или «business_id:token»');
+    token = j.token || j.oauth || j.Token || null;
+    businessId = j.business_id || j.businessId || j.BusinessId || null;
+  } catch { /* не JSON — разбираем как строку «a:b» */ }
+  if (!businessId || !token) {
+    const m = s.match(/^([^\s:|]+)\s*[:|]\s*(.+)$/);
+    if (m) {
+      // Автоопределение: business_id — только цифры; вторая часть — токен.
+      const a = m[1].trim(); const b = m[2].trim();
+      if (/^\d+$/.test(a)) { businessId = a; token = b; }
+      else if (/^\d+$/.test(b)) { businessId = b; token = a; }
+      else { businessId = a; token = b; }
+    }
+  }
+  if (!businessId || !token) {
+    throw new Error('ЯМ: неверный формат ключа. Ожидаю JSON {"token":"...","business_id":"..."} или строку «business_id:token» (business_id — число из кабинета).');
+  }
+  if (!/^\d+$/.test(String(businessId).trim())) {
+    throw new Error(`ЯМ: business_id должен быть ЧИСЛОМ (у тебя «${businessId}»). Возьми его в кабинете ЯМ: Настройки → Настройки API → «Идентификатор бизнес-аккаунта». Не путай с логином, кампанией или названием магазина.`);
+  }
+  return { token: String(token).trim(), businessId: String(businessId).trim() };
 }
 
 // Товары продавца ЯМ: POST /businesses/{businessId}/offer-mappings — постранично

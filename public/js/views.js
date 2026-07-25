@@ -12784,7 +12784,7 @@ async function sdEditChannel(acc, users, onSaved) {
     const v = chanS.value;
     if (v === 'wb') keyHint.textContent = 'WB: токен из seller.wildberries.ru (категории Контент + Маркетплейс).';
     else if (v === 'ozon') keyHint.textContent = 'Ozon: JSON {"client_id":"...","api_key":"..."} или строка «client_id:api_key».';
-    else if (v === 'ym') keyHint.textContent = 'ЯМ: JSON {"token":"...","business_id":"..."} или строка «business_id:token».';
+    else if (v === 'ym') keyHint.textContent = 'ЯМ: JSON {"token":"...","business_id":"..."} или «business_id:token». business_id — ЧИСЛО из кабинета ЯМ (Настройки → Настройки API → «Идентификатор бизнес-аккаунта»), НЕ логин и НЕ название магазина.';
     else keyHint.textContent = '';
   }
   chanS.addEventListener('change', updateKeyHint);
