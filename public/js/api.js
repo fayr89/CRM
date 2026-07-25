@@ -188,6 +188,13 @@ export const api = {
   // Аудит-лог
   listAudit: (query) => request('GET', '/api/admin/audit', { query }),
 
+  // PWA Web Push
+  pushVapidKey: () => request('GET', '/api/push/vapid-key'),
+  pushStatus: () => request('GET', '/api/push/status'),
+  pushSubscribe: (subscription) => request('POST', '/api/push/subscribe', { body: subscription }),
+  pushUnsubscribe: (endpoint) => request('POST', '/api/push/unsubscribe', { body: { endpoint } }),
+  pushTest: () => request('POST', '/api/push/test'),
+
   // Баннеры уведомлений на сайте
   activeBanners: () => request('GET', '/api/notice-banners/active'),
   listBanners: () => request('GET', '/api/notice-banners'),

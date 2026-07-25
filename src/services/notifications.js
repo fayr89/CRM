@@ -1,5 +1,6 @@
 import { db } from '../db.js';
 import { sendMaxMessage } from './max-bot.js';
+import { pushToUser } from './push.js';
 
 // Тело уведомления о заказе: сумма + менеджер + клиент + первые 5 позиций.
 // Один шаблон для order.created / reserved / shipped — админ/склад/менеджер
@@ -71,6 +72,11 @@ export async function notify(userId, type, title, body, link) {
   } catch (e) {
     // eslint-disable-next-line no-console
     console.error('[notify max]', e.message);
+  }
+  // PWA Web Push — параллельно с MAX, независимо от него. Если VAPID не настроен,
+  // pushToUser вернёт {sent:0} без ошибок. Ошибки внутри пуш-сервиса ловятся там же.
+  try { await pushToUser(userId, { title, body, link, tag: type }); } catch (e) {
+    console.error('[notify push]', e.message);
   }
 }
 

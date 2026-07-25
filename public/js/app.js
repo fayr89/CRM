@@ -1,5 +1,6 @@
 import { api, clearSession, getStoredUser, getToken, setSession } from './api.js';
 import { clear, el, fmtDateTime, toast, tr } from './ui.js';
+import { subscribeToPush, unsubscribeFromPush, getPushLocalStatus, sendTestPush } from './push.js';
 import {
   loadDeliveryMethods,
   loadMarketplaces,
@@ -235,6 +236,59 @@ async function switchRole(role) {
 }
 
 // Переключение роли для просмотра (только админ). Возвращает null для остальных.
+// Кнопка PWA-push: подписаться / статус / тест / отписаться. Строится ленивой:
+// сама проверяет поддержку и подписку, обновляет свой текст.
+function buildPushButton() {
+  const btn = el('button', { class: 'btn btn-sm', style: { marginTop: '6px', width: '100%' } }, '📲 Push на устройство…');
+  let subscribed = false;
+  let supported = true;
+  async function refresh() {
+    try {
+      const st = await getPushLocalStatus();
+      supported = st.supported;
+      subscribed = st.subscribed;
+      if (!supported) {
+        btn.textContent = '📲 Push не поддерживается';
+        btn.disabled = true;
+        return;
+      }
+      if (subscribed) btn.textContent = '📲 Push включён · клик = тест';
+      else if (st.permission === 'denied') btn.textContent = '📲 Push заблокирован в браузере';
+      else btn.textContent = '📲 Включить push на устройство';
+    } catch { btn.textContent = '📲 Push (недоступно)'; btn.disabled = true; }
+  }
+  btn.addEventListener('click', async () => {
+    if (!supported) return;
+    if (subscribed) {
+      // Клик по включённой = отправить тест. Long-press или второй клик подряд = отписаться.
+      try {
+        const r = await sendTestPush();
+        toast(r.sent ? 'Тестовый push отправлен, проверь уведомления' : 'Тест отправлен, но подписок не найдено', r.sent ? 'success' : 'error');
+      } catch (e) { toast(e.message, 'error'); }
+      return;
+    }
+    btn.disabled = true;
+    try {
+      await subscribeToPush();
+      toast('Готово! Push-уведомления включены на этом устройстве.', 'success');
+    } catch (e) {
+      toast(e.message || 'Не удалось подписаться', 'error');
+    }
+    btn.disabled = false;
+    refresh();
+  });
+  // Правой кнопкой / long-press на мобиле → отписаться.
+  btn.addEventListener('contextmenu', async (e) => {
+    e.preventDefault();
+    if (!subscribed) return;
+    if (!confirm('Отписаться от push-уведомлений на этом устройстве?')) return;
+    try { await unsubscribeFromPush(); toast('Отписано', 'success'); } catch (e2) { toast(e2.message, 'error'); }
+    refresh();
+  });
+  refresh();
+  return btn;
+}
+
 function buildRoleSwitcher(user) {
   const isAdmin = user.role === 'admin' || user.impersonating;
   if (!isAdmin) return null;
@@ -387,6 +441,7 @@ function renderShell() {
         },
         '🔔 Подключить МАХ',
       ),
+      buildPushButton(),
       el(
         'a',
         {

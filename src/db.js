@@ -453,7 +453,7 @@ export const db = {
 // БАМПАЙ ПРИ КАЖДОМ ДОБАВЛЕНИИ МИГРАЦИИ. Текущие миграции прогоняются
 // только если запись в app_settings.schema_version отличается. Это экономит
 // ~500-2000мс на каждом холодном старте serverless-лямбды.
-const SCHEMA_VERSION = 30;
+const SCHEMA_VERSION = 31;
 
 export async function ensureInitialized() {
   if (globalThis.__crmInitialized) return;
@@ -1126,6 +1126,25 @@ export async function ensureInitialized() {
       // warehouses: JSON-массив складов для роли «склад» (мультисклад).
       // Если задан — фильтрует заказы по ANY(warehouses). Иначе — по warehouse (одиночный).
       await pool.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS warehouses JSONB DEFAULT NULL');
+
+      // ===== PWA push-подписки (SCHEMA_VERSION 31) =====
+      // Web Push API: клиент подписывается через SW → мы храним endpoint + ключи
+      // (p256dh, auth) и шлём пуш через web-push. Уник по (user_id, endpoint) —
+      // один юзер может подписаться с нескольких устройств.
+      await pool.query(
+        `CREATE TABLE IF NOT EXISTS push_subscriptions (
+           id SERIAL PRIMARY KEY,
+           user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+           endpoint TEXT NOT NULL,
+           p256dh TEXT NOT NULL,
+           auth TEXT NOT NULL,
+           user_agent TEXT,
+           created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+           last_used_at TIMESTAMPTZ,
+           UNIQUE(user_id, endpoint)
+         )`,
+      );
+      await pool.query('CREATE INDEX IF NOT EXISTS idx_push_subs_user ON push_subscriptions(user_id)');
 
       // Маркер успешно прогнанных миграций — следующие холодные старты пропустят DDL.
       await pool.query(
