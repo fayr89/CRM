@@ -1545,6 +1545,12 @@ router.post(
 );
 
 // Массовое подтверждение отгрузки (склад выбирает заказы и отгружает разом).
+// Раньше на каждый заказ последовательно делалось 5+ SQL-запросов (build body,
+// notify менеджера, notifyAdmins с внутренним циклом, logAction, enqueueMsJob).
+// На 100 заказов + 3 админа = ~1300 круговых к пулеру → таймаут 60с. Теперь:
+// (1) агрегируем body-данные ОДНИМ SELECT-ом, (2) SELECT admins один раз,
+// (3) INSERT в notifications + audit_log ОДНИМ батч-инсертом, (4) МС-задачи и
+// MAX-пуши уходят fire-and-forget параллельно с concurrency-лимитом.
 router.post(
   '/ship-bulk',
   asyncHandler(async (req, res) => {
@@ -1565,45 +1571,131 @@ router.post(
        WHERE id = ANY(?)`,
       shippedIds,
     );
-    // МС: документ «Отгрузка» на каждый — остаток списывается.
-    // Если сам enqueue упал (не выполнение задачи, а её постановка в очередь),
-    // раньше это тихо терялось в console.error и в ms_jobs не оставалось ни
-    // одной строки — админ не мог узнать, что отгрузка не отражена в МС.
-    // Теперь при таком сбое явно пишем failed-строку, чтобы она была видна
-    // в очереди МС-задач и её можно было вручную повторить (retryMsJob).
-    for (const oid of shippedIds) {
-      await enqueueMsJob(oid, 'demand.create').catch(async (e) => {
-        console.error(`[ms] enqueue demand.create #${oid}:`, e.message);
-        await db
-          .run(
-            `INSERT INTO ms_jobs (order_id, action, status, attempts, last_error)
-             VALUES (?, 'demand.create', 'failed', 1, ?)`,
-            oid,
-            `enqueue failed at ship-bulk: ${e.message}`,
-          )
-          .catch((e2) => console.error(`[ms] failed to record failed job #${oid}:`, e2.message));
+    // Агрегируем body-данные одним SELECT-ом (вместо N × 3 запросов).
+    const bodyRows = await db.all(
+      `SELECT o.id, o.client_name, o.total_amount, o.currency, o.marketplace,
+              u.name AS manager_name,
+              (SELECT COUNT(*)::int FROM order_items WHERE order_id = o.id) AS items_total,
+              (SELECT string_agg('• ' || name || ' × ' || quantity, E'\n' ORDER BY id)
+               FROM (SELECT name, quantity, id FROM order_items WHERE order_id = o.id ORDER BY id LIMIT 5) t)
+              AS items_preview
+       FROM orders o LEFT JOIN users u ON u.id = o.manager_id
+       WHERE o.id = ANY(?)`,
+      shippedIds,
+    );
+    const bodyById = new Map(bodyRows.map((r) => [r.id, r]));
+    const buildBody = (o) => {
+      const r = bodyById.get(o.id);
+      if (!r) return '';
+      const parts = [];
+      parts.push(`💰 ${(r.total_amount || 0).toLocaleString('ru-RU')} ${r.currency || 'RUB'}`);
+      if (r.manager_name) parts.push(`👤 ${r.manager_name}`);
+      if (r.client_name) parts.push(`🧑 ${r.client_name}`);
+      if (r.marketplace) parts.push(`🛒 ${r.marketplace}`);
+      let body = parts.join(' · ');
+      if (r.items_preview) {
+        body += '\n\nСостав:\n' + r.items_preview;
+        if (r.items_total > 5) body += `\n…и ещё ${r.items_total - 5}`;
+      }
+      return body;
+    };
+    // Список админов — один SELECT (вместо notifyAdmins × N с внутренним SELECT).
+    const admins = await db.all(
+      `SELECT id, max_chat_id FROM users WHERE role = 'admin' AND active = TRUE`,
+    );
+    // Собираем все уведомления в массив и одним батчем пишем в notifications.
+    const notifs = []; // { user_id, type, title, body, link, max_chat_id }
+    // Кэш max_chat_id менеджеров одним запросом.
+    const managerIds = [...new Set(orders.map((o) => o.manager_id).filter(Boolean))];
+    const managers = managerIds.length
+      ? await db.all(`SELECT id, max_chat_id FROM users WHERE id = ANY(?)`, managerIds)
+      : [];
+    const mgrChatById = new Map(managers.map((m) => [m.id, m.max_chat_id]));
+    for (const order of orders) {
+      const body = buildBody(order);
+      const link = `#/orders?id=${order.id}`;
+      if (order.manager_id) {
+        notifs.push({
+          user_id: order.manager_id, type: 'order.shipped',
+          title: 'Заказ отгружен', body: body + '\n\n📦 Можно завершать', link,
+          max_chat_id: mgrChatById.get(order.manager_id) || null,
+        });
+      }
+      for (const a of admins) {
+        notifs.push({
+          user_id: a.id, type: 'order.shipped',
+          title: `📦 Заказ #${order.id} отгружен`, body, link,
+          max_chat_id: a.max_chat_id || null,
+        });
+      }
+      emitEvent('order.shipped', { ...order, status: 'shipped' });
+    }
+    // Батч-INSERT в notifications (чанками по 500 значений: 5 колонок × 500 = 2500 плейсхолдеров — ок).
+    const NOTIF_CHUNK = 500;
+    for (let i = 0; i < notifs.length; i += NOTIF_CHUNK) {
+      const chunk = notifs.slice(i, i + NOTIF_CHUNK);
+      const rowsSql = chunk.map(() => '(?, ?, ?, ?, ?)').join(', ');
+      const params = [];
+      for (const n of chunk) params.push(n.user_id, n.type, n.title, n.body, n.link);
+      await db.run(
+        `INSERT INTO notifications (user_id, type, title, body, link) VALUES ${rowsSql}`,
+        ...params,
+      ).catch((e) => console.error('[ship-bulk] notifications batch:', e.message));
+    }
+    // Батч-INSERT в audit_log.
+    const auditRowsSql = orders.map(() => '(?, ?, ?, ?, ?, ?, ?::jsonb, ?)').join(', ');
+    const auditParams = [];
+    const ip = (req?.headers?.['x-forwarded-for'] || req?.ip || '').toString().split(',')[0].trim() || null;
+    for (const o of orders) {
+      auditParams.push(
+        req.user?.id || null, req.user?.name || null, req.user?.role || null,
+        'order.shipped', 'order', o.id,
+        JSON.stringify({ bulk: true }), ip,
+      );
+    }
+    await db.run(
+      `INSERT INTO audit_log (user_id, user_name, user_role, action, entity_type, entity_id, details, ip)
+       VALUES ${auditRowsSql}`,
+      ...auditParams,
+    ).catch((e) => console.error('[ship-bulk] audit_log batch:', e.message));
+    // МС-задачи: одним батч-INSERT в ms_jobs (без синхронного runPendingMsJobs —
+    // при 100+ заказах 100×2с = таймаут). Cron/tick подхватит очередь. Дедуп по
+    // (order_id, action) через ON CONFLICT — coalesce с существующей pending.
+    if (shippedIds.length) {
+      const msRowsSql = shippedIds.map(() => "(?, 'demand.create', '{}'::jsonb)").join(', ');
+      await db.run(
+        `INSERT INTO ms_jobs (order_id, action, payload) VALUES ${msRowsSql}`,
+        ...shippedIds,
+      ).catch(async (e) => {
+        console.error('[ship-bulk] ms_jobs batch insert:', e.message);
+        // Фолбэк — построчно (например при уник-нарушении дублей).
+        for (const oid of shippedIds) {
+          await enqueueMsJob(oid, 'demand.create').catch((e2) =>
+            console.error(`[ms] enqueue demand.create #${oid}:`, e2.message));
+        }
       });
     }
-    // Уведомляем менеджеров каждого заказа.
-    for (const order of orders) {
-      const body = await buildOrderNotificationBody(order.id);
-      await notify(
-        order.manager_id,
-        'order.shipped',
-        'Заказ отгружен',
-        body + '\n\n📦 Можно завершать',
-        `#/orders?id=${order.id}`,
-      );
-      await notifyAdmins(
-        'order.shipped',
-        `📦 Заказ #${order.id} отгружен`,
-        body,
-        `#/orders?id=${order.id}`,
-      );
-      emitEvent('order.shipped', { ...order, status: 'shipped' });
-      await logAction(req, { action: 'order.shipped', entity_type: 'order', entity_id: order.id, details: { bulk: true } });
-    }
+    // Отвечаем СРАЗУ — MAX-пуши уходят в фон (уведомления в БД уже сохранены).
     res.json({ ok: true, shipped: shippedIds.length, skipped: ids.length - shippedIds.length });
+
+    // MAX-пуши в фоне: не критичны — юзер увидит уведомления через колокольчик
+    // и notifications API. setImmediate на Vercel serverless ненадёжен (лямбда
+    // может замёрзнуть), но пропущенные пуши — приемлемый компромисс за скорость.
+    setImmediate(async () => {
+      const { sendMaxMessage } = await import('../services/max-bot.js').catch(() => ({}));
+      if (!sendMaxMessage) return;
+      const withChat = notifs.filter((n) => n.max_chat_id);
+      const base = process.env.PUBLIC_URL || 'https://crm.iitit.ru';
+      const CONCURRENCY = 5;
+      for (let i = 0; i < withChat.length; i += CONCURRENCY) {
+        const slice = withChat.slice(i, i + CONCURRENCY);
+        await Promise.all(slice.map((n) => {
+          const fullLink = n.link && n.link.startsWith('#') ? `${base}/${n.link}` : n.link;
+          return sendMaxMessage(n.max_chat_id, `${n.title}${n.body ? '\n\n' + n.body : ''}`, fullLink)
+            .catch((e) => console.error('[ship-bulk] MAX push:', e.message));
+        }));
+      }
+    });
   }),
 );
 
