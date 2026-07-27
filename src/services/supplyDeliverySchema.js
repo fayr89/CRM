@@ -234,6 +234,7 @@ export async function ensureSupplyDeliverySchema() {
   await db.run('ALTER TABLE sd_supplies ADD COLUMN IF NOT EXISTS channel_account_id INTEGER');
   await db.run('ALTER TABLE sd_supplies ADD COLUMN IF NOT EXISTS external_supply_id TEXT');
   await db.run('ALTER TABLE sd_supplies ADD COLUMN IF NOT EXISTS external_status TEXT');
+  await db.run('ALTER TABLE sd_supplies ADD COLUMN IF NOT EXISTS external_meta JSONB');
   await db.run('ALTER TABLE sd_supply_items ADD COLUMN IF NOT EXISTS external_order_id TEXT');
   await db.run('ALTER TABLE sd_supply_items ADD COLUMN IF NOT EXISTS barcode TEXT');
   ensured = true;

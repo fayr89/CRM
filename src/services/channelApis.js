@@ -79,6 +79,63 @@ export async function wbReshipmentOrders(key) {
   return d?.orders || d?.next || [];
 }
 
+// ===================== WB Supplies API (ФБО — приёмка на склад маркетплейса) =====================
+// Отдельный host supplies-api.wildberries.ru, но авторизация та же (WB-токен).
+const WB_SUPPLIES_BASE = 'https://supplies-api.wildberries.ru';
+
+async function wbSuppliesFetch(key, method, path) {
+  if (!key) throw new Error('Не задан API-ключ WB');
+  let res;
+  try {
+    res = await fetch(`${WB_SUPPLIES_BASE}${path}`, {
+      method,
+      headers: { Authorization: key, 'Content-Type': 'application/json' },
+      signal: AbortSignal.timeout(30000),
+    });
+  } catch (e) {
+    throw new Error('WB Supplies API недоступен: ' + (e?.message || e));
+  }
+  const text = await res.text().catch(() => '');
+  if (!res.ok) throw new Error(`WB Supplies API ${res.status}: ${text.slice(0, 500)}`);
+  if (!text) return {};
+  try { return JSON.parse(text); } catch { return { raw: text }; }
+}
+
+// Список складов приёмки WB (куда можно везти ФБО-поставку).
+// GET /api/v1/warehouses → массив {ID, name, address, workTime, acceptsQR, ...}.
+export async function wbFboListWarehouses(key) {
+  const d = await wbSuppliesFetch(key, 'GET', '/api/v1/warehouses');
+  const rows = Array.isArray(d) ? d : (d?.warehouses || d?.data || []);
+  return rows.map((w) => ({
+    id: w.ID ?? w.id ?? null,
+    name: w.name || null,
+    address: w.address || null,
+    workTime: w.workTime || null,
+    acceptsQR: !!w.acceptsQR,
+  })).filter((w) => w.id != null);
+}
+
+// Коэффициенты приёмки по складу(-ам). Ответ на 14 дней вперёд по каждому складу
+// и типу коробов. coefficient: -1 = недоступно, 0 = бесплатно, >0 = платно (кратно базе).
+// GET /api/v1/acceptance/coefficients?warehouseIDs=1,2,3
+export async function wbFboAcceptanceCoefficients(key, warehouseIDs) {
+  const ids = Array.isArray(warehouseIDs) ? warehouseIDs.filter(Boolean).join(',') : String(warehouseIDs || '');
+  const path = ids ? `/api/v1/acceptance/coefficients?warehouseIDs=${encodeURIComponent(ids)}` : '/api/v1/acceptance/coefficients';
+  const d = await wbSuppliesFetch(key, 'GET', path);
+  const rows = Array.isArray(d) ? d : (d?.data || []);
+  return rows.map((r) => ({
+    date: r.date || null,
+    coefficient: r.coefficient != null ? Number(r.coefficient) : null,
+    warehouseID: r.warehouseID ?? r.warehouseId ?? null,
+    warehouseName: r.warehouseName || null,
+    boxTypeName: r.boxTypeName || null,
+    allowUnload: r.allowUnload !== false,
+    storageCoef: r.storageCoef != null ? Number(r.storageCoef) : null,
+    deliveryCoef: r.deliveryCoef != null ? Number(r.deliveryCoef) : null,
+    isSortingCenter: !!r.isSortingCenter,
+  }));
+}
+
 // WB Content API: список карточек товара (номенклатура продавца).
 // Авторизация — ключ напрямую в заголовке Authorization (без Bearer).
 //

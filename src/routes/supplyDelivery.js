@@ -23,6 +23,7 @@ import {
   fetchWbCards, fetchOzonCards, fetchYmCards,
   wbNewOrders, wbCreateSupply, wbAddOrderToSupply,
   wbSupplyBarcode, wbDeliverSupply, wbReshipmentOrders,
+  wbFboListWarehouses, wbFboAcceptanceCoefficients,
 } from '../services/channelApis.js';
 import { fetchMoyskladBundlesPage, resolveMsFolderHref, pushMoyskladBundle } from '../services/moysklad.js';
 import { getMoyskladToken } from '../services/ms-jobs.js';
@@ -1355,6 +1356,61 @@ router.get('/wb/reshipment', requireOperate, asyncHandler(async (req, res) => {
   if (!acc || !acc.api_key_enc) throw BadRequest('Укажите WB-канал с ключом');
   const key = decryptSecret(acc.api_key_enc);
   res.json(await wbReshipmentOrders(key));
+}));
+
+// ----- WB ФБО: список складов приёмки + коэффициенты (платность/бесплатность) -----
+// Ключ берём из поставки (её channel_account_id). Отдаём как есть — фронт группирует.
+async function loadWbKey(channelAccountId) {
+  const acc = await db.get('SELECT * FROM sd_channel_accounts WHERE id = ? AND channel = ?', channelAccountId, 'wb');
+  if (!acc || !acc.api_key_enc) throw BadRequest('Укажите WB-канал с ключом');
+  return decryptSecret(acc.api_key_enc);
+}
+
+router.get('/wb/fbo/warehouses', requireOperate, asyncHandler(async (req, res) => {
+  await ensureSupplyDeliverySchema();
+  const accId = parseInt(req.query.channel_account_id, 10);
+  if (!accId) throw BadRequest('Не задан channel_account_id (WB-канал)');
+  const key = await loadWbKey(accId);
+  try { res.json(await wbFboListWarehouses(key)); }
+  catch (e) { throw BadRequest(e.message); }
+}));
+
+router.get('/wb/fbo/coefficients', requireOperate, asyncHandler(async (req, res) => {
+  await ensureSupplyDeliverySchema();
+  const accId = parseInt(req.query.channel_account_id, 10);
+  if (!accId) throw BadRequest('Не задан channel_account_id (WB-канал)');
+  const key = await loadWbKey(accId);
+  const wIDs = (req.query.warehouseIDs || '').toString().split(',').map((x) => x.trim()).filter(Boolean);
+  try { res.json(await wbFboAcceptanceCoefficients(key, wIDs)); }
+  catch (e) { throw BadRequest(e.message); }
+}));
+
+// Установить/обновить план ФБО-поставки в CRM (склад + дата приёмки). WB заявку
+// создаёт менеджер вручную в кабинете — CRM хранит план и позиции для копипаста.
+// Хранится в sd_supplies.external_meta JSONB (не трогает note менеджера).
+router.patch('/supplies/:id/fbo-plan', requireOperate, asyncHandler(async (req, res) => {
+  await ensureSupplyDeliverySchema();
+  const cur = await db.get('SELECT id, model, external_meta FROM sd_supplies WHERE id = ?', req.params.id);
+  if (!cur) throw NotFound('Поставка не найдена');
+  if (cur.model !== 'fbo') throw BadRequest('Это не ФБО-поставка');
+  const d = z.object({
+    warehouse_id: z.union([z.number(), z.string()]).optional().nullable(),
+    warehouse_name: z.string().max(200).optional().nullable(),
+    plan_date: z.string().max(40).optional().nullable(),
+    coefficient: z.number().optional().nullable(),
+    box_type: z.string().max(60).optional().nullable(),
+  }).parse(req.body);
+  const meta = { ...(cur.external_meta || {}) };
+  if (d.warehouse_id !== undefined) meta.fbo_warehouse_id = d.warehouse_id ?? null;
+  if (d.warehouse_name !== undefined) meta.fbo_warehouse_name = d.warehouse_name ?? null;
+  if (d.plan_date !== undefined) meta.fbo_plan_date = d.plan_date ?? null;
+  if (d.coefficient !== undefined) meta.fbo_coefficient = d.coefficient ?? null;
+  if (d.box_type !== undefined) meta.fbo_box_type = d.box_type ?? null;
+  await db.run(
+    'UPDATE sd_supplies SET external_meta = ?::jsonb, updated_at = NOW() WHERE id = ?',
+    JSON.stringify(meta), req.params.id,
+  );
+  res.json({ ok: true, external_meta: meta });
 }));
 
 export default router;

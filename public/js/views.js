@@ -12591,6 +12591,7 @@ async function sdOpenSupply(id, onChange) {
     head.append(el('div', { style: { marginTop: '6px' } }, el('span', {}, 'Статус: '), statusSel));
     body.append(head);
     if (s.channel === 'wb' && s.model === 'fbs') body.append(sdWbFbsSection(s, refresh, onChange));
+    if (s.channel === 'wb' && s.model === 'fbo') body.append(sdWbFboSection(s, refresh, onChange));
     body.append(el('div', { style: { margin: '8px 0' } },
       el('button', { class: 'btn btn-sm btn-primary', onClick: () => sdAddItem(id, refresh, onChange) }, '+ Позиция')));
     const tbody = el('tbody', {});
@@ -13220,6 +13221,119 @@ async function sdWbNewOrdersModal(supplyId, refresh, onChange) {
     list);
   load();
   await openModal('Сборочные задания WB', body);
+}
+
+// ---- WB ФБО: выбор склада приёмки + слоты + коэффициенты (платность) ----
+// WB не даёт создавать ФБО-заявку через API — только читаем склады/коэффициенты,
+// менеджер планирует в CRM (склад+дата+тип короба), потом добавляет позиции
+// (SKU+qty) и оформляет заявку в личном кабинете WB (кнопка «Открыть в WB LK»).
+function sdWbFboSection(s, refresh, onChange) {
+  const box = el('div', { class: 'card', style: { margin: '8px 0' } });
+  box.append(el('h4', {}, 'WB ФБО — приёмка на склад маркетплейса'));
+  if (!s.channel_account_id) {
+    box.append(el('div', { style: { color: '#dc2626' } },
+      'Не выбран WB-канал с ключом. Пересоздай поставку с указанием WB-канала (ключ в «Каналы»).'));
+    return box;
+  }
+  const meta = s.external_meta || {};
+  const currentPlan = el('div', { style: { fontSize: '13px', marginBottom: '6px' } });
+  function renderPlan() {
+    currentPlan.textContent = '';
+    if (meta.fbo_warehouse_name || meta.fbo_plan_date) {
+      currentPlan.append(el('span', { style: { fontWeight: '600' } },
+        `📋 План: склад «${meta.fbo_warehouse_name || meta.fbo_warehouse_id || '—'}»`),
+        meta.fbo_plan_date ? el('span', {}, ` · дата ${meta.fbo_plan_date}`) : null,
+        meta.fbo_coefficient != null ? el('span', {},
+          meta.fbo_coefficient === 0 ? ' · бесплатно ✅' :
+          meta.fbo_coefficient > 0 ? ` · платно ×${meta.fbo_coefficient} 💸` : ' · недоступно') : null,
+        meta.fbo_box_type ? el('span', {}, ` · тип «${meta.fbo_box_type}»`) : null);
+    } else {
+      currentPlan.append(el('em', { style: { color: 'var(--text-muted)' } }, 'План приёмки не задан — открой «Подобрать склад и дату».'));
+    }
+  }
+  renderPlan();
+  box.append(currentPlan);
+  const btns = el('div', { style: { display: 'flex', gap: '6px', flexWrap: 'wrap' } });
+  btns.append(el('button', { class: 'btn btn-sm btn-primary', onClick: () => sdWbFboPlanModal(s, () => { refresh(); onChange?.(); }) }, '📅 Подобрать склад и дату'));
+  // Прямая ссылка в кабинет WB для реального создания заявки на приёмку (API-создание не поддерживается).
+  btns.append(el('a', { class: 'btn btn-sm', href: 'https://seller.wildberries.ru/supplies-management/all-supplies', target: '_blank', rel: 'noopener' }, '🌐 Открыть в кабинете WB'));
+  box.append(btns);
+  return box;
+}
+
+async function sdWbFboPlanModal(supply, onSaved) {
+  let warehouses = [];
+  let rows = []; // коэффициенты по датам
+  const status = el('div', { style: { fontSize: '12px', color: 'var(--text-muted)', marginBottom: '6px' } }, 'Загружаю склады WB…');
+  const whSel = el('select', { multiple: 'multiple', size: '6', style: { minWidth: '260px' } });
+  const tbody = el('tbody', {});
+  const table = el('div', { style: { overflowX: 'auto', maxHeight: '380px', overflowY: 'auto' } },
+    el('table', { class: 'table' },
+      el('thead', {}, el('tr', {}, el('th', {}, 'Дата'), el('th', {}, 'Склад'),
+        el('th', {}, 'Короб'), el('th', {}, 'Коэф.'), el('th', {}, 'Стоимость'), el('th', {}, ''))),
+      tbody));
+  async function loadWarehouses() {
+    try { warehouses = await api.sdWbFboWarehouses(supply.channel_account_id); }
+    catch (e) { status.textContent = 'Ошибка складов: ' + e.message; return; }
+    whSel.textContent = '';
+    for (const w of warehouses) {
+      const opt = el('option', { value: String(w.id) }, `${w.name || '#' + w.id}${w.address ? ' — ' + w.address.slice(0, 60) : ''}`);
+      whSel.append(opt);
+    }
+    status.textContent = warehouses.length ? `Складов WB: ${warehouses.length}. Выбери один или несколько → «Показать слоты».` : 'Складов WB не пришло. Проверь токен (нужны права «Поставки»).';
+  }
+  async function loadCoefs() {
+    const selected = Array.from(whSel.selectedOptions).map((o) => o.value);
+    if (!selected.length) { status.textContent = 'Выбери хотя бы один склад'; return; }
+    status.textContent = `Загружаю коэффициенты для ${selected.length} складов…`;
+    try { rows = await api.sdWbFboCoefficients(supply.channel_account_id, selected); }
+    catch (e) { status.textContent = 'Ошибка коэффициентов: ' + e.message; return; }
+    tbody.textContent = '';
+    // Сортируем: сначала бесплатные (coef=0), потом дешёвые, недоступные (−1) в конце.
+    const sorted = [...rows].sort((a, b) => {
+      const ka = a.coefficient == null ? 999 : (a.coefficient < 0 ? 998 : a.coefficient);
+      const kb = b.coefficient == null ? 999 : (b.coefficient < 0 ? 998 : b.coefficient);
+      if (ka !== kb) return ka - kb;
+      return (a.date || '').localeCompare(b.date || '');
+    });
+    const available = sorted.filter((r) => r.coefficient != null && r.coefficient >= 0);
+    status.textContent = `Всего слотов: ${sorted.length}, доступно: ${available.length}, бесплатных: ${sorted.filter((r) => r.coefficient === 0).length}. Клик по «Выбрать» — сохранит в план.`;
+    for (const r of sorted) {
+      const coefText = r.coefficient == null ? '—' : (r.coefficient < 0 ? 'нельзя' : r.coefficient === 0 ? 'бесплатно' : `×${r.coefficient}`);
+      const costClass = r.coefficient === 0 ? '#16a34a' : r.coefficient > 0 ? '#b45309' : '#dc2626';
+      const dateShort = r.date ? r.date.slice(0, 10) : '—';
+      const pick = r.coefficient != null && r.coefficient >= 0
+        ? el('button', { class: 'btn btn-sm btn-primary', onClick: async () => {
+            try {
+              await api.sdSupplyFboPlan(supply.id, {
+                warehouse_id: r.warehouseID, warehouse_name: r.warehouseName || null,
+                plan_date: dateShort, coefficient: r.coefficient, box_type: r.boxTypeName || null,
+              });
+              toast('План сохранён', 'success'); onSaved?.();
+              return true;
+            } catch (e) { toast(e.message, 'error'); }
+          } }, 'Выбрать')
+        : null;
+      tbody.append(el('tr', r.coefficient === 0 ? { style: { background: 'rgba(22,163,74,0.10)' } } : {},
+        el('td', { style: { whiteSpace: 'nowrap' } }, dateShort),
+        el('td', {}, r.warehouseName || '#' + r.warehouseID),
+        el('td', {}, r.boxTypeName || '—'),
+        el('td', { style: { color: costClass, fontWeight: '600' } }, coefText),
+        el('td', {}, r.coefficient === 0 ? 'бесплатно' : r.coefficient > 0 ? 'платная приёмка' : 'недоступно'),
+        el('td', {}, pick)));
+    }
+  }
+  const loadBtn = el('button', { class: 'btn btn-sm btn-primary', onClick: loadCoefs }, 'Показать слоты');
+  const body = el('div', {},
+    el('div', { style: { display: 'flex', gap: '10px', flexWrap: 'wrap', marginBottom: '8px' } },
+      el('div', {},
+        el('div', { style: { fontWeight: '600', marginBottom: '4px' } }, 'Склады WB (Ctrl/Cmd — выбрать несколько):'),
+        whSel),
+      el('div', { style: { display: 'flex', flexDirection: 'column', gap: '6px' } }, loadBtn)),
+    status,
+    table);
+  loadWarehouses();
+  await openModal('ФБО: подобрать склад и дату', body, { primaryLabel: 'Закрыть', onSubmit: () => true });
 }
 
 function sdShowWbBarcode(b) {
