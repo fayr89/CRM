@@ -10,7 +10,8 @@ import { getPublicKey, isPushEnabled, pushToUser } from '../services/push.js';
 const router = Router();
 
 router.get('/vapid-key', asyncHandler(async (_req, res) => {
-  res.json({ enabled: isPushEnabled(), key: getPublicKey() });
+  const key = await getPublicKey();
+  res.json({ enabled: !!key, key });
 }));
 
 router.use(authenticate);
@@ -24,7 +25,8 @@ const subSchema = z.object({
 });
 
 router.post('/subscribe', asyncHandler(async (req, res) => {
-  if (!isPushEnabled()) throw BadRequest('PWA push не настроен на сервере (нет VAPID-ключей)');
+  const key = await getPublicKey();
+  if (!key) throw BadRequest('PWA push не настроен на сервере (нет VAPID-ключей)');
   const d = subSchema.parse(req.body);
   const ua = (req.headers['user-agent'] || '').toString().slice(0, 400) || null;
   await db.run(
@@ -59,7 +61,8 @@ router.get('/status', asyncHandler(async (req, res) => {
     'SELECT COUNT(*)::int AS n FROM push_subscriptions WHERE user_id = ?',
     req.user.id,
   );
-  res.json({ enabled: isPushEnabled(), subscriptions: Number(cnt?.n) || 0 });
+  const key = await getPublicKey();
+  res.json({ enabled: !!key, subscriptions: Number(cnt?.n) || 0 });
 }));
 
 export default router;
