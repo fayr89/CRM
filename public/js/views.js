@@ -13141,15 +13141,38 @@ function sdWbFbsSection(s, refresh, onChange) {
   const id = s.id;
   if (!s.external_supply_id) {
     box.append(el('div', { style: { marginBottom: '6px' } }, 'Поставка ещё не создана в WB.'));
-    box.append(el('button', { class: 'btn btn-sm btn-primary', onClick: async () => {
+    const btns0 = el('div', { style: { display: 'flex', gap: '6px', flexWrap: 'wrap' } });
+    btns0.append(el('button', { class: 'btn btn-sm', onClick: async () => {
       try { const r = await api.sdWbCreateSupply(id); toast('Создана в WB: ' + r.external_supply_id, 'success'); refresh(); onChange?.(); }
       catch (e) { toast(e.message, 'error'); }
-    } }, 'Создать поставку в WB'));
+    } }, 'Создать пустую поставку'));
+    // Одним кликом: создать поставку в WB + запихнуть в неё ВСЕ свободные сборочные задания.
+    btns0.append(el('button', { class: 'btn btn-sm btn-primary', title: 'Создаст поставку в WB и добавит в неё все не взятые в отгрузку задания',
+      onClick: async () => {
+        if (!(await confirm('Создать поставку в WB и добавить в неё ВСЕ свободные сборочные задания? (обычно то, что нужно)'))) return;
+        try {
+          const r = await api.sdWbAttachAll(id);
+          const errs = (r.errors || []).length;
+          toast(errs ? `Создано, добавлено ${r.attached} из ${r.total}. Ошибок: ${errs}` : `Готово! Добавлено ${r.attached} заданий в поставку ${r.external_supply_id}`, errs ? 'error' : 'success');
+          refresh(); onChange?.();
+        } catch (e) { toast(e.message, 'error'); }
+      } }, '⚡ Создать и добавить ВСЕ новые'));
+    box.append(btns0);
     return box;
   }
   box.append(el('div', { style: { marginBottom: '6px' } }, `WB supplyId: ${s.external_supply_id} · статус: ${s.external_status || '—'}`));
   const btns = el('div', { style: { display: 'flex', gap: '6px', flexWrap: 'wrap' } });
   btns.append(el('button', { class: 'btn btn-sm btn-primary', onClick: () => sdWbNewOrdersModal(id, refresh, onChange) }, 'Сборочные задания'));
+  // Добавить ВСЕ свободные к УЖЕ созданной поставке.
+  btns.append(el('button', { class: 'btn btn-sm', title: 'Добавить все не взятые в отгрузку задания в эту поставку', onClick: async () => {
+    if (!(await confirm('Добавить в эту поставку ВСЕ свободные сборочные задания?'))) return;
+    try {
+      const r = await api.sdWbAttachAll(id);
+      const errs = (r.errors || []).length;
+      toast(errs ? `Добавлено ${r.attached} из ${r.total}. Ошибок: ${errs}` : `Добавлено ${r.attached} заданий`, errs ? 'error' : 'success');
+      refresh(); onChange?.();
+    } catch (e) { toast(e.message, 'error'); }
+  } }, '+ Все свободные'));
   btns.append(el('button', { class: 'btn btn-sm', onClick: async () => {
     try { const b = await api.sdWbBarcode(id); sdShowWbBarcode(b); } catch (e) { toast(e.message, 'error'); }
   } }, 'Штрихкод поставки'));
@@ -13163,11 +13186,14 @@ function sdWbFbsSection(s, refresh, onChange) {
 
 async function sdWbNewOrdersModal(supplyId, refresh, onChange) {
   const list = el('div', {});
+  const count = el('span', { style: { marginLeft: '8px', color: 'var(--text-muted)' } });
   async function load() {
     list.textContent = 'Загрузка…';
+    count.textContent = '';
     let orders = [];
     try { orders = await api.sdWbNewOrders(supplyId); } catch (e) { list.textContent = e.message; return; }
     list.textContent = '';
+    count.textContent = orders.length ? `Свободных: ${orders.length}` : '';
     if (!orders.length) { list.textContent = 'Нет новых сборочных заданий'; return; }
     for (const o of orders) {
       const add = el('button', { class: 'btn btn-sm btn-primary', onClick: async () => {
@@ -13178,8 +13204,20 @@ async function sdWbNewOrdersModal(supplyId, refresh, onChange) {
         el('span', {}, `#${o.order_id} · ${o.article || '—'} · ${o.barcode || ''}`), add));
     }
   }
-  const reloadBtn = el('button', { class: 'btn btn-sm', style: { marginBottom: '8px' }, onClick: load }, 'Обновить');
-  const body = el('div', {}, reloadBtn, list);
+  const reloadBtn = el('button', { class: 'btn btn-sm', onClick: load }, 'Обновить');
+  const attachAllBtn = el('button', { class: 'btn btn-sm btn-primary', style: { marginLeft: '6px' },
+    onClick: async () => {
+      if (!(await confirm('Добавить ВСЕ свободные сборочные задания в эту поставку?'))) return;
+      try {
+        const r = await api.sdWbAttachAll(supplyId);
+        const errs = (r.errors || []).length;
+        toast(errs ? `Добавлено ${r.attached} из ${r.total}. Ошибок: ${errs}` : `Добавлено ${r.attached} заданий`, errs ? 'error' : 'success');
+        load(); refresh(); onChange?.();
+      } catch (e) { toast(e.message, 'error'); }
+    } }, '+ Добавить ВСЕ');
+  const body = el('div', {},
+    el('div', { style: { marginBottom: '8px', display: 'flex', alignItems: 'center', flexWrap: 'wrap' } }, reloadBtn, attachAllBtn, count),
+    list);
   load();
   await openModal('Сборочные задания WB', body);
 }

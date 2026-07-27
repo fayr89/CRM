@@ -1263,6 +1263,56 @@ router.post('/supplies/:id/wb/attach-order', requireOperate, asyncHandler(async 
   res.json({ ok: true });
 }));
 
+// Привязать ВСЕ свободные сборочные задания (те, что показывает /new-orders) к этой
+// поставке. Параллельность 5 (rate-limit WB ~100 req/min). Ошибки по конкретным
+// заданиям не прерывают — собираем в errors[]. Автоматически создаёт поставку в WB,
+// если её ещё не было (для «в один клик» из UI).
+router.post('/supplies/:id/wb/attach-all', requireOperate, asyncHandler(async (req, res) => {
+  await ensureSupplyDeliverySchema();
+  const s = await loadWbSupply(req.params.id);
+  const key = await wbKeyForSupply(s);
+  // Если ещё не создана в WB — создать сейчас.
+  let extId = s.external_supply_id;
+  if (!extId) {
+    extId = await wbCreateSupply(key, s.title || `CRM #${s.id}`);
+    if (!extId) throw BadRequest('WB не вернул supplyId при создании');
+    await db.run(
+      'UPDATE sd_supplies SET external_supply_id = ?, external_status = ?, updated_at = NOW() WHERE id = ?',
+      extId, 'created', s.id,
+    );
+  }
+  const orders = await wbNewOrders(key);
+  if (!orders.length) return res.json({ ok: true, attached: 0, errors: [], external_supply_id: extId });
+  const CONCURRENCY = 5;
+  let attached = 0;
+  const errors = [];
+  const attachedRows = [];
+  for (let i = 0; i < orders.length; i += CONCURRENCY) {
+    const slice = orders.slice(i, i + CONCURRENCY);
+    await Promise.all(slice.map(async (o) => {
+      try {
+        await wbAddOrderToSupply(key, extId, o.order_id);
+        attached += 1;
+        attachedRows.push([s.id, o.article ?? null, o.name ?? o.article ?? null, 1, String(o.order_id), o.barcode ?? null]);
+      } catch (e) {
+        errors.push({ order_id: o.order_id, error: e.message });
+      }
+    }));
+  }
+  // Батч-INSERT позиций в CRM (одним запросом вместо N).
+  if (attachedRows.length) {
+    const placeholders = attachedRows.map(() => '(?, ?, ?, ?, ?, ?)').join(', ');
+    const params = attachedRows.flat();
+    await db.run(
+      `INSERT INTO sd_supply_items (supply_id, sku, name, quantity, external_order_id, barcode)
+       VALUES ${placeholders}`,
+      ...params,
+    ).catch((e) => console.error('[attach-all] items insert:', e.message));
+  }
+  await logAction(req, { action: 'supply_delivery.wb.attach_all', entity_type: 'sd_supply', entity_id: s.id, details: { attached, total: orders.length, errors: errors.length } });
+  res.json({ ok: true, attached, total: orders.length, errors, external_supply_id: extId });
+}));
+
 router.get('/supplies/:id/wb/barcode', requireOperate, asyncHandler(async (req, res) => {
   await ensureSupplyDeliverySchema();
   const s = await loadWbSupply(req.params.id);

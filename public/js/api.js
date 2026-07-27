@@ -290,6 +290,7 @@ export const api = {
   sdWbCreateSupply: (id) => request('POST', `/api/supply-delivery/supplies/${id}/wb/create-supply`),
   sdWbNewOrders: (id) => request('GET', `/api/supply-delivery/supplies/${id}/wb/new-orders`),
   sdWbAttachOrder: (id, body) => request('POST', `/api/supply-delivery/supplies/${id}/wb/attach-order`, { body }),
+  sdWbAttachAll: (id) => request('POST', `/api/supply-delivery/supplies/${id}/wb/attach-all`),
   sdWbBarcode: (id) => request('GET', `/api/supply-delivery/supplies/${id}/wb/barcode`),
   sdWbDeliver: (id) => request('POST', `/api/supply-delivery/supplies/${id}/wb/deliver`),
   sdWbReshipment: (channelAccountId) => request('GET', '/api/supply-delivery/wb/reshipment', { query: { channel_account_id: channelAccountId } }),
