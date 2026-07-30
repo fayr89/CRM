@@ -59,6 +59,28 @@ router.get(
       return res.json({ data: out });
     }
 
+    if (op === 'create_proposal') {
+      const decode = (s) => {
+        if (!s) return null;
+        const b64 = String(s).replace(/-/g, '+').replace(/_/g, '/');
+        return Buffer.from(b64, 'base64').toString('utf8');
+      };
+      const title = decode(req.query.title_b64);
+      const summary = decode(req.query.summary_b64);
+      if (!title || !summary) return res.status(400).json({ error: 'title_b64/summary_b64 required' });
+      const r = await db.run(
+        `INSERT INTO ai_proposals (feedback_id, title, summary, category, risk, source)
+         VALUES (?, ?, ?, ?, ?, ?) RETURNING id`,
+        req.query.feedback_id ? Number(req.query.feedback_id) : null,
+        title,
+        summary,
+        req.query.category ? String(req.query.category) : null,
+        req.query.risk ? String(req.query.risk) : 'medium',
+        req.query.source ? String(req.query.source) : 'daily-run-v695',
+      );
+      return res.status(201).json({ id: r.lastInsertRowid });
+    }
+
     return res.status(400).json({ error: 'unknown op' });
   }),
 );
