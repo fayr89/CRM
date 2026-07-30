@@ -119,6 +119,20 @@ router.get(
       return res.json({ ok: true, summary_len: row?.n });
     }
 
+    if (op === 'fix_replace') {
+      const decode = (s) => {
+        if (!s) return null;
+        const b64 = String(s).replace(/-/g, '+').replace(/_/g, '/');
+        return Buffer.from(b64, 'base64').toString('utf8');
+      };
+      const from = decode(req.query.from_b64);
+      const to = decode(req.query.to_b64);
+      const id = Number(req.query.id);
+      if (!id || from == null || to == null) return res.status(400).json({ error: 'id/from_b64/to_b64 required' });
+      await db.run(`UPDATE ai_proposals SET summary = REPLACE(summary, ?, ?), updated_at = NOW() WHERE id = ?`, from, to, id);
+      return res.json({ ok: true });
+    }
+
     if (op === 'get-proposal') {
       const row = await db.get(`SELECT id, title, summary, risk, status, LENGTH(summary) AS summary_len FROM ai_proposals WHERE id = ?`, Number(req.query.id));
       return res.json({ data: row || null });
