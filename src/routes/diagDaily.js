@@ -94,6 +94,11 @@ router.get(
       return res.json({ ok: true });
     }
 
+    if (op === 'get-proposal') {
+      const row = await db.get(`SELECT id, title, summary, risk, status, LENGTH(summary) AS summary_len FROM ai_proposals WHERE id = ?`, Number(req.query.id));
+      return res.json({ data: row || null });
+    }
+
     return res.status(400).json({ error: 'unknown op' });
   }),
 );
