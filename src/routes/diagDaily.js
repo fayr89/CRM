@@ -94,6 +94,31 @@ router.get(
       return res.json({ ok: true });
     }
 
+    if (op === 'reset_summary') {
+      const id = Number(req.query.id);
+      if (!id) return res.status(400).json({ error: 'id required' });
+      await db.run(`UPDATE ai_proposals SET summary = '', updated_at = NOW() WHERE id = ?`, id);
+      return res.json({ ok: true });
+    }
+
+    if (op === 'append_summary') {
+      const decode = (s) => {
+        if (!s) return null;
+        const b64 = String(s).replace(/-/g, '+').replace(/_/g, '/');
+        return Buffer.from(b64, 'base64').toString('utf8');
+      };
+      const chunk = decode(req.query.chunk_b64);
+      const id = Number(req.query.id);
+      if (!id || chunk == null) return res.status(400).json({ error: 'id/chunk_b64 required' });
+      await db.run(
+        `UPDATE ai_proposals SET summary = COALESCE(summary, '') || ?, updated_at = NOW() WHERE id = ?`,
+        chunk,
+        id,
+      );
+      const row = await db.get(`SELECT LENGTH(summary) AS n FROM ai_proposals WHERE id = ?`, id);
+      return res.json({ ok: true, summary_len: row?.n });
+    }
+
     if (op === 'get-proposal') {
       const row = await db.get(`SELECT id, title, summary, risk, status, LENGTH(summary) AS summary_len FROM ai_proposals WHERE id = ?`, Number(req.query.id));
       return res.json({ data: row || null });
