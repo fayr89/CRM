@@ -18063,3 +18063,41 @@ Ai-proposals (Этап 1) и обход обращений (Этап 2): 0 об�
 revision/rejected пусты), 0 сделано, 0 новых ai_proposals (тот же #63, не
 новый), 0 уточнений задано, 0 закрыто как дубль. Коммиты: diag-роут, снос
 diag + этот файл — смержено в прод.
+
+## 2026-07-30 (v703): meta байт-в-байт совпадает с v696–v702 — без изменений
+
+Designated dev-ветка (`claude/inspiring-cannon-0bo4z4`) отсутствовала на
+origin на старте (тот же паттерн «смержили, GitHub удалил ветку», v169 и
+далее). Unshallow (`git fetch --unshallow`) подтвердил: локальный HEAD
+байт-в-байт равен прод-tip (`559be59`, финал v702). Восстановлена по
+правилу «PR уже смержен»: `git checkout -B claude/inspiring-cannon-0bo4z4
+origin/claude/build-crm-system-JzCP9` → push.
+
+Поднял `/api/diag/daily-v703`. ff-merge dev→prod прошёл штатно с первой
+попытки. Деплой подтверждён `mcp__Vercel__get_deployment` (`target:
+production`, `state: READY` на коммите `46131cd`) до обращения к diag.
+
+`op=meta`: `proposals_by_status={"done":62,"pending":1}`,
+`feedback_by_status={"open":5,"awaiting_approval":15,"closed":44}`,
+`feedback_last_msg=2026-07-24T11:23:42.025Z`,
+`proposals_last_update=2026-07-30T14:23:11.333Z` — байт-в-байт совпадает
+с v696–v702. `list-proposals`/`get-proposal-messages&id=63` — только
+`#63` (ротация AI-DAILY.md) pending, без сообщений админа, без решения.
+По правилу v592 повторный полный проход по тредам не требуется
+(`feedback_last_msg` не сдвинулся с v696).
+
+Этап 1 (approved/revision/rejected) — пусто, действовать не по чему.
+
+Diag-эндпоинт снесён этим же обходом на dev-ветке (`git branch
+--show-current` проверен перед коммитом — урок v290/v294); `app.js` и
+удаление `diagDaily.js` застейджены раздельно (граблина v210), `grep -n
+diag src/app.js` пусто перед пушем.
+
+Push-уведомление: НЕ отправлено — бэклог пуст для действия, `#63` без
+решения админа и без нового сдвига (уже эскалирован ранее), `/health`
+жив после деплоя, деплой штатный. Частота обходов (v247/v263/v638) без
+нового сдвига.
+
+Ai-proposals (Этап 1) и обход обращений (Этап 2): 0 обработано, 0
+сделано, 0 новых ai_proposals, 0 уточнений, 0 закрыто как дубль.
+Коммиты: diag-роут, снос diag + журнал — смержено в прод.
