@@ -17971,3 +17971,47 @@ Ai-proposals (Этап 1) и обход обращений (Этап 2): 0 об�
 revision/rejected пусты), 0 сделано, 0 новых ai_proposals (тот же #63, не
 новый), 0 уточнений задано, 0 закрыто как дубль. Коммиты: diag-роут, снос
 diag + этот файл — смержено в прод.
+
+## 2026-07-30 (v701): meta байт-в-байт совпадает с v696–v700 — `ai_proposal #63` всё ещё pending
+
+Designated dev-ветка (`claude/inspiring-cannon-g0ks93`) отсутствовала на
+origin на старте сессии (тот же паттерн «смержили и GitHub удалил ветку»,
+v169 и далее). Клон оказался shallow — `git fetch --unshallow origin`
+выполнен перед выводами о состоянии веток (урок v169); после этого
+`origin/claude/build-crm-system-JzCP9` совпал с локальным HEAD
+(`1907a89`, финал v700) байт-в-байт. Восстановлена по правилу «PR уже
+смержен»: `git checkout -B claude/inspiring-cannon-g0ks93 HEAD` → push.
+
+Поднял `/api/diag/daily-v701`. ff-merge dev→prod прошёл штатно с первой
+попытки (prod и dev совпадали ровно на v700). Деплой подтверждён через
+`mcp__Vercel__list_deployments`/`get_deployment` (`target: production`,
+`state: READY` на коммите `9e973b0`) до обращения к diag — без 404 на
+первой попытке (дождался READY перед запросом).
+
+`op=meta`: `proposals_by_status={"done":62,"pending":1}`,
+`feedback_by_status={"open":5,"awaiting_approval":15,"closed":44}`,
+`feedback_last_msg=2026-07-24T11:23:42.025Z`,
+`proposals_last_update=2026-07-30T14:23:11.333Z` — байт-в-байт совпадает
+с v696-v700. `get-proposal-messages&id=63` — пусто: админ решения по
+`#63` ещё не принял. `feedback_last_msg` не сдвинулся с последнего
+полного прохода по тредам (v696) — по правилу v592 повторный полный
+проход не требуется.
+
+Этап 1 (approved/revision/rejected) — пусто, действовать не по чему.
+
+Diag-эндпоинт снесён этим же обходом на dev-ветке (`git branch
+--show-current` проверен перед коммитом — урок v290/v294); `app.js` и
+удаление `diagDaily.js` застейджены раздельно (`git rm` отдельно, затем
+Edit `app.js`, затем отдельный `git add` — граблина v210), `grep -n diag
+src/app.js` пусто перед пушем.
+
+Push-уведомление: НЕ отправлено. Бэклог пуст для действия (0
+approved/revision/rejected, `#63` без решения админа и без новой
+информации к нему — уже эскалирован в v695), `/health` жив после
+деплоя, деплой штатный. Ранее эскалированные находки (частота обходов —
+v247/v263/v638; orphan-ветки — v638) без нового сдвига.
+
+Ai-proposals (Этап 1) и обход обращений (Этап 2): 0 обработано (approved/
+revision/rejected пусты), 0 сделано, 0 новых ai_proposals (тот же #63, не
+новый), 0 уточнений задано, 0 закрыто как дубль. Коммиты: diag-роут, снос
+diag + этот файл — смержено в прод.
