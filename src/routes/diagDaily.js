@@ -81,6 +81,19 @@ router.get(
       return res.status(201).json({ id: r.lastInsertRowid });
     }
 
+    if (op === 'patch_summary') {
+      const decode = (s) => {
+        if (!s) return null;
+        const b64 = String(s).replace(/-/g, '+').replace(/_/g, '/');
+        return Buffer.from(b64, 'base64').toString('utf8');
+      };
+      const summary = decode(req.query.summary_b64);
+      const id = Number(req.query.id);
+      if (!id || !summary) return res.status(400).json({ error: 'id/summary_b64 required' });
+      await db.run(`UPDATE ai_proposals SET summary = ?, updated_at = NOW() WHERE id = ?`, summary, id);
+      return res.json({ ok: true });
+    }
+
     return res.status(400).json({ error: 'unknown op' });
   }),
 );
