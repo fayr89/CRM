@@ -42,6 +42,20 @@ export async function subscribeToPush() {
   if (perm !== 'granted') throw new Error('Разрешение на уведомления не дано');
   const reg = await navigator.serviceWorker.ready;
   let sub = await reg.pushManager.getSubscription();
+  // Если существующая подписка сделана под ДРУГОЙ VAPID (напр. до авто-генерации
+  // ключей сервером) — она невалидна на текущем бэке. Отпишемся локально и
+  // подпишемся заново под свежий VAPID.
+  if (sub) {
+    const currentKey = sub.options?.applicationServerKey;
+    if (currentKey) {
+      const currentB64 = btoa(String.fromCharCode(...new Uint8Array(currentKey)))
+        .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+      if (currentB64 !== cfg.key) {
+        try { await sub.unsubscribe(); } catch { /* ignore */ }
+        sub = null;
+      }
+    }
+  }
   if (!sub) {
     sub = await reg.pushManager.subscribe({
       userVisibleOnly: true, // обязательно для Chrome/Firefox
@@ -50,6 +64,16 @@ export async function subscribeToPush() {
   }
   await api.pushSubscribe(sub.toJSON());
   return sub;
+}
+
+// Синхронизация: если браузер подписан, но у сервера этой подписки нет (протухла
+// или не долетела ранее) — отправить локальную подписку на сервер ещё раз.
+// Идемпотентно (uniq по user_id+endpoint на бэке).
+export async function ensureServerHasSubscription() {
+  const st = await getPushLocalStatus();
+  if (!st.supported || !st.subscribed || !st.subscription) return false;
+  try { await api.pushSubscribe(st.subscription.toJSON()); return true; }
+  catch { return false; }
 }
 
 export async function unsubscribeFromPush() {
@@ -63,10 +87,22 @@ export async function unsubscribeFromPush() {
 
 export async function sendTestPush() {
   const r = await api.pushTest();
+  // Если бэк не нашёл подписок, но локально есть — это классический рассинхрон
+  // (подписка была сделана под старым VAPID, или INSERT не долетел). Пробуем
+  // ре-синхронизировать и повторить тест.
+  if (!r?.sent) {
+    const synced = await ensureServerHasSubscription().catch(() => false);
+    if (synced) {
+      try {
+        const retry = await api.pushTest();
+        if (retry?.sent) return retry;
+      } catch { /* ignore, отдадим исходный */ }
+    }
+  }
   return r;
 }
 
 // Глобальный шорткат для консоли/UI без импорта.
 if (typeof window !== 'undefined') {
-  window.crmPush = { subscribe: subscribeToPush, unsubscribe: unsubscribeFromPush, status: getPushLocalStatus, test: sendTestPush };
+  window.crmPush = { subscribe: subscribeToPush, unsubscribe: unsubscribeFromPush, status: getPushLocalStatus, test: sendTestPush, resync: ensureServerHasSubscription };
 }

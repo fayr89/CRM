@@ -17,7 +17,7 @@ import {
   toast,
   tr,
 } from './ui.js';
-import { subscribeToPush, unsubscribeFromPush, getPushLocalStatus, sendTestPush } from './push.js';
+import { subscribeToPush, unsubscribeFromPush, getPushLocalStatus, sendTestPush, ensureServerHasSubscription } from './push.js';
 
 // Безопасно отображать пользовательский текст с HTML разметкой
 function safeHtml(plainText, htmlParts = {}) {
@@ -10789,6 +10789,9 @@ function buildPushProfileCard() {
       return;
     }
     if (st.subscribed) {
+      // Тихая ре-синхронизация: если на бэке подписки нет (протухла / не долетела /
+      // была под старым VAPID), локальную отправим ещё раз. Пользователю не мешает.
+      ensureServerHasSubscription().catch(() => {});
       statusLine.textContent = '✅ Push включён на этом устройстве';
       statusLine.style.color = '#15803d';
       const testBtn = el('button', { class: 'btn btn-primary' }, '📤 Отправить тестовое уведомление');
