@@ -10761,9 +10761,7 @@ async function renderProjectsSection(area) {
   reload();
 }
 
-// Карточка PWA push-уведомлений в «Мой профиль»: подписка/отписка/тест.
-// Дублирует функционал кнопки в сайдбаре — юзеры не всегда её замечают,
-// в профиле — привычное место для настроек уведомлений.
+// Карточка PWA push-уведомлений в «Мой профиль».
 function buildPushProfileCard() {
   const card = el('div', { class: 'card', style: { marginBottom: '12px' } });
   card.append(el('div', { style: { fontWeight: '600', fontSize: '15px', marginBottom: '4px' } }, '📲 PWA push-уведомления'));
@@ -10774,6 +10772,44 @@ function buildPushProfileCard() {
   card.append(statusLine);
   const btnRow = el('div', { style: { display: 'flex', gap: '6px', flexWrap: 'wrap' } });
   card.append(btnRow);
+  // Diagnostic-панель: показывает всё сразу (endpoint браузера, кол-во подписок
+  // на сервере, VAPID public key, результат последнего действия). Помогает
+  // разобраться, когда браузер уверен что подписан, а сервер не находит.
+  const diagBox = el('pre', {
+    style: {
+      fontSize: '11px', background: '#f3f4f6', padding: '8px', borderRadius: '6px',
+      marginTop: '8px', whiteSpace: 'pre-wrap', wordBreak: 'break-all', display: 'none',
+    },
+  });
+  card.append(diagBox);
+
+  async function collectDiag(headline) {
+    const lines = [headline || 'Диагностика:'];
+    // Клиент
+    const st = await getPushLocalStatus().catch((e) => ({ error: e.message }));
+    lines.push('--- Браузер ---');
+    lines.push('supported: ' + st.supported);
+    lines.push('permission: ' + st.permission);
+    lines.push('subscribed: ' + st.subscribed);
+    if (st.subscription) {
+      const json = st.subscription.toJSON();
+      lines.push('endpoint: ' + (json.endpoint || '').slice(0, 100) + '…');
+      lines.push('has p256dh: ' + !!(json.keys && json.keys.p256dh));
+      lines.push('has auth: ' + !!(json.keys && json.keys.auth));
+    }
+    // Сервер
+    lines.push('--- Сервер ---');
+    try {
+      const srv = await api.pushStatus();
+      lines.push('enabled: ' + srv.enabled);
+      lines.push('subscriptions в БД: ' + srv.subscriptions);
+    } catch (e) { lines.push('Ошибка /status: ' + e.message); }
+    try {
+      const vk = await api.pushVapidKey();
+      lines.push('VAPID publicKey (последние 8): …' + (vk.key || '').slice(-8));
+    } catch (e) { lines.push('Ошибка /vapid-key: ' + e.message); }
+    return lines.join('\n');
+  }
 
   async function refresh() {
     btnRow.textContent = '';
@@ -10789,9 +10825,6 @@ function buildPushProfileCard() {
       return;
     }
     if (st.subscribed) {
-      // Тихая ре-синхронизация: если на бэке подписки нет (протухла / не долетела /
-      // была под старым VAPID), локальную отправим ещё раз. Пользователю не мешает.
-      ensureServerHasSubscription().catch(() => {});
       statusLine.textContent = '✅ Push включён на этом устройстве';
       statusLine.style.color = '#15803d';
       const testBtn = el('button', { class: 'btn btn-primary' }, '📤 Отправить тестовое уведомление');
@@ -10799,9 +10832,34 @@ function buildPushProfileCard() {
         testBtn.disabled = true;
         try {
           const r = await sendTestPush();
-          toast(r.sent ? 'Тестовый push отправлен — проверь шторку устройства' : 'Тест отправлен, но подписок не найдено', r.sent ? 'success' : 'error');
+          toast(r.sent ? `Тест отправлен (${r.sent} шт) — проверь шторку` : 'Тест отправлен, но подписок не найдено', r.sent ? 'success' : 'error');
         } catch (e) { toast(e.message, 'error'); }
         testBtn.disabled = false;
+      });
+      // «Пересоздать» — принудительный full re-subscribe. Спасает, когда браузер
+      // помнит подписку с ЧУЖИМ VAPID / БД чужая / вручную кто-то удалил из БД.
+      const recreateBtn = el('button', { class: 'btn' }, '🔧 Пересоздать подписку');
+      recreateBtn.addEventListener('click', async () => {
+        recreateBtn.disabled = true;
+        try {
+          // Полный сброс: отписаться и локально, и на сервере.
+          await unsubscribeFromPush();
+          await subscribeToPush();
+          const chk = await api.pushStatus();
+          if (chk.subscriptions > 0) {
+            toast(`Пересоздано. Подписок на сервере: ${chk.subscriptions}`, 'success');
+          } else {
+            const diag = await collectDiag('❌ Не удалось: подписок на сервере 0.');
+            diagBox.textContent = diag; diagBox.style.display = '';
+            toast('Пересоздать не удалось — раскрыл диагностику ниже', 'error');
+          }
+        } catch (e) {
+          const diag = await collectDiag('❌ Ошибка пересоздания: ' + e.message);
+          diagBox.textContent = diag; diagBox.style.display = '';
+          toast(e.message, 'error');
+        }
+        recreateBtn.disabled = false;
+        refresh();
       });
       const offBtn = el('button', { class: 'btn' }, '🔕 Отключить на этом устройстве');
       offBtn.addEventListener('click', async () => {
@@ -10812,7 +10870,14 @@ function buildPushProfileCard() {
         offBtn.disabled = false;
         refresh();
       });
-      btnRow.append(testBtn, offBtn);
+      const diagBtn = el('button', { class: 'btn', title: 'Показать что видит браузер и сервер' }, '🔎 Диагностика');
+      diagBtn.addEventListener('click', async () => {
+        diagBtn.disabled = true;
+        try { const d = await collectDiag('📋 Состояние push:'); diagBox.textContent = d; diagBox.style.display = ''; }
+        catch (e) { diagBox.textContent = 'Ошибка: ' + e.message; diagBox.style.display = ''; }
+        diagBtn.disabled = false;
+      });
+      btnRow.append(testBtn, recreateBtn, offBtn, diagBtn);
     } else {
       statusLine.textContent = 'Push пока не включён на этом устройстве';
       statusLine.style.color = 'var(--text-muted)';
@@ -10821,12 +10886,27 @@ function buildPushProfileCard() {
         onBtn.disabled = true;
         try {
           await subscribeToPush();
-          toast('Готово! Push-уведомления включены.', 'success');
-        } catch (e) { toast(e.message || 'Не удалось подписаться', 'error'); }
+          const chk = await api.pushStatus();
+          if (chk.subscriptions > 0) toast(`Готово! Подписок на сервере: ${chk.subscriptions}`, 'success');
+          else {
+            const diag = await collectDiag('⚠️ Локально подписался, но на сервере не сохранилось.');
+            diagBox.textContent = diag; diagBox.style.display = '';
+            toast('Подписка не долетела до сервера — раскрыл диагностику ниже', 'error');
+          }
+        } catch (e) {
+          const diag = await collectDiag('❌ Ошибка подписки: ' + e.message);
+          diagBox.textContent = diag; diagBox.style.display = '';
+          toast(e.message || 'Не удалось подписаться', 'error');
+        }
         onBtn.disabled = false;
         refresh();
       });
-      btnRow.append(onBtn);
+      const diagBtn = el('button', { class: 'btn' }, '🔎 Диагностика');
+      diagBtn.addEventListener('click', async () => {
+        try { const d = await collectDiag('📋 Состояние push:'); diagBox.textContent = d; diagBox.style.display = ''; }
+        catch (e) { diagBox.textContent = 'Ошибка: ' + e.message; diagBox.style.display = ''; }
+      });
+      btnRow.append(onBtn, diagBtn);
     }
   }
   refresh();
