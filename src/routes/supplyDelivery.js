@@ -344,11 +344,33 @@ async function wbKeyForSupply(supply) {
 
 router.get('/supplies', requireOperate, asyncHandler(async (_req, res) => {
   await ensureSupplyDeliverySchema();
+  // Юрлицо: сначала из поставки, если пусто — из привязанного канал-аккаунта.
+  // Сумма поставки: Σ (quantity × price_из_прайса) по каналу поставки; sku позиции
+  // → products.sku → product_prices по marketplace (label по SD channel). Если
+  // цены нет — позиция вносит 0.
   res.json(await db.all(
-    `SELECT s.*, COALESCE(i.cnt, 0) AS item_count, COALESCE(i.qty, 0) AS total_qty
+    `SELECT s.*,
+            COALESCE(s.legal_entity, a.legal_entity) AS legal_entity,
+            COALESCE(i.cnt, 0) AS item_count,
+            COALESCE(i.qty, 0) AS total_qty,
+            COALESCE(amt.total_amount, 0) AS total_amount
      FROM sd_supplies s
+     LEFT JOIN sd_channel_accounts a ON a.id = s.channel_account_id
      LEFT JOIN (SELECT supply_id, COUNT(*) AS cnt, SUM(quantity) AS qty FROM sd_supply_items GROUP BY supply_id) i
        ON i.supply_id = s.id
+     LEFT JOIN LATERAL (
+       SELECT COALESCE(SUM(it.quantity * pp.price), 0) AS total_amount
+       FROM sd_supply_items it
+       JOIN products p ON p.sku = it.sku
+       JOIN product_prices pp ON pp.product_id = p.id AND pp.marketplace = (
+         CASE s.channel
+           WHEN 'wb' THEN 'Wildberries'
+           WHEN 'ozon' THEN 'Ozon'
+           WHEN 'ym' THEN 'Яндекс.Маркет'
+           WHEN 'avito' THEN 'Avito'
+           ELSE '' END)
+       WHERE it.supply_id = s.id
+     ) amt ON TRUE
      ORDER BY s.id DESC`,
   ));
 }));

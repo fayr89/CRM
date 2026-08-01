@@ -12518,22 +12518,26 @@ function renderSdSuppliesCard() {
   const tbody = el('tbody', {});
   card.append(el('table', { class: 'table' },
     el('thead', {}, el('tr', {}, el('th', {}, '#'), el('th', {}, 'Канал/Модель'), el('th', {}, 'Юрлицо'),
-      el('th', {}, 'Статус'), el('th', {}, 'Позиций (шт)'), el('th', {}, ''))), tbody));
+      el('th', {}, 'Статус'), el('th', {}, 'Позиций (шт)'), el('th', {}, 'Сумма, ₽'), el('th', {}, ''))), tbody));
   async function reload() {
     tbody.textContent = '';
     let rows = [];
     try { rows = await api.sdSupplies(); } catch (e) { toast(e.message, 'error'); }
-    if (!rows.length) { tbody.append(el('tr', {}, el('td', { colspan: '6' }, 'Нет поставок'))); return; }
+    if (!rows.length) { tbody.append(el('tr', {}, el('td', { colspan: '7' }, 'Нет поставок'))); return; }
     for (const s of rows) {
       const open = el('button', { class: 'btn btn-sm', onClick: () => sdOpenSupply(s.id, reload) }, 'Открыть');
       const del = el('button', { class: 'btn btn-sm btn-danger', style: { marginLeft: '4px' }, onClick: async () => {
         if (!(await confirm('Удалить поставку?'))) return;
         try { await api.sdDeleteSupply(s.id); reload(); } catch (e) { toast(e.message, 'error'); }
       } }, '🗑');
+      const amt = Number(s.total_amount) || 0;
       tbody.append(el('tr', {}, el('td', {}, '#' + s.id),
         el('td', {}, `${SD_CHANNELS[s.channel] || s.channel} / ${SD_MODELS[s.model] || s.model}`),
         el('td', {}, s.legal_entity || '—'), el('td', {}, SD_SUPPLY_STATUS[s.status] || s.status),
-        el('td', {}, `${s.item_count} (${s.total_qty})`), el('td', {}, open, del)));
+        el('td', {}, `${s.item_count} (${s.total_qty})`),
+        el('td', { style: { whiteSpace: 'nowrap', fontWeight: '600', color: amt > 0 ? '#0f172a' : 'var(--text-muted)' } },
+          amt > 0 ? amt.toLocaleString('ru-RU') : '—'),
+        el('td', {}, open, del)));
     }
   }
   reload();
@@ -12548,9 +12552,17 @@ async function sdCreateSupply(onSaved) {
   // WB-канал (с ключом) — нужен для процесса поставки WB. Показываем только для WB.
   const accS = el('select', {}, el('option', { value: '' }, '— WB-канал (для API) —'));
   const accRow = el('div', { class: 'form-row' }, el('label', {}, 'WB-канал'), accS);
+  let wbAccList = [];
   api.sdWbAccounts().then((accs) => {
-    for (const a of (accs || [])) accS.append(el('option', { value: String(a.id) }, `#${a.id} ${a.legal_entity || ''}`));
+    wbAccList = accs || [];
+    for (const a of wbAccList) accS.append(el('option', { value: String(a.id) }, `#${a.id} ${a.legal_entity || ''}`));
   }).catch(() => {});
+  // При выборе WB-канала — авто-подставить юрлицо из канала (пользователь просил:
+  // раньше указывал канал, но поле «Юрлицо» оставалось пустым → в списке был прочерк).
+  accS.addEventListener('change', () => {
+    const a = wbAccList.find((x) => String(x.id) === accS.value);
+    if (a && a.legal_entity && !legalI.value.trim()) legalI.value = a.legal_entity;
+  });
   const syncAccVisible = () => { accRow.style.display = chanS.value === 'wb' ? '' : 'none'; };
   chanS.addEventListener('change', syncAccVisible);
   const body = el('div', {},
