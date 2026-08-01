@@ -13918,3 +13918,201 @@ async function sdQuickCreateSet(onCreated) {
     } catch (e) { toast(e.message, 'error'); return false; }
   } });
 }
+
+// ============================================================
+// Аналитика остатков — оборачиваемость, ABC, dead stock, дефицит
+// ============================================================
+export async function renderInventoryAnalytics(main) {
+  main.innerHTML = '';
+  const periodSel = el('select', {},
+    el('option', { value: '30' }, '30 дней'),
+    el('option', { value: '90', selected: 'selected' }, '90 дней'),
+    el('option', { value: '180' }, '180 дней'),
+    el('option', { value: '365' }, 'год'));
+  const reloadBtn = el('button', { class: 'btn btn-sm', style: { marginLeft: '8px' } }, '🔄 Обновить');
+  const header = el('div', { class: 'page-header' },
+    el('div', {},
+      el('h1', { class: 'page-title' }, '📊 Аналитика остатков'),
+      el('div', { class: 'page-subtitle' }, 'Оборачиваемость, ABC-классификация, мёртвый сток, дефицит. Данные — по отгруженным/завершённым заказам за выбранный период.')),
+    el('div', { style: { display: 'flex', alignItems: 'center' } }, periodSel, reloadBtn));
+  main.append(header);
+  const content = el('div', {}, el('div', { class: 'loading' }, 'Загрузка…'));
+  main.append(content);
+
+  async function load() {
+    content.innerHTML = '<div class="loading">Считаю остатки и продажи…</div>';
+    let data;
+    try { data = await api.analyticsInventory(Number(periodSel.value) || 90); }
+    catch (e) { content.innerHTML = ''; content.append(el('div', { class: 'empty' }, 'Ошибка: ' + e.message)); return; }
+    render(data);
+  }
+  periodSel.addEventListener('change', load);
+  reloadBtn.addEventListener('click', load);
+
+  function statCard(label, value, sub, color) {
+    return el('div', { class: 'stat-card' },
+      el('div', { class: 'label' }, label),
+      el('div', { class: 'value', style: color ? { color } : {} }, value),
+      sub ? el('div', { class: 'sub' }, sub) : null);
+  }
+  function money(n) { return `${Math.round(Number(n) || 0).toLocaleString('ru-RU')} ₽`; }
+  function abcBadge(cls) {
+    const c = { A: '#16a34a', B: '#2563eb', C: '#a16207', D: '#6b7280' }[cls] || '#6b7280';
+    return el('span', { style: { display: 'inline-block', padding: '1px 6px', borderRadius: '4px', background: c, color: 'white', fontSize: '11px', fontWeight: '600' } }, cls);
+  }
+  function statusBadge(status, text) {
+    const map = {
+      urgent: '#dc2626', out: '#dc2626', low: '#f59e0b', excess: '#a16207',
+      dead: '#6b7280', inactive: '#9ca3af', normal: '#16a34a',
+    };
+    return el('span', { style: { color: map[status] || '#6b7280', fontSize: '12px', fontWeight: '600' } }, text);
+  }
+
+  function render(data) {
+    content.innerHTML = '';
+    const s = data.summary;
+    // Дашборд-цифры
+    content.append(el('div', { class: 'dashboard-grid' },
+      statCard('Товаров в каталоге', s.products_total, `${s.products_with_stock} с остатком`),
+      statCard('Стоимость склада', money(s.stock_value_total), 'по себестоимости'),
+      statCard('Продано за период', money(s.revenue_total), `${Math.round(s.qty_sold_total)} шт`),
+      statCard('Оборачиваемость ABC', `${s.turnover_avg_ab.toFixed(1)}×/год`, 'A+B товары; норма 6-12'),
+    ));
+    content.append(el('div', { class: 'dashboard-grid' },
+      statCard('🚫 Мёртвый сток', s.dead_count, money(s.dead_value) + ' замороженo', s.dead_count > 0 ? '#6b7280' : ''),
+      statCard('⚠️ Срочно закупить', s.urgent_count, 'закончатся <7 дней', s.urgent_count > 0 ? '#dc2626' : ''),
+      statCard('📉 Заканчивается', s.low_count, '<14 дней запаса', s.low_count > 0 ? '#f59e0b' : ''),
+      statCard('📦 Избыток', s.excess_count, money(s.excess_value) + ' >180 дней', s.excess_count > 0 ? '#a16207' : ''),
+    ));
+    content.append(el('div', { class: 'dashboard-grid' },
+      statCard('ABC-A (топ 80%)', s.abc_a_count, 'ключевые товары', '#16a34a'),
+      statCard('ABC-B (80-95%)', s.abc_b_count, 'средние', '#2563eb'),
+      statCard('ABC-C (95-100%)', s.abc_c_count, 'хвост'),
+      statCard('D (без продаж)', s.abc_d_count, 'мёртвый'),
+    ));
+
+    // Рекомендации
+    const recBox = el('div', { class: 'card', style: { marginTop: '12px' } },
+      el('h3', { style: { marginTop: 0 } }, '💡 Рекомендации'));
+    for (const r of (data.recommendations || [])) {
+      const color = r.level === 'urgent' ? '#dc2626' : r.level === 'warning' ? '#a16207' : '#0f172a';
+      recBox.append(el('div', { style: { padding: '6px 0', color, fontSize: '14px' } }, r.text));
+    }
+    content.append(recBox);
+
+    // Три топа рядом
+    function topCard(title, rows, cols) {
+      const box = el('div', { class: 'card' }, el('h3', { style: { marginTop: 0 } }, title));
+      if (!rows.length) { box.append(el('div', { class: 'empty' }, 'Пусто — хорошо')); return box; }
+      const tbody = el('tbody', {});
+      for (const r of rows) {
+        const cells = cols.map((c) => el('td', c.style || {}, c.get(r)));
+        tbody.append(el('tr', {}, ...cells));
+      }
+      box.append(el('div', { style: { overflowX: 'auto' } },
+        el('table', { class: 'table' },
+          el('thead', {}, el('tr', {}, ...cols.map((c) => el('th', {}, c.label)))),
+          tbody)));
+      return box;
+    }
+    content.append(el('div', { class: 'dashboard-grid', style: { marginTop: '12px' } },
+      topCard('🔥 Топ-10 продаж', data.top_selling, [
+        { label: 'Товар', get: (r) => `${r.sku || '—'} ${r.name || ''}`.slice(0, 60) },
+        { label: 'Продано', get: (r) => `${Math.round(r.qty_sold)} шт`, style: { whiteSpace: 'nowrap' } },
+        { label: 'Выручка', get: (r) => money(r.revenue), style: { whiteSpace: 'nowrap', fontWeight: '600' } },
+        { label: 'Ост.', get: (r) => `${Math.round(r.stock)} (${r.days_left != null ? Math.round(r.days_left) + 'дн' : '∞'})`, style: { whiteSpace: 'nowrap' } },
+      ]),
+      topCard('⚠️ Срочно закупить', data.urgent, [
+        { label: 'Товар', get: (r) => `${r.sku || '—'} ${r.name || ''}`.slice(0, 60) },
+        { label: 'Ост.', get: (r) => `${Math.round(r.stock)}`, style: { whiteSpace: 'nowrap' } },
+        { label: 'Осталось', get: (r) => r.days_left != null ? `${Math.round(r.days_left)} дн` : '—', style: { whiteSpace: 'nowrap', color: '#dc2626', fontWeight: '600' } },
+        { label: '/день', get: (r) => r.avg_daily.toFixed(1), style: { whiteSpace: 'nowrap' } },
+      ]),
+      topCard('🚫 Мёртвый сток', data.dead_stock, [
+        { label: 'Товар', get: (r) => `${r.sku || '—'} ${r.name || ''}`.slice(0, 60) },
+        { label: 'Ост.', get: (r) => `${Math.round(r.stock)}`, style: { whiteSpace: 'nowrap' } },
+        { label: 'Заморожено', get: (r) => money(r.stock_value), style: { whiteSpace: 'nowrap', fontWeight: '600' } },
+      ]),
+      topCard('📦 Избыток', data.excess, [
+        { label: 'Товар', get: (r) => `${r.sku || '—'} ${r.name || ''}`.slice(0, 60) },
+        { label: 'Осталось', get: (r) => `${Math.round(r.days_left)} дн`, style: { whiteSpace: 'nowrap', color: '#a16207' } },
+        { label: 'Стоимость', get: (r) => money(r.stock_value), style: { whiteSpace: 'nowrap', fontWeight: '600' } },
+      ]),
+    ));
+
+    // Полная таблица с фильтрами
+    const filters = { status: '', abc: '', search: '' };
+    const searchI = el('input', { type: 'search', placeholder: 'Поиск по SKU/названию', style: { width: '240px' } });
+    const statusS = el('select', {},
+      el('option', { value: '' }, 'Все статусы'),
+      el('option', { value: 'urgent' }, '⚠️ Срочно'),
+      el('option', { value: 'out' }, '🚫 Закончился'),
+      el('option', { value: 'low' }, '📉 Заканчивается'),
+      el('option', { value: 'dead' }, '🚫 Мёртвый'),
+      el('option', { value: 'excess' }, '📦 Избыток'),
+      el('option', { value: 'normal' }, '✅ Норма'));
+    const abcS = el('select', {},
+      el('option', { value: '' }, 'Все ABC'),
+      el('option', { value: 'A' }, 'A'),
+      el('option', { value: 'B' }, 'B'),
+      el('option', { value: 'C' }, 'C'),
+      el('option', { value: 'D' }, 'D (без продаж)'));
+    let sortBy = 'revenue', sortDir = -1;
+    const tableBox = el('div', { style: { overflowX: 'auto', maxHeight: '600px', overflowY: 'auto' } });
+    function renderTable() {
+      const q = (filters.search || '').toLowerCase();
+      const filtered = data.items.filter((x) =>
+        (!filters.status || x.status === filters.status) &&
+        (!filters.abc || x.abc === filters.abc) &&
+        (!q || (x.sku || '').toLowerCase().includes(q) || (x.name || '').toLowerCase().includes(q)));
+      filtered.sort((a, b) => {
+        const av = a[sortBy] ?? -Infinity, bv = b[sortBy] ?? -Infinity;
+        return av === bv ? 0 : (av > bv ? sortDir : -sortDir);
+      });
+      const tbody = el('tbody', {});
+      for (const it of filtered.slice(0, 500)) {
+        tbody.append(el('tr', {},
+          el('td', {}, abcBadge(it.abc)),
+          el('td', { style: { whiteSpace: 'nowrap' } }, it.sku || '—'),
+          el('td', {}, it.name || '—'),
+          el('td', { style: { textAlign: 'right', whiteSpace: 'nowrap' } }, String(Math.round(it.stock))),
+          el('td', { style: { textAlign: 'right', whiteSpace: 'nowrap' } }, money(it.stock_value)),
+          el('td', { style: { textAlign: 'right', whiteSpace: 'nowrap' } }, String(Math.round(it.qty_sold))),
+          el('td', { style: { textAlign: 'right', whiteSpace: 'nowrap' } }, money(it.revenue)),
+          el('td', { style: { textAlign: 'right', whiteSpace: 'nowrap' } }, it.avg_daily.toFixed(2)),
+          el('td', { style: { textAlign: 'right', whiteSpace: 'nowrap' } }, it.days_left != null ? Math.round(it.days_left) + 'д' : '∞'),
+          el('td', { style: { textAlign: 'right', whiteSpace: 'nowrap' } }, it.turnover_per_year > 900 ? '—' : it.turnover_per_year.toFixed(1) + '×'),
+          el('td', {}, statusBadge(it.status, it.status_text)),
+        ));
+      }
+      if (!filtered.length) tbody.append(el('tr', {}, el('td', { colspan: '11' }, el('div', { class: 'empty' }, 'Ничего не найдено'))));
+      tableBox.innerHTML = '';
+      function th(label, key) {
+        const a = el('th', { style: { cursor: 'pointer', userSelect: 'none' } },
+          label + (sortBy === key ? (sortDir < 0 ? ' ↓' : ' ↑') : ''));
+        a.addEventListener('click', () => { if (sortBy === key) sortDir = -sortDir; else { sortBy = key; sortDir = -1; } renderTable(); });
+        return a;
+      }
+      tableBox.append(el('table', { class: 'table' },
+        el('thead', {}, el('tr', {},
+          el('th', {}, 'ABC'),
+          th('SKU', 'sku'), el('th', {}, 'Название'),
+          th('Ост.', 'stock'), th('Ст-ть', 'stock_value'),
+          th('Продано', 'qty_sold'), th('Выручка', 'revenue'),
+          th('/день', 'avg_daily'), th('Осталось', 'days_left'),
+          th('Оборач.', 'turnover_per_year'),
+          el('th', {}, 'Статус'))),
+        tbody));
+    }
+    searchI.addEventListener('input', () => { filters.search = searchI.value; renderTable(); });
+    statusS.addEventListener('change', () => { filters.status = statusS.value; renderTable(); });
+    abcS.addEventListener('change', () => { filters.abc = abcS.value; renderTable(); });
+    content.append(el('div', { class: 'card', style: { marginTop: '12px' } },
+      el('h3', { style: { marginTop: 0 } }, `📋 Все товары (${data.items.length})`),
+      el('div', { style: { display: 'flex', gap: '8px', marginBottom: '8px', flexWrap: 'wrap' } }, searchI, statusS, abcS),
+      tableBox));
+    renderTable();
+  }
+
+  load();
+}

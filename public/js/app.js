@@ -7,6 +7,7 @@ import {
   openGlobalSearch,
   renderAcceptInvite,
   renderAnalytics,
+  renderInventoryAnalytics,
   renderAudit,
   renderCashbox,
   renderDashboard,
@@ -98,6 +99,7 @@ const NAV_GROUPS = [
     title: 'Управление',
     items: [
       { hash: '#/analytics', label: 'Аналитика', roles: ['admin', 'rop'] },
+      { hash: '#/inventory-analytics', label: '📊 Остатки/Оборачиваемость', roles: ['admin', 'rop', 'warehouse', 'aus'] },
       { hash: '#/users', label: 'Пользователи', roles: ['admin', 'rop'] },
       { hash: '#/invitations', label: 'Приглашения', roles: ['admin', 'rop'] },
       { hash: '#/integrations', label: 'Настройки', roles: ['admin', 'aus'] },
@@ -848,6 +850,7 @@ const ROUTES = {
   '#/products': renderProducts,
   '#/cashbox': renderCashbox,
   '#/analytics': renderAnalytics,
+  '#/inventory-analytics': renderInventoryAnalytics,
   '#/integrations': renderIntegrations,
   '#/feedback': renderFeedback,
   '#/my-feedback': renderMyFeedback,

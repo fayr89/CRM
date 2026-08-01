@@ -403,6 +403,7 @@ export const api = {
   analyticsProducts: (days) => request('GET', '/api/analytics/products', { query: { days } }),
   analyticsFunnel: (days) => request('GET', '/api/analytics/funnel', { query: { days } }),
   analyticsSummary: (days) => request('GET', '/api/analytics/summary', { query: { days } }),
+  analyticsInventory: (days) => request('GET', '/api/analytics/inventory', { query: { days } }),
 
   // Экспорт заказов в CSV — возвращает URL для скачивания (с авторизацией через query)
   ordersExportUrl: (params = {}) => {
