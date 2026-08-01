@@ -25,6 +25,13 @@
 
     <title>CRM</title>
     <link rel="stylesheet" href="/css/styles.css" />
+
+    <!-- Preload критичных модулей: браузер начнёт грузить их ПАРАЛЛЕЛЬНО с app.js,
+         а не по waterfall (app.js → api.js → ui.js → views.js). Экономит 2-3 RTT
+         на первом заходе (особенно заметно с медленным мобильным интернетом). -->
+    <link rel="modulepreload" href="/js/api.js" />
+    <link rel="modulepreload" href="/js/ui.js" />
+    <link rel="modulepreload" href="/js/views.js" />
   </head>
   <body>
     <div id="app">

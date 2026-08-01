@@ -519,21 +519,25 @@ function renderShell() {
   // Полоска уведомлений сверху (баннеры от админа). Закрытые сохраняются в localStorage по id.
   const noticeBar = el('div', { class: 'notice-bar' });
   root.append(noticeBar);
-  loadNoticeBanners(noticeBar);
-  // Подсказка для пользователей iPhone-Safari: «добавьте на домой» — за 1 раз
-  // показываем, потом 3 дня молчим (или навсегда, если юзер ткнул «×»/установил).
+  // Подсказка для iPhone-Safari — синхронно (localStorage, без сети).
   loadIosInstallBanner(noticeBar);
-  // Баннер «Новый прайс — ознакомьтесь и подтвердите» для продающих. НЕ блокирует
-  // работу (мягкая версия) — просто висит, пока не нажмут «Подтверждаю».
-  loadPriceAckBanner(noticeBar);
 
   root.append(el('div', { class: 'shell' }, sidebar, overlay, main), menuBtn, userBadge);
 
-  startNotificationsPolling(bellCounter);
-  if (user.role === 'admin') {
-    startFeedbackPolling(feedbackCounter);
-    startAiInboxPolling(aiInboxCounter);
-  }
+  // Некритичные фоновые запросы (баннеры, счётчики) — с задержкой ~800мс, чтобы
+  // не мешать первому paint и не заваливать cold-start бэкенда 5-7 параллельными
+  // запросами разом (banners + priceAck + notifications + feedback + aiInbox +
+  // supplyDeliveryFlag). Приложение рендерится сразу, счётчики подтянутся чуть
+  // позже — юзер не заметит.
+  setTimeout(() => {
+    loadNoticeBanners(noticeBar);
+    loadPriceAckBanner(noticeBar);
+    startNotificationsPolling(bellCounter);
+    if (user.role === 'admin') {
+      startFeedbackPolling(feedbackCounter);
+      startAiInboxPolling(aiInboxCounter);
+    }
+  }, 800);
   return main;
 }
 
