@@ -28,10 +28,34 @@ const afterTotal = files.reduce((s, f) => s + statSync(join(dir, f)).size, 0);
 const kb = (n) => (n / 1024).toFixed(1);
 console.log(`[minify] ${files.length} файлов: ${kb(beforeTotal)} КБ → ${kb(afterTotal)} КБ (${Math.round((1 - afterTotal / beforeTotal) * 100)}% меньше)`);
 
-// Стампуем service-worker уникальной версией: при каждом деплое контент sw.js
-// отличается → браузер видит обновление и шлёт клиенту 'updatefound'.
-// Версия = timestamp деплоя (читабельно при отладке, гарантированно уникально).
-const buildVersion = new Date().toISOString();
+// Версия = ХЕШ СОДЕРЖИМОГО фронта (js+css+html), НЕ timestamp. Почему:
+// daily-run автоматика коммитит ~5-10 раз в час (docs/diag-эндпоинты) — с
+// timestamp'ом каждый деплой давал новый sw.js → браузер каждый раз показывал
+// «Доступно обновление», хотя фронт не менялся. С хешем sw.js меняется ТОЛЬКО
+// при реальных правках фронта, баннер появляется только когда действительно надо.
+import { createHash } from 'node:crypto';
+const HASH_DIRS = ['public/js', 'public/css'];
+const HASH_FILES = ['public/index.html', 'public/manifest.webmanifest'];
+const hashInput = createHash('sha256');
+const hashPaths = [];
+for (const dir of HASH_DIRS) {
+  try {
+    for (const f of readdirSync(dir).sort()) {
+      const p = join(dir, f);
+      if (statSync(p).isFile()) hashPaths.push(p);
+    }
+  } catch { /* директории может не быть */ }
+}
+for (const f of HASH_FILES) {
+  try { if (statSync(f).isFile()) hashPaths.push(f); } catch { /* ignore */ }
+}
+for (const p of hashPaths.sort()) {
+  // sw.js в хеш не включаем — иначе циклическая зависимость (штамп в sw.js
+  // меняет его контент, что меняет хеш → бесконечно).
+  if (p.endsWith('sw.js')) continue;
+  hashInput.update(readFileSync(p));
+}
+const buildVersion = hashInput.digest('hex').slice(0, 16);
 
 const SW_PATH = 'public/sw.js';
 try {
