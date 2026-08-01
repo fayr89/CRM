@@ -13930,10 +13930,11 @@ export async function renderInventoryAnalytics(main) {
     el('option', { value: '180' }, '180 дней'),
     el('option', { value: '365' }, 'год'));
   const reloadBtn = el('button', { class: 'btn btn-sm', style: { marginLeft: '8px' } }, '🔄 Обновить');
+  const subtitle = el('div', { class: 'page-subtitle' }, 'Оборачиваемость, ABC-классификация, мёртвый сток, дефицит. Данные — по отгруженным/завершённым заказам за выбранный период.');
   const header = el('div', { class: 'page-header' },
     el('div', {},
       el('h1', { class: 'page-title' }, '📊 Аналитика остатков'),
-      el('div', { class: 'page-subtitle' }, 'Оборачиваемость, ABC-классификация, мёртвый сток, дефицит. Данные — по отгруженным/завершённым заказам за выбранный период.')),
+      subtitle),
     el('div', { style: { display: 'flex', alignItems: 'center' } }, periodSel, reloadBtn));
   main.append(header);
   const content = el('div', {}, el('div', { class: 'loading' }, 'Загрузка…'));
@@ -13970,6 +13971,13 @@ export async function renderInventoryAnalytics(main) {
 
   function render(data) {
     content.innerHTML = '';
+    // Подсказка: какие склады НЕ учтены (из «Интеграции → Видимость складов»).
+    if ((data.hidden_stores || []).length) {
+      subtitle.innerHTML = '';
+      subtitle.append(el('span', {}, 'Оборачиваемость и остатки. Данные — по отгруженным/завершённым заказам за период. '),
+        el('span', { style: { color: 'var(--text-muted)' } },
+          `Скрытые склады (не учтены в остатке): ${data.hidden_stores.join(', ')}. Настройка — Интеграции → Видимость складов.`));
+    }
     const s = data.summary;
     // Дашборд-цифры
     content.append(el('div', { class: 'dashboard-grid' },

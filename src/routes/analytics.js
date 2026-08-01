@@ -236,39 +236,49 @@ router.get(
     );
     const salesByPid = new Map(salesRows.filter((r) => r.product_id).map((r) => [r.product_id, r]));
 
-    // 2) Все товары, у которых либо есть остаток, либо были продажи за период.
-    //    ВАЖНО: реальный остаток товара может лежать в stock_by_store (JSONB
-    //    массив [{store, stock, reserve}, ...] по складам МойСклад), а поле
-    //    products.stock быть NULL. Считаем total_stock = SUM(store.stock) через
-    //    jsonb_array_elements + fallback на p.stock.
+    // 2) Все товары, у которых либо есть остаток на ВИДИМЫХ складах, либо были
+    //    продажи за период. Остаток берётся из stock_by_store (JSONB массив
+    //    [{store, stock, reserve}, ...] по складам МС) с фильтром: склады из
+    //    app_settings.warehouses.hidden игнорируются (те же настройки, что и в
+    //    форме заказа «Видимость складов»).
+    const hiddenRow = await db.get(
+      `SELECT value FROM app_settings WHERE key = 'warehouses.hidden'`,
+    ).catch(() => null);
+    const hiddenStores = Array.isArray(hiddenRow?.value) ? hiddenRow.value : [];
     const soldIds = salesRows.map((r) => r.product_id).filter(Boolean);
+    // Подзапрос суммы остатка по видимым складам: если stock_by_store — массив,
+    // берём элементы, у которых store НЕ в hidden. Иначе — fallback на p.stock.
+    // hiddenStores передаём как text[] параметр (ANY(?) = сравнение с массивом).
     const products = await db.all(
       `SELECT id, sku, name, image_url, cost_price, unit, external_source, active,
               COALESCE(is_markdown, FALSE) AS is_markdown,
               COALESCE(
                 (SELECT SUM(COALESCE((elem->>'stock')::float, 0))
                  FROM jsonb_array_elements(stock_by_store) AS elem
-                 WHERE jsonb_typeof(stock_by_store) = 'array'),
-                stock,
+                 WHERE jsonb_typeof(stock_by_store) = 'array'
+                   AND NOT (elem->>'store' = ANY(?::text[]))),
+                CASE WHEN jsonb_typeof(stock_by_store) = 'array' THEN 0 ELSE stock END,
                 0
               )::float AS stock,
               COALESCE(
                 (SELECT SUM(COALESCE((elem->>'reserve')::float, 0))
                  FROM jsonb_array_elements(stock_by_store) AS elem
-                 WHERE jsonb_typeof(stock_by_store) = 'array'),
+                 WHERE jsonb_typeof(stock_by_store) = 'array'
+                   AND NOT (elem->>'store' = ANY(?::text[]))),
                 0
               )::float AS reserve
        FROM products
        WHERE COALESCE(
                (SELECT SUM(COALESCE((elem->>'stock')::float, 0))
                 FROM jsonb_array_elements(stock_by_store) AS elem
-                WHERE jsonb_typeof(stock_by_store) = 'array'),
-               stock,
+                WHERE jsonb_typeof(stock_by_store) = 'array'
+                  AND NOT (elem->>'store' = ANY(?::text[]))),
+               CASE WHEN jsonb_typeof(stock_by_store) = 'array' THEN 0 ELSE stock END,
                0
              ) > 0
          OR id = ANY(?)
        ORDER BY name`,
-      soldIds,
+      hiddenStores, hiddenStores, hiddenStores, soldIds,
     );
 
     // 3) Обогащаем + рассчитываем метрики.
@@ -368,6 +378,7 @@ router.get(
 
     res.json({
       period_days: days,
+      hidden_stores: hiddenStores, // какие склады НЕ учитываем (для подписи в UI)
       summary,
       recommendations: recs,
       top_selling: topSelling,
