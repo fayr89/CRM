@@ -217,6 +217,7 @@ router.get(
     // 1) Продажи по товарам за N дней — учитываем shipped/completed (реальные отгрузки).
     //    cancelled и возвраты не учитываем — не искажаем оборачиваемость.
     //    Мэтч: сначала по order_items.product_id, если пусто — по sku.
+    //    Дата продажи — shipped_at (если есть) или completed_at, иначе created_at.
     const salesRows = await db.all(
       `SELECT
          COALESCE(oi.product_id,
@@ -230,17 +231,25 @@ router.get(
        FROM order_items oi
        JOIN orders o ON o.id = oi.order_id
        WHERE o.status IN ('shipped', 'completed')
-         AND o.created_at >= NOW() - INTERVAL '${days} days'
+         AND COALESCE(o.shipped_at, o.completed_at, o.created_at) >= NOW() - INTERVAL '${days} days'
        GROUP BY COALESCE(oi.product_id, (SELECT p.id FROM products p WHERE p.sku = oi.sku LIMIT 1))`,
     );
     const salesByPid = new Map(salesRows.filter((r) => r.product_id).map((r) => [r.product_id, r]));
 
-    // 2) Все активные (не архив, не уценка) товары каталога.
+    // 2) Все товары, у которых либо есть остаток, либо были продажи за период.
+    //    Раньше фильтровали active=TRUE и is_markdown=FALSE — из-за этого товары
+    //    с ненулевым остатком, но помеченные как неактивные/уценка, не попадали
+    //    в отчёт («товар на остатках, но нет в оборачиваемости»). Теперь берём
+    //    ВСЁ, что физически лежит на складе или продавалось — бэйджи покажут
+    //    что это уценка/неактивный, если нужно.
+    const soldIds = salesRows.map((r) => r.product_id).filter(Boolean);
     const products = await db.all(
-      `SELECT id, sku, name, image_url, cost_price, stock, unit, external_source
+      `SELECT id, sku, name, image_url, cost_price, stock, unit, external_source, active,
+              COALESCE(is_markdown, FALSE) AS is_markdown
        FROM products
-       WHERE active = TRUE AND (is_markdown IS NULL OR is_markdown = FALSE)
+       WHERE (stock IS NOT NULL AND stock > 0) OR id = ANY(?)
        ORDER BY name`,
+      soldIds,
     );
 
     // 3) Обогащаем + рассчитываем метрики.
@@ -268,6 +277,8 @@ router.get(
       return {
         id: p.id, sku: p.sku, name: p.name, image_url: p.image_url,
         cost_price: cost, stock, unit: p.unit || 'шт', external_source: p.external_source,
+        active: p.active !== false,
+        is_markdown: !!p.is_markdown,
         qty_sold: qtySold,
         revenue,
         order_count: Number(s.order_count) || 0,

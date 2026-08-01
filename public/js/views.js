@@ -14071,10 +14071,13 @@ export async function renderInventoryAnalytics(main) {
       });
       const tbody = el('tbody', {});
       for (const it of filtered.slice(0, 500)) {
+        const nameCell = el('td', {}, it.name || '—');
+        if (it.is_markdown) nameCell.append(el('span', { style: { marginLeft: '6px', padding: '1px 5px', background: '#f59e0b', color: 'white', borderRadius: '3px', fontSize: '10px' } }, 'УЦЕНКА'));
+        if (!it.active) nameCell.append(el('span', { style: { marginLeft: '6px', padding: '1px 5px', background: '#6b7280', color: 'white', borderRadius: '3px', fontSize: '10px' } }, 'НЕАКТИВЕН'));
         tbody.append(el('tr', {},
           el('td', {}, abcBadge(it.abc)),
           el('td', { style: { whiteSpace: 'nowrap' } }, it.sku || '—'),
-          el('td', {}, it.name || '—'),
+          nameCell,
           el('td', { style: { textAlign: 'right', whiteSpace: 'nowrap' } }, String(Math.round(it.stock))),
           el('td', { style: { textAlign: 'right', whiteSpace: 'nowrap' } }, money(it.stock_value)),
           el('td', { style: { textAlign: 'right', whiteSpace: 'nowrap' } }, String(Math.round(it.qty_sold))),
