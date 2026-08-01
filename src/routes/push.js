@@ -46,6 +46,8 @@ router.post('/unsubscribe', asyncHandler(async (req, res) => {
 }));
 
 // Отправить тестовый пуш самому себе (для проверки настройки на телефоне).
+// Возвращаем errors[] — если Apple/Firefox/Chrome отбросил push, менеджер
+// увидит конкретный statusCode/body в UI (в /profile → Диагностика).
 router.post('/test', asyncHandler(async (req, res) => {
   const r = await pushToUser(req.user.id, {
     title: 'CRM',
@@ -53,7 +55,7 @@ router.post('/test', asyncHandler(async (req, res) => {
     link: '#/dashboard',
     tag: 'test',
   });
-  res.json({ ok: true, sent: r.sent });
+  res.json({ ok: true, sent: r.sent, errors: r.errors || [] });
 }));
 
 router.get('/status', asyncHandler(async (req, res) => {

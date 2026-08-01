@@ -31,7 +31,13 @@ async function saveKeysToDb(keys) {
 
 async function resolveKeys() {
   if (cached) return cached;
-  const subject = process.env.PUSH_VAPID_SUBJECT || 'mailto:admin@crm.local';
+  // VAPID subject: должен быть ВАЛИДНЫМ mailto: с реальным доменом ИЛИ https://
+  // URL. Apple Push Service (web.push.apple.com для iOS PWA) СТРОГО валидирует и
+  // отбрасывает push с ошибкой BadJwtToken при невалидном subject. Раньше стоял
+  // дефолт mailto:admin@crm.local — Apple не принимал такой домен.
+  const subject = process.env.PUSH_VAPID_SUBJECT
+    || process.env.PUBLIC_URL
+    || 'https://crm.iitit.ru';
   if (process.env.PUSH_VAPID_PUBLIC && process.env.PUSH_VAPID_PRIVATE) {
     cached = { publicKey: process.env.PUSH_VAPID_PUBLIC, privateKey: process.env.PUSH_VAPID_PRIVATE, subject };
     return cached;
@@ -85,6 +91,7 @@ export async function pushToUser(userId, { title, body, link, tag }) {
     tag: tag || null,
   });
   let sent = 0;
+  const errors = [];
   await Promise.all(subs.map(async (s) => {
     try {
       await webpush.sendNotification(
@@ -96,15 +103,21 @@ export async function pushToUser(userId, { title, body, link, tag }) {
       // last_used_at не обязательно, обновляем best-effort.
       db.run('UPDATE push_subscriptions SET last_used_at = NOW() WHERE id = ?', s.id).catch(() => {});
     } catch (e) {
+      const err = {
+        endpoint: (s.endpoint || '').slice(0, 60),
+        statusCode: e?.statusCode || null,
+        body: (e?.body?.toString?.() || e?.message || '').slice(0, 300),
+      };
+      errors.push(err);
       if (e.statusCode === 404 || e.statusCode === 410) {
         // Подписка «протухла» (юзер удалил PWA/отключил уведомления).
         await db.run('DELETE FROM push_subscriptions WHERE id = ?', s.id).catch(() => {});
       } else {
-        console.error('[push] send:', e?.statusCode, e?.body?.slice?.(0, 200) || e.message);
+        console.error('[push] send:', err.statusCode, err.body);
       }
     }
   }));
-  return { sent };
+  return { sent, errors };
 }
 
 export async function pushToMany(userIds, message) {

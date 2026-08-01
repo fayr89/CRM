@@ -10832,7 +10832,18 @@ function buildPushProfileCard() {
         testBtn.disabled = true;
         try {
           const r = await sendTestPush();
-          toast(r.sent ? `Тест отправлен (${r.sent} шт) — проверь шторку` : 'Тест отправлен, но подписок не найдено', r.sent ? 'success' : 'error');
+          if (r.sent) {
+            toast(`Тест отправлен (${r.sent} шт) — проверь шторку`, 'success');
+          } else {
+            // Если push-провайдер (Apple/Firefox/Chrome) отбросил — покажем что именно.
+            const errs = r.errors || [];
+            const summary = errs.length
+              ? errs.map((e) => `${e.statusCode || '?'} ${e.body || ''}`).join(' | ')
+              : 'подписок не найдено';
+            const diag = await collectDiag(`❌ Push НЕ доставлен: ${summary}`);
+            diagBox.textContent = diag; diagBox.style.display = '';
+            toast(`Push отклонён провайдером: ${summary}`, 'error');
+          }
         } catch (e) { toast(e.message, 'error'); }
         testBtn.disabled = false;
       });
