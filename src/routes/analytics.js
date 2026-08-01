@@ -237,17 +237,36 @@ router.get(
     const salesByPid = new Map(salesRows.filter((r) => r.product_id).map((r) => [r.product_id, r]));
 
     // 2) Все товары, у которых либо есть остаток, либо были продажи за период.
-    //    Раньше фильтровали active=TRUE и is_markdown=FALSE — из-за этого товары
-    //    с ненулевым остатком, но помеченные как неактивные/уценка, не попадали
-    //    в отчёт («товар на остатках, но нет в оборачиваемости»). Теперь берём
-    //    ВСЁ, что физически лежит на складе или продавалось — бэйджи покажут
-    //    что это уценка/неактивный, если нужно.
+    //    ВАЖНО: реальный остаток товара может лежать в stock_by_store (JSONB
+    //    массив [{store, stock, reserve}, ...] по складам МойСклад), а поле
+    //    products.stock быть NULL. Считаем total_stock = SUM(store.stock) через
+    //    jsonb_array_elements + fallback на p.stock.
     const soldIds = salesRows.map((r) => r.product_id).filter(Boolean);
     const products = await db.all(
-      `SELECT id, sku, name, image_url, cost_price, stock, unit, external_source, active,
-              COALESCE(is_markdown, FALSE) AS is_markdown
+      `SELECT id, sku, name, image_url, cost_price, unit, external_source, active,
+              COALESCE(is_markdown, FALSE) AS is_markdown,
+              COALESCE(
+                (SELECT SUM(COALESCE((elem->>'stock')::float, 0))
+                 FROM jsonb_array_elements(stock_by_store) AS elem
+                 WHERE jsonb_typeof(stock_by_store) = 'array'),
+                stock,
+                0
+              )::float AS stock,
+              COALESCE(
+                (SELECT SUM(COALESCE((elem->>'reserve')::float, 0))
+                 FROM jsonb_array_elements(stock_by_store) AS elem
+                 WHERE jsonb_typeof(stock_by_store) = 'array'),
+                0
+              )::float AS reserve
        FROM products
-       WHERE (stock IS NOT NULL AND stock > 0) OR id = ANY(?)
+       WHERE COALESCE(
+               (SELECT SUM(COALESCE((elem->>'stock')::float, 0))
+                FROM jsonb_array_elements(stock_by_store) AS elem
+                WHERE jsonb_typeof(stock_by_store) = 'array'),
+               stock,
+               0
+             ) > 0
+         OR id = ANY(?)
        ORDER BY name`,
       soldIds,
     );
@@ -277,6 +296,7 @@ router.get(
       return {
         id: p.id, sku: p.sku, name: p.name, image_url: p.image_url,
         cost_price: cost, stock, unit: p.unit || 'шт', external_source: p.external_source,
+        reserve: Number(p.reserve) || 0,
         active: p.active !== false,
         is_markdown: !!p.is_markdown,
         qty_sold: qtySold,
