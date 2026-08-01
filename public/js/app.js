@@ -906,6 +906,14 @@ function renderApp() {
   // Передаём query-параметры из hash в роут-handler — нужно, чтобы из уведомления
   // («#/orders?id=123») сразу открылся detail-диалог сущности.
   handler(main, { params });
+  // Ленивая подгрузка модуля production-receipt.js (плавающая кнопка «Оприходовать»
+  // на страницах производства). Раньше грузился всем ~20К при каждой загрузке —
+  // теперь только на 5 profile-хешах. Скрипт сам детектит роль и хеш внутри.
+  const PROD_HASHES = ['#/materials', '#/processing-plans', '#/production-orders', '#/contracts', '#/production-pl'];
+  if (PROD_HASHES.includes(path) && !window.__prodReceiptLoaded) {
+    window.__prodReceiptLoaded = true;
+    import('./production-receipt.js').catch((e) => console.error('[prod-receipt lazy]', e));
+  }
 }
 
 window.addEventListener('hashchange', renderApp);

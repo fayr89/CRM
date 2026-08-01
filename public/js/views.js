@@ -17,6 +17,7 @@ import {
   toast,
   tr,
 } from './ui.js';
+import { subscribeToPush, unsubscribeFromPush, getPushLocalStatus, sendTestPush } from './push.js';
 
 // Безопасно отображать пользовательский текст с HTML разметкой
 function safeHtml(plainText, htmlParts = {}) {
@@ -10760,6 +10761,75 @@ async function renderProjectsSection(area) {
   reload();
 }
 
+// Карточка PWA push-уведомлений в «Мой профиль»: подписка/отписка/тест.
+// Дублирует функционал кнопки в сайдбаре — юзеры не всегда её замечают,
+// в профиле — привычное место для настроек уведомлений.
+function buildPushProfileCard() {
+  const card = el('div', { class: 'card', style: { marginBottom: '12px' } });
+  card.append(el('div', { style: { fontWeight: '600', fontSize: '15px', marginBottom: '4px' } }, '📲 PWA push-уведомления'));
+  const hint = el('div', { style: { fontSize: '12px', color: 'var(--text-muted)', marginBottom: '8px' } },
+    'Уведомления от CRM прямо в шторку устройства (Android/десктоп) или на Home Screen (iOS PWA 16.4+). Работает даже когда CRM закрыта.');
+  card.append(hint);
+  const statusLine = el('div', { style: { fontSize: '13px', marginBottom: '8px' } }, 'Проверяю статус…');
+  card.append(statusLine);
+  const btnRow = el('div', { style: { display: 'flex', gap: '6px', flexWrap: 'wrap' } });
+  card.append(btnRow);
+
+  async function refresh() {
+    btnRow.textContent = '';
+    let st;
+    try { st = await getPushLocalStatus(); }
+    catch (e) { statusLine.textContent = 'Ошибка: ' + (e.message || e); return; }
+    if (!st.supported) {
+      statusLine.textContent = 'ℹ️ Push не поддерживается в этом браузере. На iPhone: добавь CRM на Home Screen как PWA (iOS 16.4+).';
+      return;
+    }
+    if (st.permission === 'denied') {
+      statusLine.textContent = '⚠️ Push заблокирован в настройках браузера/устройства. Разреши уведомления для этого сайта в настройках браузера.';
+      return;
+    }
+    if (st.subscribed) {
+      statusLine.textContent = '✅ Push включён на этом устройстве';
+      statusLine.style.color = '#15803d';
+      const testBtn = el('button', { class: 'btn btn-primary' }, '📤 Отправить тестовое уведомление');
+      testBtn.addEventListener('click', async () => {
+        testBtn.disabled = true;
+        try {
+          const r = await sendTestPush();
+          toast(r.sent ? 'Тестовый push отправлен — проверь шторку устройства' : 'Тест отправлен, но подписок не найдено', r.sent ? 'success' : 'error');
+        } catch (e) { toast(e.message, 'error'); }
+        testBtn.disabled = false;
+      });
+      const offBtn = el('button', { class: 'btn' }, '🔕 Отключить на этом устройстве');
+      offBtn.addEventListener('click', async () => {
+        if (!(await confirm('Отписаться от push-уведомлений на этом устройстве?'))) return;
+        offBtn.disabled = true;
+        try { await unsubscribeFromPush(); toast('Push отключён на этом устройстве', 'success'); }
+        catch (e) { toast(e.message, 'error'); }
+        offBtn.disabled = false;
+        refresh();
+      });
+      btnRow.append(testBtn, offBtn);
+    } else {
+      statusLine.textContent = 'Push пока не включён на этом устройстве';
+      statusLine.style.color = 'var(--text-muted)';
+      const onBtn = el('button', { class: 'btn btn-primary' }, '📲 Включить push на этом устройстве');
+      onBtn.addEventListener('click', async () => {
+        onBtn.disabled = true;
+        try {
+          await subscribeToPush();
+          toast('Готово! Push-уведомления включены.', 'success');
+        } catch (e) { toast(e.message || 'Не удалось подписаться', 'error'); }
+        onBtn.disabled = false;
+        refresh();
+      });
+      btnRow.append(onBtn);
+    }
+  }
+  refresh();
+  return card;
+}
+
 // Мой профиль: настройки уведомлений в МАХ. По умолчанию все галочки включены —
 // при сохранении только изменённые от дефолта пишутся в user_notification_prefs.
 export async function renderMyProfile(main) {
@@ -10779,6 +10849,9 @@ export async function renderMyProfile(main) {
     ),
   );
   main.append(meBlock);
+
+  // ---- PWA push-уведомления ----
+  main.append(buildPushProfileCard());
 
   // Смена пароля. Валидация на бэке: текущий должен совпадать, новый ≥6 символов и
   // отличаться от старого. После успеха поля очищаются.

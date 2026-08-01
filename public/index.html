@@ -40,6 +40,8 @@
     <div id="modal-root"></div>
     <div id="toast-root"></div>
     <script type="module" src="/js/app.js"></script>
-    <script type="module" src="/js/production-receipt.js"></script>
+    <!-- production-receipt.js подгружается ЛЕНИВО из app.js при переходе на
+         страницы производства (5 хешей) — не грузим ~20К каждому юзеру, кому
+         производство недоступно. -->
   </body>
 </html>
