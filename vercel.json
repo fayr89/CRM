@@ -6,7 +6,10 @@
   "installCommand": "npm install --include=dev",
   "outputDirectory": "public",
   "functions": {
-    "api/index.js": { "maxDuration": 60 }
+    "api/index.js": {
+      "maxDuration": 60,
+      "memory": 3008
+    }
   },
   "rewrites": [
     { "source": "/health", "destination": "/api/index" },

@@ -90,7 +90,16 @@ export function createApp({ serveStatic = true } = {}) {
   if (serveStatic) app.use(express.static(PUBLIC_DIR));
 
   app.get('/health', (_req, res) => {
-    res.json({ status: 'ok', timestamp: new Date().toISOString() });
+    // Диагностика latency: показываем регион Vercel-функции и хост БД.
+    // Если они в разных регионах — каждый DB-запрос идёт межконтинентально.
+    const dbUrl = process.env.DATABASE_URL || process.env.POSTGRES_URL || '';
+    const dbHost = dbUrl.match(/@([^:/]+)/)?.[1] || null;
+    res.json({
+      status: 'ok',
+      timestamp: new Date().toISOString(),
+      vercel_region: process.env.VERCEL_REGION || null,
+      db_host: dbHost,
+    });
   });
 
   app.get('/api', (_req, res) => {
