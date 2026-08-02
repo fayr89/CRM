@@ -14037,16 +14037,20 @@ export async function renderInventoryAnalytics(main) {
     let srcLabel;
     if (data.sales_source === 'moysklad' || data.sales_source === 'moysklad_cached') {
       const cached = data.sales_source === 'moysklad_cached';
-      srcLabel = `✅ Продажи из МойСклад${cached ? ` (кэш от ${data.sales_generated_at ? new Date(data.sales_generated_at).toLocaleString('ru-RU') : '—'})` : ' (свежие)'} · МС отдал ${fromMs} позиций, сматчено с каталогом ${matched} из ${totalItems}`;
+      srcLabel = `✅ Продажи из МойСклад${cached ? ` (кэш от ${data.sales_generated_at ? new Date(data.sales_generated_at).toLocaleString('ru-RU') : '—'})` : ' (свежие)'} · МС отдал ${fromMs} позиций, сматчено ${matched} из ${totalItems} (UUID: ${data.sales_matched_by_ext || 0}, SKU: ${data.sales_matched_by_sku || 0})`;
     } else {
       srcLabel = '⚠️ Продажи из CRM (МС недоступен) — только Avito-заказы, неполные данные';
     }
     const srcColor = (data.sales_source === 'moysklad' || data.sales_source === 'moysklad_cached') && matched > 0 ? '' : '#dc2626';
     subtitle.append(el('span', { style: { color: srcColor } }, srcLabel),
       data.sales_error ? el('div', { style: { color: '#dc2626', marginTop: '4px' } }, `❌ ${data.sales_error}`) : null,
-      (fromMs > 0 && matched === 0)
-        ? el('div', { style: { color: '#dc2626', marginTop: '4px' } },
-            'МС отдал продажи, но НИ ОДНА позиция не сматчилась с каталогом CRM. Проверь: каталог импортирован из МойСклад (products.external_id заполнен) и товары в МС в тех же карточках.')
+      (fromMs > 0 && matched === 0 && data.sales_debug)
+        ? el('div', { style: { color: '#dc2626', marginTop: '4px', fontSize: '11px' } },
+            'МС отдал продажи, но НИ ОДНА позиция не сматчилась. Диагностика:',
+            el('div', {}, `МС UUID: ${(data.sales_debug.ms_ids || []).join(', ') || '—'}`),
+            el('div', {}, `МС SKU:  ${(data.sales_debug.ms_skus || []).join(', ') || '—'}`),
+            el('div', {}, `CRM UUID: ${(data.sales_debug.crm_ids || []).join(', ') || '—'}`),
+            el('div', {}, `CRM SKU:  ${(data.sales_debug.crm_skus || []).join(', ') || '—'}`))
         : null,
       (data.hidden_stores || []).length
         ? el('div', { style: { color: 'var(--text-muted)', marginTop: '4px' } },

@@ -263,7 +263,8 @@ export async function pushMoyskladBundle(token, { msBundleId, name, article, com
 // складов (outcome.quantity/sum) и пришло (income.quantity/sum) за интервал
 // [momentFrom, momentTo]. Для нашей аналитики оборачиваемости берём outcome —
 // это ВСЕ отгрузки (розница, оптовые продажи, списания), а не только заказы CRM.
-// Ключ — external_id товара МС (совпадает с products.external_id).
+// Возвращаем массив { externalId, qty, revenue, name, meta_type } — мэтч на
+// стороне БД (может быть по product или variant).
 export async function fetchMoyskladTurnover(token, { daysBack = 90 } = {}) {
   const now = new Date();
   const from = new Date(now.getTime() - daysBack * 86400_000);
@@ -271,20 +272,28 @@ export async function fetchMoyskladTurnover(token, { daysBack = 90 } = {}) {
   const fmt = (d) => d.toISOString().slice(0, 19).replace('T', ' ');
   const endpoint = `/report/turnover/all?momentFrom=${encodeURIComponent(fmt(from))}&momentTo=${encodeURIComponent(fmt(now))}`;
   const rows = await fetchAll(endpoint, token, 1000);
-  const byExtId = new Map();
+  const acc = new Map();
   for (const r of rows) {
+    // Извлекаем UUID тремя способами: прямое поле id (если МС отдал expanded),
+    // или последний сегмент href БЕЗ query. Тип берём из meta (product/variant/service).
     const href = r.assortment?.meta?.href || '';
-    const externalId = href.split('?')[0].split('/').pop();
+    const uuidFromHref = href ? href.split('?')[0].split('/').pop() : null;
+    const externalId = r.assortment?.id || uuidFromHref;
     if (!externalId) continue;
     // МС хранит суммы в копейках → /100.
     const qty = Number(r.outcome?.quantity) || 0;
     const revenue = (Number(r.outcome?.sum) || 0) / 100;
-    // Товар может встречаться несколько раз (разные склады) → суммируем.
-    const prev = byExtId.get(externalId);
+    const prev = acc.get(externalId);
     if (prev) { prev.qty += qty; prev.revenue += revenue; }
-    else byExtId.set(externalId, { qty, revenue, name: r.assortment?.name || null });
+    else acc.set(externalId, {
+      qty, revenue,
+      name: r.assortment?.name || null,
+      code: r.assortment?.code || null,
+      article: r.assortment?.article || null,
+      meta_type: r.assortment?.meta?.type || null,
+    });
   }
-  return byExtId;
+  return acc;
 }
 
 export async function fetchMoyskladStock(token) {

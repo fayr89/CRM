@@ -289,9 +289,11 @@ router.get(
         if (ext) salesByExtId.set(ext, { qty: Number(r.qty_sold) || 0, revenue: Number(r.revenue) || 0 });
       }
     }
-    // Ключи salesByExtId — это external_id товаров МС (совпадают с products.external_id).
-    // Товары с ненулевым остатком ИЛИ с продажами будут в списке ниже.
+    // Ключи для WHERE-фильтра: UUID из МС + SKU (article/code) для fallback-мэтча.
     const soldExtIds = [...salesByExtId.keys()];
+    const soldSkus = [...salesByExtId.values()]
+      .map((s) => (s.article || s.code || '').trim())
+      .filter(Boolean);
 
     // 2) Все товары, у которых либо есть остаток на ВИДИМЫХ складах, либо были
     //    продажи за период. Остаток берётся из stock_by_store (JSONB массив
@@ -334,14 +336,28 @@ router.get(
                0
              ) > 0
          OR (external_source = 'moysklad' AND external_id = ANY(?::text[]))
+         OR (sku = ANY(?::text[]))
        ORDER BY name`,
-      hiddenStores, hiddenStores, hiddenStores, soldExtIds,
+      hiddenStores, hiddenStores, hiddenStores, soldExtIds, soldSkus,
     );
 
-    // 3) Обогащаем + рассчитываем метрики. Продажи мэтчим по external_id
-    //    (это UUID товара в МС; salesByExtId — данные из отчёта turnover).
+    // 3) Обогащаем + рассчитываем метрики. Мэтч продаж:
+    //    1) primary — по external_id (UUID МС) — работает если МС отчёт даёт
+    //       тот же UUID, что и импортированный products.external_id.
+    //    2) fallback — по SKU: sku CRM ≈ article или code МС из отчёта.
+    //    (МС turnover может отдавать variant-id, а в CRM только product-id — тогда
+    //    UUID разные, но article/code — общие).
+    const salesBySku = new Map();
+    for (const [extId, s] of salesByExtId.entries()) {
+      const k = (s.article || s.code || '').trim();
+      if (k) salesBySku.set(k, s);
+    }
+    let matchByExt = 0, matchBySku = 0;
     const items = products.map((p) => {
-      const s = salesByExtId.get(p.external_id) || {};
+      let s = null;
+      if (p.external_id && salesByExtId.has(p.external_id)) { s = salesByExtId.get(p.external_id); matchByExt += 1; }
+      else if (p.sku && salesBySku.has(p.sku)) { s = salesBySku.get(p.sku); matchBySku += 1; }
+      s = s || {};
       const qtySold = Number(s.qty) || 0;
       const revenue = Number(s.revenue) || 0;
       const stock = Number(p.stock) || 0;
@@ -435,14 +451,22 @@ router.get(
     if (!recs.length) recs.push({ level: 'info', text: '✅ Всё под контролем: критичных проблем нет' });
 
     // Диагностика мэтча: сколько external_id пришло из МС, сколько из них
-    // нашлось в products (по external_source='moysklad' AND external_id=X).
+    // нашлось в products; как именно (UUID vs SKU); примеры UUID с обеих сторон
+    // (первые 3), чтобы если 0 — юзер видел что не совпадает.
     const matched = items.filter((x) => x.qty_sold > 0).length;
+    const msSampleIds = [...salesByExtId.keys()].slice(0, 3);
+    const msSampleSkus = [...salesByExtId.values()].slice(0, 3).map((s) => s.article || s.code || null);
+    const crmSampleIds = products.filter((p) => p.external_source === 'moysklad' && p.external_id).slice(0, 3).map((p) => p.external_id);
+    const crmSampleSkus = products.slice(0, 3).map((p) => p.sku);
     res.json({
       period_days: days,
       hidden_stores: hiddenStores, // какие склады НЕ учитываем (для подписи в UI)
       sales_source: salesSource, // 'moysklad' | 'moysklad_cached' | 'crm'
       sales_items_count: salesByExtId.size, // сколько позиций отдал МС
       sales_matched_count: matched, // сколько из них нашлись в products
+      sales_matched_by_ext: matchByExt, // из них по UUID
+      sales_matched_by_sku: matchBySku, // из них по SKU-fallback
+      sales_debug: { ms_ids: msSampleIds, ms_skus: msSampleSkus, crm_ids: crmSampleIds, crm_skus: crmSampleSkus },
       sales_generated_at: salesGeneratedAt,
       sales_error: salesError, // если МС недоступен — тут причина, UI покажет
       summary,
