@@ -5,6 +5,7 @@
   "buildCommand": "npm run build",
   "installCommand": "npm install --include=dev",
   "outputDirectory": "public",
+  "regions": ["fra1"],
   "functions": {
     "api/index.js": { "maxDuration": 60 }
   },
