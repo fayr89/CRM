@@ -95,6 +95,30 @@ export async function enqueueMsJob(orderId, action, payload = {}) {
   return result;
 }
 
+// Быстрая версия enqueueMsJob для перевода статуса в UI: только INSERT/UPDATE
+// в ms_jobs, БЕЗ синхронного runPendingMsJobs. Экономит до 2 секунд на каждой
+// смене статуса заказа. tickMsQueue на следующем /api запросе (или cron
+// refresh-stocks каждые 5 мин) подхватит pending и выполнит.
+export async function enqueueMsJobFast(orderId, action, payload = {}) {
+  const pending = await db.get(
+    `SELECT id FROM ms_jobs WHERE order_id = ? AND action = ? AND status = 'pending' LIMIT 1`,
+    orderId, action,
+  );
+  if (pending) {
+    await db.run(
+      `UPDATE ms_jobs SET payload = ?::jsonb, attempts = 0, last_error = NULL,
+       scheduled_at = NOW(), updated_at = NOW() WHERE id = ?`,
+      JSON.stringify(payload), pending.id,
+    );
+    return { coalesced: true, id: pending.id };
+  }
+  const r = await db.run(
+    `INSERT INTO ms_jobs (order_id, action, payload) VALUES (?, ?, ?::jsonb) RETURNING id`,
+    orderId, action, JSON.stringify(payload),
+  );
+  return { skipped: false, id: r.lastInsertRowid };
+}
+
 export async function listMsJobs({ status, limit = 100, offset = 0 } = {}) {
   const where = [];
   const params = [];

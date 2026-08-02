@@ -10,7 +10,7 @@ import { emitEvent } from '../services/webhooks.js';
 import { toCsv } from '../services/csv.js';
 import ExcelJS from 'exceljs';
 import { nextShippingDate, getSchedule } from '../services/shippingSchedule.js';
-import { enqueueMsJob } from '../services/ms-jobs.js';
+import { enqueueMsJob, enqueueMsJobFast } from '../services/ms-jobs.js';
 import { applyLocalStockReserveDelta } from '../services/ms-orders.js';
 import { notifyAdmins } from '../services/notifications.js';
 import { logAction } from '../services/audit.js';
@@ -1483,25 +1483,28 @@ router.post(
     try { await applyLocalStockReserveDelta(order.id, 0, +1); } catch (e) {
       console.warn('[reserve] applyLocalStockReserveDelta failed:', e.message);
     }
-    // МС: ставим/обновляем customerorder с резервом на позициях.
-    await enqueueMsJob(order.id, 'customer_order.upsert', { reserve_mode: 'full' });
-    const reservedBody = await buildOrderNotificationBody(order.id);
-    await notify(
-      order.manager_id,
-      'order.reserved',
-      'Заказ зарезервирован',
-      reservedBody + '\n\n✅ Склад готов отгружать',
-      `#/orders?id=${order.id}`,
-    );
-    await notifyAdmins(
-      'order.reserved',
-      `✅ Заказ #${order.id} зарезервирован`,
-      reservedBody,
-      `#/orders?id=${order.id}`,
-    );
-    emitEvent('order.reserved', updated);
-    await logAction(req, { action: 'order.reserved', entity_type: 'order', entity_id: order.id });
+    // МС: ставим/обновляем customerorder — INSERT в ms_jobs БЕЗ синхронного исполнения
+    // (экономит до 2с). tickMsQueue на следующем /api-запросе (или cron) подхватит.
+    await enqueueMsJobFast(order.id, 'customer_order.upsert', { reserve_mode: 'full' });
+    // Отвечаем клиенту СРАЗУ — уведомления и audit уходят в фон.
     res.json(updated);
+    // Fire-and-forget: notify менеджеру и админам + audit + emit. На Vercel
+    // setImmediate ненадёжен (лямбда может замёрзнуть), но потеря push'а или
+    // audit-строки — приемлемый компромисс за скорость (данные и МС-задача
+    // уже сохранены синхронно).
+    setImmediate(async () => {
+      try {
+        const reservedBody = await buildOrderNotificationBody(order.id);
+        await Promise.all([
+          notify(order.manager_id, 'order.reserved', 'Заказ зарезервирован',
+            reservedBody + '\n\n✅ Склад готов отгружать', `#/orders?id=${order.id}`),
+          notifyAdmins('order.reserved', `✅ Заказ #${order.id} зарезервирован`,
+            reservedBody, `#/orders?id=${order.id}`),
+          logAction(req, { action: 'order.reserved', entity_type: 'order', entity_id: order.id }),
+        ]);
+        emitEvent('order.reserved', updated);
+      } catch (e) { console.error('[reserve async]', e.message); }
+    });
   }),
 );
 
@@ -1521,26 +1524,24 @@ router.post(
        updated_at = NOW() WHERE id = ?`,
       order.id,
     );
-    // МС: создаём документ «Отгрузка» — остатки в МС физически списываются.
-    await enqueueMsJob(order.id, 'demand.create');
+    // МС «Отгрузка» — INSERT в очередь, tickMsQueue выполнит (экономит до 2с).
+    await enqueueMsJobFast(order.id, 'demand.create');
     const updated = await db.get('SELECT * FROM orders WHERE id = ?', order.id);
-    const shippedBody = await buildOrderNotificationBody(order.id);
-    await notify(
-      order.manager_id,
-      'order.shipped',
-      'Заказ отгружен',
-      shippedBody + '\n\n📦 Можно завершать',
-      `#/orders?id=${order.id}`,
-    );
-    await notifyAdmins(
-      'order.shipped',
-      `📦 Заказ #${order.id} отгружен`,
-      shippedBody,
-      `#/orders?id=${order.id}`,
-    );
-    emitEvent('order.shipped', updated);
-    await logAction(req, { action: 'order.shipped', entity_type: 'order', entity_id: order.id });
+    // Отвечаем клиенту сразу — уведомления и audit в фон.
     res.json(updated);
+    setImmediate(async () => {
+      try {
+        const shippedBody = await buildOrderNotificationBody(order.id);
+        await Promise.all([
+          notify(order.manager_id, 'order.shipped', 'Заказ отгружен',
+            shippedBody + '\n\n📦 Можно завершать', `#/orders?id=${order.id}`),
+          notifyAdmins('order.shipped', `📦 Заказ #${order.id} отгружен`,
+            shippedBody, `#/orders?id=${order.id}`),
+          logAction(req, { action: 'order.shipped', entity_type: 'order', entity_id: order.id }),
+        ]);
+        emitEvent('order.shipped', updated);
+      } catch (e) { console.error('[ship async]', e.message); }
+    });
   }),
 );
 
@@ -1738,9 +1739,14 @@ router.post(
       }
     }
     const updated = await db.get('SELECT * FROM orders WHERE id = ?', order.id);
-    emitEvent('order.completed', updated);
-    await logAction(req, { action: 'order.completed', entity_type: 'order', entity_id: order.id });
     res.json(updated);
+    // Fire-and-forget audit + emit — не критично для UX.
+    setImmediate(async () => {
+      try {
+        emitEvent('order.completed', updated);
+        await logAction(req, { action: 'order.completed', entity_type: 'order', entity_id: order.id });
+      } catch (e) { console.error('[complete async]', e.message); }
+    });
   }),
 );
 
@@ -1824,14 +1830,17 @@ router.post(
       }
     });
     const updated = await db.get('SELECT * FROM orders WHERE id = ?', order.id);
-    // МС: если был резерв (был зарезервирован/отгружён) — снимаем резерв в customerorder.
-    // Для new/waiting_stock — customerorder в МС обычно ещё нет, поэтому пропускаем.
+    // МС: если был резерв — INSERT в очередь без sync run.
     if (['reserved', 'shipped'].includes(order.status)) {
-      await enqueueMsJob(order.id, 'customer_order.upsert', { reserve_mode: 'none' });
+      await enqueueMsJobFast(order.id, 'customer_order.upsert', { reserve_mode: 'none' });
     }
-    emitEvent('order.cancelled', updated);
-    await logAction(req, { action: 'order.cancelled', entity_type: 'order', entity_id: order.id, details: { reason, from_status: order.status } });
     res.json(updated);
+    setImmediate(async () => {
+      try {
+        emitEvent('order.cancelled', updated);
+        await logAction(req, { action: 'order.cancelled', entity_type: 'order', entity_id: order.id, details: { reason, from_status: order.status } });
+      } catch (e) { console.error('[cancel async]', e.message); }
+    });
   }),
 );
 
@@ -1864,12 +1873,16 @@ router.post(
     try { await applyLocalStockReserveDelta(order.id, 0, -1); } catch (e) {
       console.warn('[unreserve] applyLocalStockReserveDelta failed:', e.message);
     }
-    // МС: снимаем резерв в customerorder (reserve = 0 на позициях).
-    await enqueueMsJob(order.id, 'customer_order.upsert', { reserve_mode: 'none' });
+    // МС: снимаем резерв — INSERT в очередь без sync run.
+    await enqueueMsJobFast(order.id, 'customer_order.upsert', { reserve_mode: 'none' });
     const updated = await db.get('SELECT * FROM orders WHERE id = ?', order.id);
-    emitEvent('order.updated', updated);
-    await logAction(req, { action: 'order.unreserved', entity_type: 'order', entity_id: order.id });
     res.json(updated);
+    setImmediate(async () => {
+      try {
+        emitEvent('order.updated', updated);
+        await logAction(req, { action: 'order.unreserved', entity_type: 'order', entity_id: order.id });
+      } catch (e) { console.error('[unreserve async]', e.message); }
+    });
   }),
 );
 
@@ -1895,13 +1908,18 @@ router.post(
       order.id,
     );
     // МС: если переходим из reserved — снимаем резерв в customerorder.
+    // Fast-версия: INSERT в очередь, tickMsQueue выполнит (экономит до 2с).
     if (prevStatus === 'reserved') {
-      await enqueueMsJob(order.id, 'customer_order.upsert', { reserve_mode: 'none' });
+      await enqueueMsJobFast(order.id, 'customer_order.upsert', { reserve_mode: 'none' });
     }
     const updated = await db.get('SELECT * FROM orders WHERE id = ?', order.id);
-    emitEvent('order.updated', updated);
-    await logAction(req, { action: 'order.mark_waiting', entity_type: 'order', entity_id: order.id, details: { from_status: prevStatus } });
     res.json(updated);
+    setImmediate(async () => {
+      try {
+        emitEvent('order.updated', updated);
+        await logAction(req, { action: 'order.mark_waiting', entity_type: 'order', entity_id: order.id, details: { from_status: prevStatus } });
+      } catch (e) { console.error('[mark-waiting async]', e.message); }
+    });
   }),
 );
 
@@ -1921,12 +1939,16 @@ router.post(
       `UPDATE orders SET status = 'reserved', shipped_at = NULL, updated_at = NOW() WHERE id = ?`,
       order.id,
     );
-    // МС: удаляем документ «Отгрузка» — остатки возвращаются, customerorder остаётся.
-    await enqueueMsJob(order.id, 'demand.delete');
+    // МС: удаляем документ «Отгрузка» — в очередь без sync run.
+    await enqueueMsJobFast(order.id, 'demand.delete');
     const updated = await db.get('SELECT * FROM orders WHERE id = ?', order.id);
-    emitEvent('order.updated', updated);
-    await logAction(req, { action: 'order.unshipped', entity_type: 'order', entity_id: order.id });
     res.json(updated);
+    setImmediate(async () => {
+      try {
+        emitEvent('order.updated', updated);
+        await logAction(req, { action: 'order.unshipped', entity_type: 'order', entity_id: order.id });
+      } catch (e) { console.error('[unship async]', e.message); }
+    });
   }),
 );
 
