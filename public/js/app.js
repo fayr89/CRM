@@ -526,21 +526,59 @@ function renderShell() {
 
   root.append(el('div', { class: 'shell' }, sidebar, overlay, main), menuBtn, userBadge);
 
-  // Некритичные фоновые запросы (баннеры, счётчики) — с задержкой ~800мс, чтобы
-  // не мешать первому paint и не заваливать cold-start бэкенда 5-7 параллельными
-  // запросами разом (banners + priceAck + notifications + feedback + aiInbox +
-  // supplyDeliveryFlag). Приложение рендерится сразу, счётчики подтянутся чуть
-  // позже — юзер не заметит.
-  setTimeout(() => {
-    loadNoticeBanners(noticeBar);
-    loadPriceAckBanner(noticeBar);
+  // Единый /api/bootstrap: параллельно на бэке тянет всё нужное для первого
+  // paint. 1 cold-start вместо 5-7 (раньше banners + priceAck + notifications +
+  // feedback + aiInbox + supplyDeliveryFlag летели отдельными запросами и
+  // каждый требовал прогрева лямбды). Дальше периодические поллинги (60с)
+  // подхватывают обновления по отдельности.
+  setTimeout(async () => {
+    let boot = null;
+    try { boot = await api.bootstrap(); } catch { /* fallback ниже */ }
+    if (boot) {
+      applyBootstrap(boot, { noticeBar, bellCounter, feedbackCounter, aiInboxCounter, userRole: user.role });
+    } else {
+      // Fallback: bootstrap упал → запускаем как раньше.
+      loadNoticeBanners(noticeBar);
+      loadPriceAckBanner(noticeBar);
+    }
+    // Периодические поллинги — стартуют независимо, они дальше подтягивают счётчики.
     startNotificationsPolling(bellCounter);
     if (user.role === 'admin') {
       startFeedbackPolling(feedbackCounter);
       startAiInboxPolling(aiInboxCounter);
     }
-  }, 800);
+  }, 300);
   return main;
+}
+
+// Применяет ответ /api/bootstrap к сайдбар-счётчикам и баннерам, без сети.
+function applyBootstrap(boot, { noticeBar, bellCounter, feedbackCounter, aiInboxCounter, userRole }) {
+  // Счётчик уведомлений
+  if (bellCounter) {
+    const n = boot.notifications_unread || 0;
+    if (n > 0) { bellCounter.textContent = String(n); bellCounter.style.display = ''; }
+    else bellCounter.style.display = 'none';
+  }
+  // Счётчик feedback admin
+  if (userRole === 'admin' && feedbackCounter) {
+    const n = boot.feedback_open || 0;
+    if (n > 0) { feedbackCounter.textContent = String(n); feedbackCounter.style.display = ''; }
+    else feedbackCounter.style.display = 'none';
+  }
+  // AI inbox counter
+  if (userRole === 'admin' && aiInboxCounter) {
+    const n = boot.ai_proposals_pending || 0;
+    if (n > 0) { aiInboxCounter.textContent = String(n); aiInboxCounter.style.display = ''; }
+    else aiInboxCounter.style.display = 'none';
+  }
+  // Баннеры (notice + price-ack) — переиспользуем существующий код через
+  // подмешивание в кэш, чтобы отдельные функции показали их без нового запроса.
+  if (noticeBar && boot.banners) {
+    renderNoticeBanners(noticeBar, boot.banners);
+  }
+  if (noticeBar && boot.price_revision?.show_banner) {
+    renderPriceAckBanner(noticeBar, boot.price_revision);
+  }
 }
 
 function getDismissedBanners() {
@@ -609,14 +647,9 @@ function loadIosInstallBanner(container) {
   container.append(banner, details);
 }
 
-// Баннер ознакомления с прайсом (мягкий, без блокировок). Показываем продающим,
-// когда прайс обновлён, а они ещё не подтвердили актуальную ревизию. Заказы НЕ
-// блокируются — баннер просто нудит, пока не нажмут «Подтверждаю».
-async function loadPriceAckBanner(container) {
-  let info;
-  try {
-    info = await api.priceRevision();
-  } catch { return; }
+// Рендер баннера ознакомления с прайсом — принимает уже загруженный `info`
+// (напр. из /api/bootstrap), НЕ делает свой сетевой запрос.
+function renderPriceAckBanner(container, info) {
   if (!info || !info.show_banner) return;
   const when = info.revision_at ? fmtDateTime(info.revision_at) : '';
   const node = el('div', { class: 'notice-banner notice-warning' },
@@ -643,32 +676,48 @@ async function loadPriceAckBanner(container) {
   container.append(node);
 }
 
+// Рендер списка баннеров — принимает готовый массив, без сетевого запроса.
+function renderNoticeBanners(container, banners) {
+  const dismissed = getDismissedBanners();
+  container.innerHTML = '';
+  for (const b of (banners || [])) {
+    if (b.dismissible && dismissed.has(b.id)) continue;
+    const cls = `notice-banner notice-${b.kind || 'info'}`;
+    const node = el('div', { class: cls },
+      el('span', { class: 'notice-text' }, b.text),
+      b.dismissible ? el('button', {
+        class: 'notice-close',
+        title: 'Скрыть до следующего входа',
+        onClick: () => {
+          const d = getDismissedBanners();
+          d.add(b.id);
+          setDismissedBanners(d);
+          node.remove();
+        },
+      }, '×') : null,
+    );
+    container.append(node);
+  }
+}
+
+// Fallback-обёртки: используют renderPrice/NoticeBanners, если по какой-то
+// причине bootstrap не сработал (сетевой сбой, роль без auth и т.п.).
+async function loadPriceAckBanner(container) {
+  try {
+    const info = await api.priceRevision();
+    renderPriceAckBanner(container, info);
+  } catch { /* ignore */ }
+}
 async function loadNoticeBanners(container) {
   try {
     const r = await api.activeBanners();
-    const banners = r.data || [];
-    const dismissed = getDismissedBanners();
-    container.innerHTML = '';
-    for (const b of banners) {
-      if (b.dismissible && dismissed.has(b.id)) continue;
-      const cls = `notice-banner notice-${b.kind || 'info'}`;
-      const node = el('div', { class: cls },
-        el('span', { class: 'notice-text' }, b.text),
-        b.dismissible ? el('button', {
-          class: 'notice-close',
-          title: 'Скрыть до следующего входа',
-          onClick: () => {
-            const d = getDismissedBanners();
-            d.add(b.id);
-            setDismissedBanners(d);
-            node.remove();
-          },
-        }, '×') : null,
-      );
-      container.append(node);
-    }
-  } catch { /* нет банеров — ничего страшного */ }
+    renderNoticeBanners(container, r.data || []);
+  } catch { /* ignore */ }
 }
+
+// (старые определения loadPriceAckBanner/loadNoticeBanners заменены на
+// renderPriceAckBanner/renderNoticeBanners выше — принимают уже загруженные данные
+// из /api/bootstrap; фолбэки тоже уже определены выше.)
 
 let aiInboxTimer = null;
 function startAiInboxPolling(counter) {

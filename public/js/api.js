@@ -196,6 +196,7 @@ export const api = {
   pushTest: () => request('POST', '/api/push/test'),
 
   // Баннеры уведомлений на сайте
+  bootstrap: () => request('GET', '/api/bootstrap'),
   activeBanners: () => request('GET', '/api/notice-banners/active'),
   listBanners: () => request('GET', '/api/notice-banners'),
   createBanner: (body) => request('POST', '/api/notice-banners', { body }),
