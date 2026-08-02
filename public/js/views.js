@@ -13950,11 +13950,63 @@ export async function renderInventoryAnalytics(main) {
   periodSel.addEventListener('change', load);
   reloadBtn.addEventListener('click', load);
 
-  function statCard(label, value, sub, color) {
-    return el('div', { class: 'stat-card' },
+  function statCard(label, value, sub, color, onClick) {
+    const card = el('div', { class: 'stat-card', style: onClick ? { cursor: 'pointer' } : {} },
       el('div', { class: 'label' }, label),
       el('div', { class: 'value', style: color ? { color } : {} }, value),
       sub ? el('div', { class: 'sub' }, sub) : null);
+    if (onClick) {
+      card.addEventListener('click', onClick);
+      // Hover-подсказка
+      card.title = 'Клик — раскрыть подробный список';
+    }
+    return card;
+  }
+  // Модалка со списком товаров одной категории (dead/urgent/low/excess/normal/…).
+  async function openCategoryModal(title, list, columns) {
+    if (!list || !list.length) { toast(`В категории «${title}» товаров нет — это хорошо`, 'success'); return; }
+    const tbody = el('tbody', {});
+    for (const it of list) {
+      const cells = columns.map((c) => el('td', c.style || {}, c.get(it)));
+      tbody.append(el('tr', {}, ...cells));
+    }
+    const body = el('div', {},
+      el('div', { style: { fontSize: '13px', color: 'var(--text-muted)', marginBottom: '8px' } },
+        `Всего: ${list.length}`),
+      el('div', { style: { overflowX: 'auto', maxHeight: '60vh', overflowY: 'auto' } },
+        el('table', { class: 'table' },
+          el('thead', {}, el('tr', {}, ...columns.map((c) => el('th', c.thStyle || {}, c.label)))),
+          tbody)));
+    await openModal(title, body, { primaryLabel: 'Закрыть', size: 'lg', onSubmit: () => true });
+  }
+  // Колонки для модалок — минимум нужного, чтобы менеджер понял «что делать».
+  function fullColumns(kind) {
+    const base = [
+      { label: 'SKU', get: (r) => r.sku || '—', style: { whiteSpace: 'nowrap' } },
+      { label: 'Название', get: (r) => r.name || '—' },
+      { label: 'Ост.', get: (r) => Math.round(r.stock), style: { textAlign: 'right', whiteSpace: 'nowrap' } },
+      { label: 'Резерв', get: (r) => (r.reserve > 0 ? Math.round(r.reserve) : '—'), style: { textAlign: 'right', whiteSpace: 'nowrap' } },
+      { label: 'Стоимость', get: (r) => money(r.stock_value), style: { textAlign: 'right', whiteSpace: 'nowrap', fontWeight: '600' } },
+    ];
+    if (kind === 'sales') return [...base,
+      { label: 'Продано', get: (r) => Math.round(r.qty_sold) + ' шт', style: { textAlign: 'right', whiteSpace: 'nowrap' } },
+      { label: 'Выручка', get: (r) => money(r.revenue), style: { textAlign: 'right', whiteSpace: 'nowrap' } },
+      { label: '/день', get: (r) => r.avg_daily.toFixed(2), style: { textAlign: 'right', whiteSpace: 'nowrap' } },
+      { label: 'Осталось', get: (r) => r.days_left != null ? Math.round(r.days_left) + 'д' : '∞', style: { textAlign: 'right', whiteSpace: 'nowrap', color: '#dc2626', fontWeight: '600' } },
+    ];
+    if (kind === 'dead') return [...base,
+      { label: 'Последняя продажа', get: (r) => r.last_sale ? new Date(r.last_sale).toLocaleDateString('ru-RU') : 'никогда', style: { color: 'var(--text-muted)' } },
+    ];
+    if (kind === 'excess') return [...base,
+      { label: '/день', get: (r) => r.avg_daily.toFixed(2), style: { textAlign: 'right', whiteSpace: 'nowrap' } },
+      { label: 'Осталось', get: (r) => Math.round(r.days_left) + ' дн', style: { textAlign: 'right', whiteSpace: 'nowrap', color: '#a16207', fontWeight: '600' } },
+    ];
+    if (kind === 'abc') return [...base,
+      { label: 'ABC', get: (r) => r.abc },
+      { label: 'Выручка', get: (r) => money(r.revenue), style: { textAlign: 'right', whiteSpace: 'nowrap', fontWeight: '600' } },
+      { label: 'Оборач.', get: (r) => r.turnover_per_year > 900 ? '—' : r.turnover_per_year.toFixed(1) + '×', style: { textAlign: 'right', whiteSpace: 'nowrap' } },
+    ];
+    return base;
   }
   function money(n) { return `${Math.round(Number(n) || 0).toLocaleString('ru-RU')} ₽`; }
   function abcBadge(cls) {
@@ -13986,17 +14038,32 @@ export async function renderInventoryAnalytics(main) {
       statCard('Продано за период', money(s.revenue_total), `${Math.round(s.qty_sold_total)} шт`),
       statCard('Оборачиваемость ABC', `${s.turnover_avg_ab.toFixed(1)}×/год`, 'A+B товары; норма 6-12'),
     ));
+    // Кликабельные карточки рисков: клик → модалка со списком товаров категории.
+    const byStatus = (st) => data.items.filter((x) => x.status === st)
+      .sort((a, b) => (b.stock_value || 0) - (a.stock_value || 0));
+    const byUrgent = () => data.items.filter((x) => x.status === 'urgent' || x.status === 'out')
+      .sort((a, b) => (a.days_left ?? 999) - (b.days_left ?? 999));
+    const byAbc = (cls) => data.items.filter((x) => x.abc === cls)
+      .sort((a, b) => (b.revenue || 0) - (a.revenue || 0));
     content.append(el('div', { class: 'dashboard-grid' },
-      statCard('🚫 Мёртвый сток', s.dead_count, money(s.dead_value) + ' замороженo', s.dead_count > 0 ? '#6b7280' : ''),
-      statCard('⚠️ Срочно закупить', s.urgent_count, 'закончатся <7 дней', s.urgent_count > 0 ? '#dc2626' : ''),
-      statCard('📉 Заканчивается', s.low_count, '<14 дней запаса', s.low_count > 0 ? '#f59e0b' : ''),
-      statCard('📦 Избыток', s.excess_count, money(s.excess_value) + ' >180 дней', s.excess_count > 0 ? '#a16207' : ''),
+      statCard('🚫 Мёртвый сток', s.dead_count, money(s.dead_value) + ' замороженo', s.dead_count > 0 ? '#6b7280' : '',
+        s.dead_count > 0 ? () => openCategoryModal(`🚫 Мёртвый сток (${s.dead_count}) — ${money(s.dead_value)}`, byStatus('dead'), fullColumns('dead')) : null),
+      statCard('⚠️ Срочно закупить', s.urgent_count, 'закончатся <7 дней', s.urgent_count > 0 ? '#dc2626' : '',
+        s.urgent_count > 0 ? () => openCategoryModal(`⚠️ Срочно закупить (${s.urgent_count})`, byUrgent(), fullColumns('sales')) : null),
+      statCard('📉 Заканчивается', s.low_count, '<14 дней запаса', s.low_count > 0 ? '#f59e0b' : '',
+        s.low_count > 0 ? () => openCategoryModal(`📉 Заканчивается (${s.low_count})`, byStatus('low').sort((a, b) => (a.days_left ?? 999) - (b.days_left ?? 999)), fullColumns('sales')) : null),
+      statCard('📦 Избыток', s.excess_count, money(s.excess_value) + ' >180 дней', s.excess_count > 0 ? '#a16207' : '',
+        s.excess_count > 0 ? () => openCategoryModal(`📦 Избыток (${s.excess_count}) — ${money(s.excess_value)}`, byStatus('excess'), fullColumns('excess')) : null),
     ));
     content.append(el('div', { class: 'dashboard-grid' },
-      statCard('ABC-A (топ 80%)', s.abc_a_count, 'ключевые товары', '#16a34a'),
-      statCard('ABC-B (80-95%)', s.abc_b_count, 'средние', '#2563eb'),
-      statCard('ABC-C (95-100%)', s.abc_c_count, 'хвост'),
-      statCard('D (без продаж)', s.abc_d_count, 'мёртвый'),
+      statCard('ABC-A (топ 80%)', s.abc_a_count, 'ключевые товары', '#16a34a',
+        s.abc_a_count > 0 ? () => openCategoryModal(`ABC-A: ключевые товары (${s.abc_a_count})`, byAbc('A'), fullColumns('abc')) : null),
+      statCard('ABC-B (80-95%)', s.abc_b_count, 'средние', '#2563eb',
+        s.abc_b_count > 0 ? () => openCategoryModal(`ABC-B: средние (${s.abc_b_count})`, byAbc('B'), fullColumns('abc')) : null),
+      statCard('ABC-C (95-100%)', s.abc_c_count, 'хвост', '',
+        s.abc_c_count > 0 ? () => openCategoryModal(`ABC-C: хвост (${s.abc_c_count})`, byAbc('C'), fullColumns('abc')) : null),
+      statCard('D (без продаж)', s.abc_d_count, 'мёртвый', '',
+        s.abc_d_count > 0 ? () => openCategoryModal(`ABC-D: без продаж (${s.abc_d_count})`, byAbc('D'), fullColumns('dead')) : null),
     ));
 
     // Рекомендации
@@ -14082,11 +14149,13 @@ export async function renderInventoryAnalytics(main) {
         const nameCell = el('td', {}, it.name || '—');
         if (it.is_markdown) nameCell.append(el('span', { style: { marginLeft: '6px', padding: '1px 5px', background: '#f59e0b', color: 'white', borderRadius: '3px', fontSize: '10px' } }, 'УЦЕНКА'));
         if (!it.active) nameCell.append(el('span', { style: { marginLeft: '6px', padding: '1px 5px', background: '#6b7280', color: 'white', borderRadius: '3px', fontSize: '10px' } }, 'НЕАКТИВЕН'));
+        const reserveN = Number(it.reserve) || 0;
         tbody.append(el('tr', {},
           el('td', {}, abcBadge(it.abc)),
           el('td', { style: { whiteSpace: 'nowrap' } }, it.sku || '—'),
           nameCell,
           el('td', { style: { textAlign: 'right', whiteSpace: 'nowrap' } }, String(Math.round(it.stock))),
+          el('td', { style: { textAlign: 'right', whiteSpace: 'nowrap', color: reserveN > 0 ? '#a16207' : 'var(--text-muted)' } }, reserveN > 0 ? String(Math.round(reserveN)) : '—'),
           el('td', { style: { textAlign: 'right', whiteSpace: 'nowrap' } }, money(it.stock_value)),
           el('td', { style: { textAlign: 'right', whiteSpace: 'nowrap' } }, String(Math.round(it.qty_sold))),
           el('td', { style: { textAlign: 'right', whiteSpace: 'nowrap' } }, money(it.revenue)),
@@ -14096,7 +14165,7 @@ export async function renderInventoryAnalytics(main) {
           el('td', {}, statusBadge(it.status, it.status_text)),
         ));
       }
-      if (!filtered.length) tbody.append(el('tr', {}, el('td', { colspan: '11' }, el('div', { class: 'empty' }, 'Ничего не найдено'))));
+      if (!filtered.length) tbody.append(el('tr', {}, el('td', { colspan: '12' }, el('div', { class: 'empty' }, 'Ничего не найдено'))));
       tableBox.innerHTML = '';
       function th(label, key) {
         const a = el('th', { style: { cursor: 'pointer', userSelect: 'none' } },
@@ -14108,7 +14177,7 @@ export async function renderInventoryAnalytics(main) {
         el('thead', {}, el('tr', {},
           el('th', {}, 'ABC'),
           th('SKU', 'sku'), el('th', {}, 'Название'),
-          th('Ост.', 'stock'), th('Ст-ть', 'stock_value'),
+          th('Ост.', 'stock'), th('Резерв', 'reserve'), th('Ст-ть', 'stock_value'),
           th('Продано', 'qty_sold'), th('Выручка', 'revenue'),
           th('/день', 'avg_daily'), th('Осталось', 'days_left'),
           th('Оборач.', 'turnover_per_year'),
