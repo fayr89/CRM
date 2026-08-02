@@ -453,7 +453,7 @@ export const db = {
 // БАМПАЙ ПРИ КАЖДОМ ДОБАВЛЕНИИ МИГРАЦИИ. Текущие миграции прогоняются
 // только если запись в app_settings.schema_version отличается. Это экономит
 // ~500-2000мс на каждом холодном старте serverless-лямбды.
-const SCHEMA_VERSION = 31;
+const SCHEMA_VERSION = 32;
 
 export async function ensureInitialized() {
   if (globalThis.__crmInitialized) return;
@@ -1145,6 +1145,20 @@ export async function ensureInitialized() {
          )`,
       );
       await pool.query('CREATE INDEX IF NOT EXISTS idx_push_subs_user ON push_subscriptions(user_id)');
+
+      // ===== Индексы для горячих bootstrap-запросов (SCHEMA_VERSION 32) =====
+      // /api/bootstrap делает 5+ COUNT-ов по user_id/status на каждом заходе.
+      // Без этих индексов при заметном каталоге запросы делают seq scan.
+      await pool.query('CREATE INDEX IF NOT EXISTS idx_notifications_user_unread ON notifications(user_id, read_at) WHERE read_at IS NULL');
+      await pool.query('CREATE INDEX IF NOT EXISTS idx_notifications_user_created ON notifications(user_id, created_at DESC)');
+      await pool.query('CREATE INDEX IF NOT EXISTS idx_feedback_status ON feedback(status) WHERE status IN (\'open\',\'in_progress\',\'awaiting_approval\')');
+      await pool.query('CREATE INDEX IF NOT EXISTS idx_feedback_user_status ON feedback(user_id, status)');
+      await pool.query('CREATE INDEX IF NOT EXISTS idx_ai_proposals_status ON ai_proposals(status) WHERE status IN (\'pending\',\'revision\')');
+      // Горячие запросы по orders (list, filter по статусу, дате, менеджеру).
+      await pool.query('CREATE INDEX IF NOT EXISTS idx_orders_status_created ON orders(status, created_at DESC)');
+      await pool.query('CREATE INDEX IF NOT EXISTS idx_orders_manager_status ON orders(manager_id, status) WHERE manager_id IS NOT NULL');
+      // order_items — используется в аналитике/dashboard.
+      await pool.query('CREATE INDEX IF NOT EXISTS idx_order_items_order ON order_items(order_id)');
 
       // Маркер успешно прогнанных миграций — следующие холодные старты пропустят DDL.
       await pool.query(
