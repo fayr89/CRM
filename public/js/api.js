@@ -15,6 +15,32 @@ export function setSession(token, user) {
 export function clearSession() {
   localStorage.removeItem(TOKEN_KEY);
   localStorage.removeItem(USER_KEY);
+  // Также сбрасываем кэш лукапов, чтобы новый юзер не получил старых данных.
+  try { sessionStorage.removeItem('crm_lookup_cache'); } catch { /* ignore */ }
+}
+
+// Кэш для «стабильных» лукапов (marketplaces / warehouses / delivery-methods).
+// Они меняются очень редко (раз в неделю через админку) — в течение сессии
+// нет смысла тянуть их повторно при каждом mount формы. Живёт в sessionStorage
+// (пропадает при закрытии PWA/вкладки — гарантирует свежие данные раз в
+// сессию, но экономит десятки запросов в течение работы).
+function _cache() {
+  try { return JSON.parse(sessionStorage.getItem('crm_lookup_cache') || '{}'); }
+  catch { return {}; }
+}
+function _cacheSet(key, val) {
+  try {
+    const c = _cache();
+    c[key] = { at: Date.now(), val };
+    sessionStorage.setItem('crm_lookup_cache', JSON.stringify(c));
+  } catch { /* quota — не критично */ }
+}
+async function cachedGet(key, ttlMs, fetcher) {
+  const c = _cache()[key];
+  if (c && (Date.now() - c.at) < ttlMs) return c.val;
+  const val = await fetcher();
+  _cacheSet(key, val);
+  return val;
 }
 
 async function request(method, path, { body, query } = {}) {
@@ -371,7 +397,7 @@ export const api = {
     request('POST', '/api/products/import/moysklad-stock', { body: token ? { token } : {} }),
   refreshMoyskladStores: (token, offset) =>
     request('POST', '/api/products/import/moysklad-stores', { body: { token: token || undefined, offset: offset || 0 } }),
-  warehousesList: () => request('GET', '/api/products/warehouses/list'),
+  warehousesList: () => cachedGet('warehousesList', 30 * 60_000, () => request('GET', '/api/products/warehouses/list')),
   setHiddenWarehouses: (hidden) =>
     request('PUT', '/api/products/warehouses/hidden', { body: { hidden } }),
   setDefaultWarehouse: (warehouse) =>
@@ -380,11 +406,11 @@ export const api = {
     request('PUT', '/api/products/marketplaces/default', { body: { marketplace } }),
   setDefaultPaymentMethod: (payment_method) =>
     request('PUT', '/api/products/payment-method/default', { body: { payment_method } }),
-  marketplacesList: () => request('GET', '/api/products/marketplaces/list'),
+  marketplacesList: () => cachedGet('marketplacesList', 30 * 60_000, () => request('GET', '/api/products/marketplaces/list')),
   setMarketplaces: (marketplaces) =>
     request('PUT', '/api/products/marketplaces', { body: { marketplaces } }),
   suppliersList: () => request('GET', '/api/products/suppliers/list'),
-  deliveryMethodsList: () => request('GET', '/api/products/delivery-methods/list'),
+  deliveryMethodsList: () => cachedGet('deliveryMethodsList', 30 * 60_000, () => request('GET', '/api/products/delivery-methods/list')),
   setDeliveryMethods: (delivery_methods) =>
     request('PUT', '/api/products/delivery-methods', { body: { delivery_methods } }),
   moyskladTokenStatus: () => request('GET', '/api/products/moysklad-token/status'),
