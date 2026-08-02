@@ -333,28 +333,68 @@ function renderShell() {
   const feedbackCounter = el('span', { class: 'nav-counter', style: { display: 'none' } });
   // Бейдж AI-предложений ждущих решения админа.
   const aiInboxCounter = el('span', { class: 'nav-counter', style: { display: 'none' } });
+  // У админа много групп — по умолчанию всё свёрнуто, разворачивается по клику
+  // на заголовок. У остальных ролей меню плоское, как раньше.
+  const isAdmin = user.role === 'admin';
+
+  function buildItemLink(it) {
+    const extras = it.hash === '#/feedback' ? [feedbackCounter]
+      : it.hash === '#/ai-inbox' ? [aiInboxCounter]
+      : [];
+    return el('a', { href: it.hash, class: path.startsWith(it.hash) ? 'active' : '' },
+      el('span', {}, it.label), ...extras);
+  }
+
+  function buildCollapsibleGroup(title, itemNodes, activeInside) {
+    // Ключ хранения — по заголовку (стабилен между сессиями).
+    const storeKey = 'nav_group_open:' + title;
+    let saved;
+    try { saved = localStorage.getItem(storeKey); } catch { saved = null; }
+    // Если в группе активная страница — принудительно открыто (иначе пользователь
+    // не увидит контекст текущего раздела).
+    const open = activeInside || saved === '1';
+    const arrow = el('span', { class: 'sidebar-group-arrow' }, open ? '▾' : '▸');
+    const header = el('button', {
+      class: 'sidebar-group-title sidebar-group-toggle',
+      type: 'button',
+    }, arrow, el('span', {}, title));
+    const itemsWrap = el('div', { class: 'sidebar-group-items' }, ...itemNodes);
+    const groupEl = el('div',
+      { class: 'sidebar-group' + (open ? ' open' : ' collapsed') },
+      header, itemsWrap);
+    header.addEventListener('click', (e) => {
+      e.preventDefault();
+      const nowOpen = groupEl.classList.toggle('open');
+      groupEl.classList.toggle('collapsed', !nowOpen);
+      arrow.textContent = nowOpen ? '▾' : '▸';
+      try { localStorage.setItem(storeKey, nowOpen ? '1' : '0'); } catch { /* ignore */ }
+    });
+    return groupEl;
+  }
+
   for (const group of NAV_GROUPS) {
     const items = group.items.filter((it) => navItemVisible(user, it));
     if (!items.length) continue;
-    if (group.title) navChildren.push(el('div', { class: 'sidebar-group-title' }, group.title));
-    for (const it of items) {
-      const extras = it.hash === '#/feedback' ? [feedbackCounter]
-        : it.hash === '#/ai-inbox' ? [aiInboxCounter]
-        : [];
-      navChildren.push(
-        el('a', { href: it.hash, class: path.startsWith(it.hash) ? 'active' : '' },
-          el('span', {}, it.label), ...extras),
-      );
+    const links = items.map(buildItemLink);
+    if (group.title && isAdmin) {
+      const activeInside = items.some((it) => path.startsWith(it.hash));
+      navChildren.push(buildCollapsibleGroup(group.title, links, activeInside));
+    } else {
+      if (group.title) navChildren.push(el('div', { class: 'sidebar-group-title' }, group.title));
+      navChildren.push(...links);
     }
   }
   // Тест-зона «Поставки → Доставки» — только если бэк разрешил (фиче-флаг, по
   // умолчанию выключено). Отдельная группа, визуально помечена как тестовая.
   if (supplyDeliveryVisible) {
-    navChildren.push(el('div', { class: 'sidebar-group-title' }, '🧪 Тест'));
-    navChildren.push(
-      el('a', { href: '#/supply-delivery', class: path.startsWith('#/supply-delivery') ? 'active' : '' },
-        el('span', {}, 'Поставки · Доставки')),
-    );
+    const testLink = el('a',
+      { href: '#/supply-delivery', class: path.startsWith('#/supply-delivery') ? 'active' : '' },
+      el('span', {}, 'Поставки · Доставки'));
+    if (isAdmin) {
+      navChildren.push(buildCollapsibleGroup('🧪 Тест', [testLink], path.startsWith('#/supply-delivery')));
+    } else {
+      navChildren.push(el('div', { class: 'sidebar-group-title' }, '🧪 Тест'), testLink);
+    }
   }
 
   const searchBtn = el(

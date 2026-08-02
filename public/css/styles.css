@@ -54,6 +54,27 @@ a:hover { text-decoration: underline; }
   padding: 14px 20px 4px; font-size: 11px; font-weight: 700;
   text-transform: uppercase; letter-spacing: 0.6px; color: #6b7280;
 }
+/* Раскрывающаяся группа (для админа): заголовок-кнопка со стрелкой,
+   контент прячется через display:none. Плоские группы (для остальных
+   ролей) используют обычный .sidebar-group-title без .sidebar-group. */
+.sidebar-group { display: flex; flex-direction: column; }
+.sidebar-group .sidebar-group-toggle {
+  display: flex; align-items: center; gap: 8px;
+  width: 100%; background: transparent; border: 0;
+  text-align: left; cursor: pointer;
+  color: #6b7280; padding: 14px 20px 6px;
+  font-size: 11px; font-weight: 700;
+  text-transform: uppercase; letter-spacing: 0.6px;
+  font-family: inherit;
+}
+.sidebar-group .sidebar-group-toggle:hover { color: #d1d5db; }
+.sidebar-group-arrow {
+  display: inline-block; width: 10px; font-size: 10px;
+  color: #4b5563; flex-shrink: 0;
+}
+.sidebar-group.open .sidebar-group-arrow { color: #9ca3af; }
+.sidebar-group.collapsed .sidebar-group-items { display: none; }
+.sidebar-group.open .sidebar-group-items { display: flex; flex-direction: column; }
 .sidebar-nav a {
   display: flex; align-items: center; justify-content: space-between; gap: 6px;
   padding: 8px 20px; color: #d1d5db;
