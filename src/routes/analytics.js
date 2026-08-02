@@ -236,7 +236,10 @@ router.get(
       const cache = cacheRow?.value;
       const cacheFresh = cache && cache.days === days && cache.generated_at
         && (Date.now() - new Date(cache.generated_at).getTime()) < CACHE_TTL_HOURS * 3600_000;
-      if (!forceRefresh && cacheFresh) {
+      // ПУСТОЙ кэш игнорируем (data пустое → пробуем тянуть заново). Иначе один
+      // сбойный запрос отравляет кэш на 6ч.
+      const cacheHasData = cache && cache.data && Object.keys(cache.data).length > 0;
+      if (!forceRefresh && cacheFresh && cacheHasData) {
         for (const [k, v] of Object.entries(cache.data || {})) salesByExtId.set(k, v);
         salesSource = 'moysklad_cached';
         salesGeneratedAt = cache.generated_at;
@@ -247,14 +250,19 @@ router.get(
         salesByExtId = fresh;
         salesSource = 'moysklad';
         salesGeneratedAt = new Date().toISOString();
-        // Сохраняем в кэш (Map → plain object).
-        const data = Object.fromEntries(fresh);
-        await db.run(
-          `INSERT INTO app_settings (key, value, updated_at)
-           VALUES ('inventory_sales_cache', ?::jsonb, NOW())
-           ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`,
-          JSON.stringify({ days, generated_at: salesGeneratedAt, data }),
-        ).catch((e) => console.error('[analytics] cache save:', e.message));
+        // Сохраняем в кэш ТОЛЬКО если пришли ненулевые данные (иначе пустой кэш
+        // будет использоваться повторно, и юзер будет видеть 0 продаж 6 часов).
+        if (fresh.size > 0) {
+          const data = Object.fromEntries(fresh);
+          await db.run(
+            `INSERT INTO app_settings (key, value, updated_at)
+             VALUES ('inventory_sales_cache', ?::jsonb, NOW())
+             ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`,
+            JSON.stringify({ days, generated_at: salesGeneratedAt, data }),
+          ).catch((e) => console.error('[analytics] cache save:', e.message));
+        } else {
+          salesError = 'МС ответил, но 0 позиций (проверь права токена, endpoint /report/turnover/all, или что в кабинете реально есть отгрузки за период)';
+        }
       }
     } catch (e) {
       salesError = e.message;
@@ -426,10 +434,15 @@ router.get(
     if (summary.turnover_avg_ab > 15) recs.push({ level: 'info', text: `⚡ Оборачиваемость ${summary.turnover_avg_ab.toFixed(1)}×/год — высокая, но есть риск дефицитов. Увеличить безопасный запас топов.` });
     if (!recs.length) recs.push({ level: 'info', text: '✅ Всё под контролем: критичных проблем нет' });
 
+    // Диагностика мэтча: сколько external_id пришло из МС, сколько из них
+    // нашлось в products (по external_source='moysklad' AND external_id=X).
+    const matched = items.filter((x) => x.qty_sold > 0).length;
     res.json({
       period_days: days,
       hidden_stores: hiddenStores, // какие склады НЕ учитываем (для подписи в UI)
       sales_source: salesSource, // 'moysklad' | 'moysklad_cached' | 'crm'
+      sales_items_count: salesByExtId.size, // сколько позиций отдал МС
+      sales_matched_count: matched, // сколько из них нашлись в products
       sales_generated_at: salesGeneratedAt,
       sales_error: salesError, // если МС недоступен — тут причина, UI покажет
       summary,

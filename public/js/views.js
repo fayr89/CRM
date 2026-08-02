@@ -14027,16 +14027,26 @@ export async function renderInventoryAnalytics(main) {
     content.innerHTML = '';
     // Подзаголовок: источник продаж + скрытые склады.
     subtitle.innerHTML = '';
-    const srcLabel = data.sales_source === 'moysklad'
-      ? '✅ Продажи из МойСклад (свежие)'
-      : data.sales_source === 'moysklad_cached'
-        ? `✅ Продажи из МойСклад (кэш от ${data.sales_generated_at ? new Date(data.sales_generated_at).toLocaleString('ru-RU') : '—'}, обновляется раз в 6ч)`
-        : '⚠️ Продажи из CRM (МС недоступен) — только Avito-заказы, неполные данные';
-    subtitle.append(el('span', {}, srcLabel),
-      data.sales_error ? el('span', { style: { color: '#dc2626' } }, ` · ошибка МС: ${data.sales_error}`) : null,
+    const totalItems = (data.items || []).length;
+    const matched = data.sales_matched_count || 0;
+    const fromMs = data.sales_items_count || 0;
+    let srcLabel;
+    if (data.sales_source === 'moysklad' || data.sales_source === 'moysklad_cached') {
+      const cached = data.sales_source === 'moysklad_cached';
+      srcLabel = `✅ Продажи из МойСклад${cached ? ` (кэш от ${data.sales_generated_at ? new Date(data.sales_generated_at).toLocaleString('ru-RU') : '—'})` : ' (свежие)'} · МС отдал ${fromMs} позиций, сматчено с каталогом ${matched} из ${totalItems}`;
+    } else {
+      srcLabel = '⚠️ Продажи из CRM (МС недоступен) — только Avito-заказы, неполные данные';
+    }
+    const srcColor = (data.sales_source === 'moysklad' || data.sales_source === 'moysklad_cached') && matched > 0 ? '' : '#dc2626';
+    subtitle.append(el('span', { style: { color: srcColor } }, srcLabel),
+      data.sales_error ? el('div', { style: { color: '#dc2626', marginTop: '4px' } }, `❌ ${data.sales_error}`) : null,
+      (fromMs > 0 && matched === 0)
+        ? el('div', { style: { color: '#dc2626', marginTop: '4px' } },
+            'МС отдал продажи, но НИ ОДНА позиция не сматчилась с каталогом CRM. Проверь: каталог импортирован из МойСклад (products.external_id заполнен) и товары в МС в тех же карточках.')
+        : null,
       (data.hidden_stores || []).length
-        ? el('span', { style: { color: 'var(--text-muted)' } },
-            ` · скрытые склады: ${data.hidden_stores.join(', ')}`)
+        ? el('div', { style: { color: 'var(--text-muted)', marginTop: '4px' } },
+            `Скрытые склады (не учтены в остатке): ${data.hidden_stores.join(', ')}`)
         : null);
     const s = data.summary;
     // Дашборд-цифры
