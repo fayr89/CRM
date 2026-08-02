@@ -2,6 +2,8 @@ import { Router } from 'express';
 import { authenticate, requireRole } from '../auth.js';
 import { db } from '../db.js';
 import { asyncHandler } from '../errors.js';
+import { fetchMoyskladTurnover } from '../services/moysklad.js';
+import { getMoyskladToken } from '../services/ms-jobs.js';
 
 const router = Router();
 
@@ -214,27 +216,74 @@ router.get(
   '/inventory',
   asyncHandler(async (req, res) => {
     const days = parseDays(req.query, 90);
-    // 1) Продажи по товарам за N дней — учитываем shipped/completed (реальные отгрузки).
-    //    cancelled и возвраты не учитываем — не искажаем оборачиваемость.
-    //    Мэтч: сначала по order_items.product_id, если пусто — по sku.
-    //    Дата продажи — shipped_at (если есть) или completed_at, иначе created_at.
-    const salesRows = await db.all(
-      `SELECT
-         COALESCE(oi.product_id,
-           (SELECT p.id FROM products p WHERE p.sku = oi.sku LIMIT 1)) AS product_id,
-         SUM(oi.quantity)::float AS qty_sold,
-         SUM(oi.quantity * COALESCE(oi.unit_price, 0))::float AS revenue,
-         COUNT(DISTINCT o.id)::int AS order_count,
-         MIN(o.created_at) AS first_sale,
-         MAX(o.created_at) AS last_sale,
-         COUNT(DISTINCT date_trunc('day', o.created_at))::int AS days_with_sales
-       FROM order_items oi
-       JOIN orders o ON o.id = oi.order_id
-       WHERE o.status IN ('shipped', 'completed')
-         AND COALESCE(o.shipped_at, o.completed_at, o.created_at) >= NOW() - INTERVAL '${days} days'
-       GROUP BY COALESCE(oi.product_id, (SELECT p.id FROM products p WHERE p.sku = oi.sku LIMIT 1))`,
-    );
-    const salesByPid = new Map(salesRows.filter((r) => r.product_id).map((r) => [r.product_id, r]));
+    // 1) Продажи по товарам за N дней. Источник — МС (report/turnover/all): туда
+    //    попадают ВСЕ отгрузки (розница, оптовые продажи, документы Отгрузка),
+    //    а не только заказы CRM. В CRM пока попадают только Avito-заказы, поэтому
+    //    его данные о продажах не полны, оборачиваемость выходила неинформативной.
+    //    Кэшируем результат в app_settings.inventory_sales_cache на 6 часов —
+    //    отчёт tirnover тяжёлый (несколько секунд на большом каталоге), нельзя
+    //    дёргать МС при каждом заходе на страницу.
+    let salesByExtId = new Map();
+    let salesSource = 'crm';
+    let salesError = null;
+    let salesGeneratedAt = null;
+    const CACHE_TTL_HOURS = 6;
+    const forceRefresh = req.query.refresh === '1';
+    try {
+      const cacheRow = await db.get(
+        `SELECT value FROM app_settings WHERE key = 'inventory_sales_cache'`,
+      ).catch(() => null);
+      const cache = cacheRow?.value;
+      const cacheFresh = cache && cache.days === days && cache.generated_at
+        && (Date.now() - new Date(cache.generated_at).getTime()) < CACHE_TTL_HOURS * 3600_000;
+      if (!forceRefresh && cacheFresh) {
+        for (const [k, v] of Object.entries(cache.data || {})) salesByExtId.set(k, v);
+        salesSource = 'moysklad_cached';
+        salesGeneratedAt = cache.generated_at;
+      } else {
+        const token = await getMoyskladToken();
+        if (!token) throw new Error('Нет токена МойСклад');
+        const fresh = await fetchMoyskladTurnover(token, { daysBack: days });
+        salesByExtId = fresh;
+        salesSource = 'moysklad';
+        salesGeneratedAt = new Date().toISOString();
+        // Сохраняем в кэш (Map → plain object).
+        const data = Object.fromEntries(fresh);
+        await db.run(
+          `INSERT INTO app_settings (key, value, updated_at)
+           VALUES ('inventory_sales_cache', ?::jsonb, NOW())
+           ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`,
+          JSON.stringify({ days, generated_at: salesGeneratedAt, data }),
+        ).catch((e) => console.error('[analytics] cache save:', e.message));
+      }
+    } catch (e) {
+      salesError = e.message;
+      // Fallback: продажи из CRM (только shipped/completed).
+      const salesRows = await db.all(
+        `SELECT COALESCE(oi.product_id,
+                  (SELECT p.id FROM products p WHERE p.sku = oi.sku LIMIT 1)) AS product_id,
+                SUM(oi.quantity)::float AS qty_sold,
+                SUM(oi.quantity * COALESCE(oi.unit_price, 0))::float AS revenue
+         FROM order_items oi JOIN orders o ON o.id = oi.order_id
+         WHERE o.status IN ('shipped', 'completed')
+           AND COALESCE(o.shipped_at, o.completed_at, o.created_at) >= NOW() - INTERVAL '${days} days'
+         GROUP BY COALESCE(oi.product_id, (SELECT p.id FROM products p WHERE p.sku = oi.sku LIMIT 1))`,
+      );
+      // Резолвим product_id → external_id, чтобы ключ был единообразный (external_id МС).
+      const pidToExt = new Map();
+      const pids = salesRows.map((r) => r.product_id).filter(Boolean);
+      if (pids.length) {
+        const prod = await db.all("SELECT id, external_id FROM products WHERE id = ANY(?) AND external_source = 'moysklad' AND external_id IS NOT NULL", pids);
+        for (const p of prod) pidToExt.set(p.id, p.external_id);
+      }
+      for (const r of salesRows) {
+        const ext = pidToExt.get(r.product_id);
+        if (ext) salesByExtId.set(ext, { qty: Number(r.qty_sold) || 0, revenue: Number(r.revenue) || 0 });
+      }
+    }
+    // Ключи salesByExtId — это external_id товаров МС (совпадают с products.external_id).
+    // Товары с ненулевым остатком ИЛИ с продажами будут в списке ниже.
+    const soldExtIds = [...salesByExtId.keys()];
 
     // 2) Все товары, у которых либо есть остаток на ВИДИМЫХ складах, либо были
     //    продажи за период. Остаток берётся из stock_by_store (JSONB массив
@@ -245,7 +294,7 @@ router.get(
       `SELECT value FROM app_settings WHERE key = 'warehouses.hidden'`,
     ).catch(() => null);
     const hiddenStores = Array.isArray(hiddenRow?.value) ? hiddenRow.value : [];
-    const soldIds = salesRows.map((r) => r.product_id).filter(Boolean);
+    const soldIds = []; // legacy — теперь фильтр по external_id, см. ниже
     // Подзапрос суммы остатка по видимым складам: если stock_by_store — массив,
     // берём элементы, у которых store НЕ в hidden. Иначе — fallback на p.stock.
     // hiddenStores передаём как text[] параметр (ANY(?) = сравнение с массивом).
@@ -276,15 +325,16 @@ router.get(
                CASE WHEN jsonb_typeof(stock_by_store) = 'array' THEN 0 ELSE stock END,
                0
              ) > 0
-         OR id = ANY(?)
+         OR (external_source = 'moysklad' AND external_id = ANY(?::text[]))
        ORDER BY name`,
-      hiddenStores, hiddenStores, hiddenStores, soldIds,
+      hiddenStores, hiddenStores, hiddenStores, soldExtIds,
     );
 
-    // 3) Обогащаем + рассчитываем метрики.
+    // 3) Обогащаем + рассчитываем метрики. Продажи мэтчим по external_id
+    //    (это UUID товара в МС; salesByExtId — данные из отчёта turnover).
     const items = products.map((p) => {
-      const s = salesByPid.get(p.id) || {};
-      const qtySold = Number(s.qty_sold) || 0;
+      const s = salesByExtId.get(p.external_id) || {};
+      const qtySold = Number(s.qty) || 0;
       const revenue = Number(s.revenue) || 0;
       const stock = Number(p.stock) || 0;
       const cost = Number(p.cost_price) || 0;
@@ -311,9 +361,9 @@ router.get(
         is_markdown: !!p.is_markdown,
         qty_sold: qtySold,
         revenue,
-        order_count: Number(s.order_count) || 0,
-        days_with_sales: Number(s.days_with_sales) || 0,
-        last_sale: s.last_sale || null,
+        order_count: 0, // МС turnover не даёт разбивку по документам
+        days_with_sales: 0,
+        last_sale: null,
         stock_value: stockValue,
         avg_daily: avgDaily,
         days_left: daysLeft,
@@ -379,6 +429,9 @@ router.get(
     res.json({
       period_days: days,
       hidden_stores: hiddenStores, // какие склады НЕ учитываем (для подписи в UI)
+      sales_source: salesSource, // 'moysklad' | 'moysklad_cached' | 'crm'
+      sales_generated_at: salesGeneratedAt,
+      sales_error: salesError, // если МС недоступен — тут причина, UI покажет
       summary,
       recommendations: recs,
       top_selling: topSelling,

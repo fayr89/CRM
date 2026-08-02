@@ -13930,25 +13930,27 @@ export async function renderInventoryAnalytics(main) {
     el('option', { value: '180' }, '180 дней'),
     el('option', { value: '365' }, 'год'));
   const reloadBtn = el('button', { class: 'btn btn-sm', style: { marginLeft: '8px' } }, '🔄 Обновить');
+  const forceRefreshBtn = el('button', { class: 'btn btn-sm', style: { marginLeft: '4px' }, title: 'Заново тянуть продажи из МойСклад (без кэша, может занять несколько секунд)' }, '⚡ Пересчитать из МС');
   const subtitle = el('div', { class: 'page-subtitle' }, 'Оборачиваемость, ABC-классификация, мёртвый сток, дефицит. Данные — по отгруженным/завершённым заказам за выбранный период.');
   const header = el('div', { class: 'page-header' },
     el('div', {},
       el('h1', { class: 'page-title' }, '📊 Аналитика остатков'),
       subtitle),
-    el('div', { style: { display: 'flex', alignItems: 'center' } }, periodSel, reloadBtn));
+    el('div', { style: { display: 'flex', alignItems: 'center' } }, periodSel, reloadBtn, forceRefreshBtn));
   main.append(header);
   const content = el('div', {}, el('div', { class: 'loading' }, 'Загрузка…'));
   main.append(content);
 
-  async function load() {
-    content.innerHTML = '<div class="loading">Считаю остатки и продажи…</div>';
+  async function load(refresh) {
+    content.innerHTML = `<div class="loading">${refresh ? 'Тяну продажи из МойСклад (~5-15 сек)…' : 'Считаю остатки и продажи…'}</div>`;
     let data;
-    try { data = await api.analyticsInventory(Number(periodSel.value) || 90); }
+    try { data = await api.analyticsInventory(Number(periodSel.value) || 90, refresh); }
     catch (e) { content.innerHTML = ''; content.append(el('div', { class: 'empty' }, 'Ошибка: ' + e.message)); return; }
     render(data);
   }
-  periodSel.addEventListener('change', load);
-  reloadBtn.addEventListener('click', load);
+  periodSel.addEventListener('change', () => load(false));
+  reloadBtn.addEventListener('click', () => load(false));
+  forceRefreshBtn.addEventListener('click', () => load(true));
 
   function statCard(label, value, sub, color, onClick) {
     const card = el('div', { class: 'stat-card', style: onClick ? { cursor: 'pointer' } : {} },
@@ -14023,13 +14025,19 @@ export async function renderInventoryAnalytics(main) {
 
   function render(data) {
     content.innerHTML = '';
-    // Подсказка: какие склады НЕ учтены (из «Интеграции → Видимость складов»).
-    if ((data.hidden_stores || []).length) {
-      subtitle.innerHTML = '';
-      subtitle.append(el('span', {}, 'Оборачиваемость и остатки. Данные — по отгруженным/завершённым заказам за период. '),
-        el('span', { style: { color: 'var(--text-muted)' } },
-          `Скрытые склады (не учтены в остатке): ${data.hidden_stores.join(', ')}. Настройка — Интеграции → Видимость складов.`));
-    }
+    // Подзаголовок: источник продаж + скрытые склады.
+    subtitle.innerHTML = '';
+    const srcLabel = data.sales_source === 'moysklad'
+      ? '✅ Продажи из МойСклад (свежие)'
+      : data.sales_source === 'moysklad_cached'
+        ? `✅ Продажи из МойСклад (кэш от ${data.sales_generated_at ? new Date(data.sales_generated_at).toLocaleString('ru-RU') : '—'}, обновляется раз в 6ч)`
+        : '⚠️ Продажи из CRM (МС недоступен) — только Avito-заказы, неполные данные';
+    subtitle.append(el('span', {}, srcLabel),
+      data.sales_error ? el('span', { style: { color: '#dc2626' } }, ` · ошибка МС: ${data.sales_error}`) : null,
+      (data.hidden_stores || []).length
+        ? el('span', { style: { color: 'var(--text-muted)' } },
+            ` · скрытые склады: ${data.hidden_stores.join(', ')}`)
+        : null);
     const s = data.summary;
     // Дашборд-цифры
     content.append(el('div', { class: 'dashboard-grid' },

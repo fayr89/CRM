@@ -259,6 +259,34 @@ export async function pushMoyskladBundle(token, { msBundleId, name, article, com
   return { id: data.id || null, article: data.article || null, name: data.name || null };
 }
 
+// Обороты за период (report/turnover/all): по каждому товару — сколько ушло со
+// складов (outcome.quantity/sum) и пришло (income.quantity/sum) за интервал
+// [momentFrom, momentTo]. Для нашей аналитики оборачиваемости берём outcome —
+// это ВСЕ отгрузки (розница, оптовые продажи, списания), а не только заказы CRM.
+// Ключ — external_id товара МС (совпадает с products.external_id).
+export async function fetchMoyskladTurnover(token, { daysBack = 90 } = {}) {
+  const now = new Date();
+  const from = new Date(now.getTime() - daysBack * 86400_000);
+  // Формат МС: 'YYYY-MM-DD HH:MM:SS' (не ISO с 'T'; без миллисекунд/TZ).
+  const fmt = (d) => d.toISOString().slice(0, 19).replace('T', ' ');
+  const endpoint = `/report/turnover/all?momentFrom=${encodeURIComponent(fmt(from))}&momentTo=${encodeURIComponent(fmt(now))}`;
+  const rows = await fetchAll(endpoint, token, 1000);
+  const byExtId = new Map();
+  for (const r of rows) {
+    const href = r.assortment?.meta?.href || '';
+    const externalId = href.split('?')[0].split('/').pop();
+    if (!externalId) continue;
+    // МС хранит суммы в копейках → /100.
+    const qty = Number(r.outcome?.quantity) || 0;
+    const revenue = (Number(r.outcome?.sum) || 0) / 100;
+    // Товар может встречаться несколько раз (разные склады) → суммируем.
+    const prev = byExtId.get(externalId);
+    if (prev) { prev.qty += qty; prev.revenue += revenue; }
+    else byExtId.set(externalId, { qty, revenue, name: r.assortment?.name || null });
+  }
+  return byExtId;
+}
+
 export async function fetchMoyskladStock(token) {
   const rows = await fetchAll('/report/stock/all', token);
   const byId = new Map();
