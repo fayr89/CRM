@@ -4788,6 +4788,10 @@ export async function renderDashboard(main) {
       await renderAusDashboard(container);
     } else if (me.role === 'finance') {
       await renderFinanceDashboard(container);
+    } else if (me.role === 'manager') {
+      // Маркетплейс-менеджер (Avito/WB/Ozon/ЯМ): дашборд про его заказы,
+      // без нерелевантных CRM-метрик (компании/контакты/лиды/сделки/воронка).
+      await renderMarketplaceManagerDashboard(container, me);
     } else {
       const stats = await api.dashboard();
       renderDashboardContent(container, stats, me);
@@ -4857,6 +4861,112 @@ async function renderFinanceDashboard(container) {
       el('p', {}, 'Откройте раздел «Касса» — там транзакции по заказам, комиссии и подтверждение прихода/расхода.'),
     ),
   );
+}
+
+// Дашборд менеджера маркетплейсов: только «мои заказы». CRM-модуль (компании/
+// контакты/лиды/сделки/воронка/конверсия) для него всегда пуст — не показываем
+// нули, не отвлекаем.
+async function renderMarketplaceManagerDashboard(container, me) {
+  const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Moscow' }).format(new Date());
+  const [stats, insights, daily] = await Promise.all([
+    api.dashboard().catch(() => null),
+    api.insights({ period: 'month' }).catch(() => null),
+    api.dailySales({ date: today, manager_id: '' }).catch(() => null),
+  ]);
+
+  const orders = stats?.orders || { by_status: [], total: 0, total_amount: 0 };
+  const activities = stats?.activities || { upcoming: 0, overdue: 0 };
+  const todaySummary = daily?.summary || { orders: 0, revenue: 0, avg_check: 0, cancelled: 0 };
+  const byStatus = new Map((orders.by_status || []).map((r) => [r.status, r]));
+  const cnt = (s) => byStatus.get(s)?.count || 0;
+  const inWork = cnt('new') + cnt('processing') + cnt('waiting');
+  const reservedCnt = cnt('reserved');
+
+  // «Что делать сейчас»: задачи, свежие заказы, к отгрузке.
+  const todayItems = [];
+  if (activities.overdue > 0) todayItems.push(`⚠️ ${activities.overdue} просроченных задач`);
+  if (activities.upcoming > 0) todayItems.push(`📋 ${activities.upcoming} задач в работе`);
+  if (todaySummary.orders > 0) {
+    todayItems.push(`💰 Сегодня: ${todaySummary.orders} заказов, выручка ${fmtMoney(todaySummary.revenue)}`);
+  }
+  if (reservedCnt > 0) todayItems.push(`📦 ${reservedCnt} заказов ждут отгрузки`);
+  if (inWork > 0) todayItems.push(`🛠 ${inWork} заказов в работе`);
+  if (todayItems.length === 0) todayItems.push('✨ Всё под контролем. Хорошо поработать!');
+
+  container.append(
+    el('div', { class: 'today-card card' },
+      el('h3', { style: { margin: '0 0 8px' } }, 'Сегодня'),
+      el('ul', { class: 'today-list' }, ...todayItems.map((t) => el('li', {}, t))),
+    ),
+  );
+
+  // Мой день: 4 карточки.
+  container.append(
+    el('div', { class: 'dashboard-section' }, el('h3', {}, 'Мой день')),
+    el('div', { class: 'dashboard-grid' },
+      statCard('Заказов за сегодня', todaySummary.orders, 'без отменённых'),
+      statCard('Выручка за сегодня', fmtMoney(todaySummary.revenue)),
+      statCard('Средний чек', fmtMoney(todaySummary.avg_check)),
+      statCard('Отменено сегодня', todaySummary.cancelled, 'заказов'),
+    ),
+  );
+
+  // Общие «мои заказы»: скольким уделить внимание.
+  container.append(
+    el('div', { class: 'dashboard-section' }, el('h3', {}, 'Мои заказы всего')),
+    el('div', { class: 'dashboard-grid' },
+      statCard('Всего заказов', orders.total),
+      statCard('Общая выручка', fmtMoney(orders.total_amount), 'без отменённых'),
+      statCard('К отгрузке', reservedCnt, 'зарезервировано'),
+      statCard('В работе', inWork, 'новых/в процессе/ожидание'),
+    ),
+  );
+
+  // Что продал сегодня — топ товаров (уже отфильтрован по scope менеджера).
+  const topProducts = daily?.top_products || [];
+  if (topProducts.length) {
+    const tpBody = el('tbody', {});
+    for (const p of topProducts) {
+      tpBody.append(el('tr', {},
+        el('td', {}, p.name || '—'),
+        el('td', { style: { color: 'var(--text-muted)' } }, p.sku || ''),
+        el('td', { style: { textAlign: 'right', whiteSpace: 'nowrap' } }, `${p.qty} шт`)));
+    }
+    container.append(
+      el('div', { class: 'dashboard-section' },
+        el('h3', {}, 'Что я продал сегодня (топ-10)'),
+        el('div', { class: 'card' }, el('table', { class: 'table' }, tpBody)),
+      ),
+    );
+  }
+
+  // Динамика продаж за 30 дней (мои).
+  const series = insights?.series || [];
+  const periodTotals = insights?.period_totals || { orders: 0, revenue: 0, cancelled: 0 };
+  container.append(
+    el('div', { class: 'dashboard-section' },
+      el('h3', {}, 'Мои продажи за 30 дней'),
+      el('div', { class: 'card' },
+        el('div', { class: 'page-subtitle' },
+          `За период: ${periodTotals.orders} заказов, выручка ${fmtMoney(periodTotals.revenue)}, отменено ${periodTotals.cancelled}`),
+        renderTimeSeries(series),
+      ),
+    ),
+  );
+
+  // Заказы по статусам — компактный распред всех моих.
+  const ordersByStatus = (orders.by_status || []).map((r) => ({
+    label: tr('order_status', r.status),
+    count: r.count,
+  }));
+  if (ordersByStatus.length) {
+    container.append(
+      el('div', { class: 'dashboard-section' },
+        el('h3', {}, 'Мои заказы по статусам'),
+        el('div', { class: 'card' }, ...renderBars(ordersByStatus, 'label', 'count')),
+      ),
+    );
+  }
 }
 
 function renderDashboardContent(container, stats, me) {
