@@ -13930,14 +13930,18 @@ export async function renderInventoryAnalytics(main) {
     el('option', { value: '180' }, '180 дней'),
     el('option', { value: '365' }, 'год'));
   const reloadBtn = el('button', { class: 'btn btn-sm', style: { marginLeft: '8px' } }, '🔄 Обновить');
-  const forceRefreshBtn = el('button', { class: 'btn btn-sm', style: { marginLeft: '4px' }, title: 'Заново тянуть продажи из МойСклад (без кэша, может занять несколько секунд)' }, '⚡ Пересчитать из МС');
+  // Кнопка пересчёта из МС раньше пряталась справа в шапке (за краем экрана
+  // на мобиле). Теперь — крупная в отдельной панели под заголовком.
+  const forceRefreshBtn = el('button', { class: 'btn btn-primary', style: { fontSize: '15px', padding: '10px 16px' }, title: 'Заново тянуть продажи из МойСклад (без кэша, может занять 5-15 сек)' }, '⚡ Пересчитать продажи из МойСклад');
   const subtitle = el('div', { class: 'page-subtitle' }, 'Оборачиваемость, ABC-классификация, мёртвый сток, дефицит. Данные — по отгруженным/завершённым заказам за выбранный период.');
   const header = el('div', { class: 'page-header' },
     el('div', {},
       el('h1', { class: 'page-title' }, '📊 Аналитика остатков'),
       subtitle),
-    el('div', { style: { display: 'flex', alignItems: 'center' } }, periodSel, reloadBtn, forceRefreshBtn));
+    el('div', { style: { display: 'flex', alignItems: 'center' } }, periodSel, reloadBtn));
   main.append(header);
+  // Крупная кнопка «Пересчитать из МС» — всегда видна, не за краем экрана.
+  main.append(el('div', { style: { margin: '8px 0 12px', display: 'flex', gap: '8px', flexWrap: 'wrap' } }, forceRefreshBtn));
   const content = el('div', {}, el('div', { class: 'loading' }, 'Загрузка…'));
   main.append(content);
 
