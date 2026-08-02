@@ -11,11 +11,10 @@ import { authenticate } from '../auth.js';
 import { db } from '../db.js';
 import { asyncHandler } from '../errors.js';
 import {
-  currentPriceRevision, getUserPriceAck, isUserPriceCurrent,
+  currentPriceRevision, getUserPriceAck, isUserPriceCurrent, priceAckRequiredForRole,
 } from '../services/priceRevision.js';
 import {
   getSupplyDeliveryConfig, canSeeSupplyDelivery, canOperateSupplyDelivery,
-  priceAckRequiredForRole,
 } from '../services/featureFlags.js';
 
 const router = Router();
