@@ -45,7 +45,6 @@ import productionSettingsRoutes from './routes/productionSettings.js';
 import supplyDeliveryRoutes from './routes/supplyDelivery.js';
 import bootstrapRoutes from './routes/bootstrap.js';
 import pushRoutes from './routes/push.js';
-import diagDailyRoutes from './routes/diagDaily.js';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = path.resolve(__dirname, '..', 'public');
 
@@ -164,7 +163,6 @@ export function createApp({ serveStatic = true } = {}) {
   app.use('/api/ai-proposals', aiProposalsRoutes);
   app.use('/api/notice-banners', noticeBannersRoutes);
   app.use('/api/notification-prefs', notificationPrefsRoutes);
-  app.use('/api/diag/daily-v778', diagDailyRoutes);
   app.use('/api/projects', projectsRoutes);
   app.use('/api/materials', materialsRoutes);
   app.use('/api/processing-plans', processingPlansRoutes);
