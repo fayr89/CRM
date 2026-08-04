@@ -4185,3 +4185,55 @@ Ai-proposals (Этап 1) и обход обращений (Этап 2): 0 об�
 сделано, 0 новых ai_proposals, 0 уточнений, 0 закрыто как дубль.
 Коммиты: diag-роут v799 (`f706926`), снос diag (`72b0c9e`), журнал
 v799 — смержено в прод.
+
+## 2026-08-04 (v800): meta байт-в-байт совпадает с v787–v799 — без изменений
+
+Designated dev-ветка (`claude/inspiring-cannon-d4sels`) отсутствовала на
+origin на старте сессии (`git ls-remote` пусто для неё) — тот же паттерн
+«смержили, GitHub удалил ветку» (v169+). Локальный HEAD оказался
+байт-в-байт равен прод-tip (`626ede3`, финал v799), расхождения не было.
+Восстановил `git checkout -B claude/inspiring-cannon-d4sels HEAD && git
+push -u`.
+
+Новый нюанс к паттерну shallow-клона: попытка `git merge --ff-only` в
+`claude/build-crm-system-JzCP9` упала с «refusing to merge unrelated
+histories» — локальный ref прод-ветки в shallow-клоне указывал на
+устаревший коммит (`6b987bb`, v703), хотя origin уже был на v799.
+`git fetch --unshallow` починил (полная история, 199 доп. веток
+подтянулось), после чего `git checkout -B claude/build-crm-system-JzCP9
+origin/claude/build-crm-system-JzCP9` + `merge --ff-only` прошли чисто.
+Вывод: при shallow-клоне не доверять локальным non-checked-out branch
+ref'ам как источнику истины — сверяться с `origin/<branch>` явно, а не с
+локальным именем ветки.
+
+Поднял `/api/diag/daily-v800` на dev (`f93d840`), ff-merge в прод прошёл
+после unshallow. Diag дал 404 на первый запрос (обычная propagation-
+задержка, находка v296+), 200 через ~20с. `/health` — 200 весь обход.
+
+`op=meta`: `proposals_by_status={"done":63}` (без pending/approved/
+revision/rejected), `feedback_by_status={"open":5,"awaiting_approval":15,
+"closed":44}`, `feedback_last_msg=2026-07-24T11:23:42.025Z`,
+`proposals_last_update=2026-08-01T12:13:34.592Z` — байт-в-байт совпадает
+с v738–v799.
+
+Этап 1 — нет approved/revision/rejected, действовать не по чему.
+
+Этап 2 — `feedback_last_msg` не сдвинулся ни на миллисекунду относительно
+v799, который прогнал полный `get-feedback-summary` по всем 20 тредам.
+Повторный полный проход в тот же цикл без новых данных пропущен как
+избыточный (правило v592) — вывод не изменился бы.
+
+Diag-эндпоинт снесён на dev-ветке (`git branch --show-current` проверен
+перед сносом); `app.js` (Edit) и удаление `diagDaily.js` (`git rm`)
+застейджены одной командой `git add`, `grep -n diag src/app.js` пусто
+перед коммитом (`44e3603`).
+
+Push-уведомление: не отправлено. Состояние идентично ~70 предыдущим
+обходам подряд, все находки (частота обходов, #62/#63 done, теперь и
+shallow-клон unrelated-histories) уже задокументированы — повтор был бы
+спамом.
+
+Ai-proposals (Этап 1) и обход обращений (Этап 2): 0 обработано, 0
+сделано, 0 новых ai_proposals, 0 уточнений, 0 закрыто как дубль.
+Коммиты: diag-роут v800 (`f93d840`), снос diag (`44e3603`), журнал
+v800 — смержено в прод.
