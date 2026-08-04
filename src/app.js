@@ -44,7 +44,6 @@ import productionReceiptRoutes from './routes/productionReceipt.js';
 import productionSettingsRoutes from './routes/productionSettings.js';
 import supplyDeliveryRoutes from './routes/supplyDelivery.js';
 import bootstrapRoutes from './routes/bootstrap.js';
-import diagDailyRoutes from './routes/diagDaily.js';
 import pushRoutes from './routes/push.js';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = path.resolve(__dirname, '..', 'public');
@@ -177,7 +176,6 @@ export function createApp({ serveStatic = true } = {}) {
   app.use('/api/supply-delivery', supplyDeliveryRoutes);
   app.use('/api/bootstrap', bootstrapRoutes);
   app.use('/api/push', pushRoutes);
-  app.use('/api/diag/daily-v807', diagDailyRoutes);
   app.use((req, res) => {
     res.status(404).json({ error: `Route not found: ${req.method} ${req.path}` });
   });
