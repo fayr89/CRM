@@ -32,6 +32,7 @@ import feedbackRoutes from './routes/feedback.js';
 import cronRoutes from './routes/cron.js';
 import maxRoutes from './routes/max.js';
 import aiProposalsRoutes from './routes/aiProposals.js';
+import diagDailyRoutes from './routes/diagDaily.js';
 import noticeBannersRoutes from './routes/noticeBanners.js';
 import notificationPrefsRoutes from './routes/notificationPrefs.js';
 import projectsRoutes from './routes/projects.js';
@@ -176,6 +177,7 @@ export function createApp({ serveStatic = true } = {}) {
   app.use('/api/supply-delivery', supplyDeliveryRoutes);
   app.use('/api/bootstrap', bootstrapRoutes);
   app.use('/api/push', pushRoutes);
+  app.use('/api/diag/daily-v816', diagDailyRoutes);
   app.use((req, res) => {
     res.status(404).json({ error: `Route not found: ${req.method} ${req.path}` });
   });
