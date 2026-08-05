@@ -349,6 +349,8 @@ export const api = {
   executeProductionOrder: (id, qty, day) => request('POST', `/api/production-orders/${id}/execute`, { body: { qty, day } }),
   syncMaterialMs: (id) => request('POST', `/api/materials/${id}/sync-ms`),
   wipeOperational: () => request('POST', '/api/admin/wipe-operational', { body: { confirm: 'УДАЛИТЬ' } }),
+  migrateDb: (target_url, opts = {}) => request('POST', '/api/admin/migrate-to',
+    { body: { target_url, wipe: !!opts.wipe, dry_run: !!opts.dry_run } }),
 
   // МАХ-бот
   maxMe: () => request('GET', '/api/max/me'),

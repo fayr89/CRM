@@ -5555,10 +5555,90 @@ export async function renderIntegrations(main) {
 
   const me = JSON.parse(localStorage.getItem('crm_user') || '{}');
   if (me.role === 'admin') {
+    const migrationArea = el('div', { class: 'integration-section' });
     const dangerArea = el('div', { class: 'integration-section' });
-    main.append(dangerArea);
+    main.append(migrationArea, dangerArea);
+    renderDbMigrationSection(migrationArea);
     renderDangerZoneSection(dangerArea);
   }
+}
+
+// Одноразовая секция миграции БД в другой Supabase-проект (или любой Postgres).
+// Порядок: 1) Скачать бэкап (страховка), 2) Создать пустой target, 3) Переключить
+// DATABASE_URL (я делаю в Vercel), 4) Вернуться сюда и запустить прямую миграцию.
+// После успешного переезда — этот код и эндпоинт снесу.
+function renderDbMigrationSection(area) {
+  clear(area);
+  const targetInput = el('input', {
+    type: 'text',
+    placeholder: 'postgresql://postgres.xxx:PWD@aws-...pooler.supabase.com:6543/postgres',
+    style: { width: '100%', fontFamily: 'monospace', fontSize: '12px' },
+  });
+  const wipeChk = el('input', { type: 'checkbox' });
+  const dryRunChk = el('input', { type: 'checkbox', checked: true });
+  const reportArea = el('pre', { style: { background: '#f9fafb', padding: '8px', fontSize: '11px', maxHeight: '400px', overflow: 'auto', whiteSpace: 'pre-wrap' } });
+
+  async function runMigration() {
+    const url = targetInput.value.trim();
+    if (!url.startsWith('postgres')) { toast('Connection string должен начинаться с postgres:// или postgresql://', 'error'); return; }
+    const dry = dryRunChk.checked;
+    const wipe = wipeChk.checked;
+    if (!dry && !confirm(`ЗАПУСТИТЬ реальную миграцию?${wipe ? '\n\n⚠️ WIPE: сначала очистит все данные на целевой БД!' : ''}`)) return;
+    reportArea.textContent = 'Миграция началась, дождитесь ответа (может занять до 60 секунд)…';
+    try {
+      const r = await api.migrateDb(url, { wipe, dry_run: dry });
+      reportArea.textContent = JSON.stringify(r, null, 2);
+      toast(r.ok ? (dry ? 'Dry-run прошёл' : 'Миграция завершена') : `Ошибки: ${r.errors?.length || 0}`, r.ok ? 'success' : 'error');
+    } catch (e) {
+      reportArea.textContent = `Ошибка: ${e.message}`;
+      toast(e.message, 'error');
+    }
+  }
+
+  area.append(
+    el('div', { class: 'section-header' }, el('h2', {}, '🔀 Миграция БД (одноразовая)')),
+    el('p', { class: 'help-banner', style: { background: '#eff6ff', border: '1px solid #bfdbfe', color: '#1e3a8a' } },
+      'Одноразовая утилита для переноса на другой Supabase (или любой Postgres). Порядок: ',
+      el('b', {}, '1) '), 'Скачай бэкап-страховку кнопкой ниже. ',
+      el('b', {}, '2) '), 'Создай пустой target-проект (тот же регион `eu-central-1`). ',
+      el('b', {}, '3) '), 'Скинь мне connection string — я сначала прогоню schema через ensureInitialized (переключу DATABASE_URL и redeploy), а потом ',
+      el('b', {}, '4) '), 'здесь вставишь connection string и запустишь миграцию данных. ',
+      el('b', {}, 'Начни с dry-run — покажет что бы залилось без изменений.'),
+    ),
+    el('div', { style: { marginTop: '12px' } },
+      el('a', {
+        href: '#',
+        onClick: async (e) => {
+          e.preventDefault();
+          try {
+            const res = await fetch('/api/admin/backup', { headers: { Authorization: `Bearer ${localStorage.getItem('crm_token')}` } });
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            const blob = await res.blob();
+            const cd = res.headers.get('content-disposition') || '';
+            const name = cd.match(/filename="(.+)"/)?.[1] || 'crm-backup.json';
+            const dl = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = dl; a.download = name; document.body.appendChild(a); a.click(); a.remove();
+            URL.revokeObjectURL(dl);
+            toast('Бэкап скачан', 'success');
+          } catch (err) { toast(err.message, 'error'); }
+        },
+        style: { display: 'inline-block', padding: '6px 12px', background: '#3b82f6', color: '#fff', borderRadius: '4px', textDecoration: 'none' },
+      }, '⬇️ Скачать бэкап-страховку (JSON, с паролями)'),
+    ),
+    el('div', { style: { marginTop: '16px' } },
+      el('label', { style: { fontSize: '12px', fontWeight: '600' } }, 'Target connection string:'),
+      targetInput,
+    ),
+    el('div', { style: { marginTop: '8px', display: 'flex', gap: '16px', alignItems: 'center' } },
+      el('label', { style: { fontSize: '13px' } }, dryRunChk, ' Dry-run (только показать, не заливать)'),
+      el('label', { style: { fontSize: '13px' } }, wipeChk, ' Очистить target перед заливкой'),
+    ),
+    el('div', { style: { marginTop: '8px' } },
+      el('button', { class: 'btn btn-primary', onClick: runMigration }, '🚀 Мигрировать'),
+    ),
+    el('div', { style: { marginTop: '12px' } }, el('label', { style: { fontSize: '12px', fontWeight: '600' } }, 'Отчёт:'), reportArea),
+  );
 }
 
 // Опасная зона: предзапусковая очистка тест-данных. Только админ.

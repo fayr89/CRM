@@ -1,4 +1,5 @@
 // Админские операции: бэкап БД, управление МС-интеграцией.
+import pg from 'pg';
 import { Router } from 'express';
 import { authenticate, requireRole } from '../auth.js';
 import { db } from '../db.js';
@@ -47,22 +48,45 @@ const SENSITIVE_COLUMNS = {
   webhooks: ['secret'],
 };
 
-// Полный дамп БД в JSON. Только админ. Чувствительные поля вырезаются (см. выше).
+// Авто-подбор всех таблиц public-схемы. Возвращает в порядке: сначала
+// явно перечисленные BACKUP_TABLES (в нужном FK-порядке), потом остальные.
+async function listAllTables() {
+  const rows = await db.all(
+    `SELECT tablename FROM pg_tables WHERE schemaname = 'public'
+     ORDER BY tablename`,
+  );
+  const all = rows.map((r) => r.tablename);
+  const seen = new Set();
+  const ordered = [];
+  for (const t of BACKUP_TABLES) if (all.includes(t) && !seen.has(t)) { ordered.push(t); seen.add(t); }
+  for (const t of all) if (!seen.has(t)) { ordered.push(t); seen.add(t); }
+  return ordered;
+}
+
+// Полный дамп БД в JSON. Только админ.
+// ?redact=1 — старое поведение: вырезать password_hash/tokens (для скачивания
+//   куда-нибудь наружу).
+// По умолчанию (без redact) — ВКЛЮЧАЕТ секреты, потому что для миграции в
+// другую БД пароли обязательны (иначе никто не залогинится после переезда).
 router.get(
   '/backup',
   requireRole('admin'),
-  asyncHandler(async (_req, res) => {
-    const dump = { version: 1, created_at: new Date().toISOString(), tables: {} };
-    for (const table of BACKUP_TABLES) {
+  asyncHandler(async (req, res) => {
+    const redact = req.query.redact === '1';
+    const tables = await listAllTables();
+    const dump = {
+      version: 2, created_at: new Date().toISOString(),
+      redacted: redact, tables: {},
+    };
+    for (const table of tables) {
       try {
         const rows = await db.all(`SELECT * FROM ${table}`);
-        const drop = SENSITIVE_COLUMNS[table];
-        if (drop && rows.length) {
-          for (const row of rows) for (const c of drop) delete row[c];
+        if (redact) {
+          const drop = SENSITIVE_COLUMNS[table];
+          if (drop && rows.length) for (const row of rows) for (const c of drop) delete row[c];
         }
         dump.tables[table] = rows;
       } catch {
-        // таблицы может не быть — пропускаем
         dump.tables[table] = [];
       }
     }
@@ -70,6 +94,120 @@ router.get(
     res.setHeader('Content-Type', 'application/json; charset=utf-8');
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
     res.send(JSON.stringify(dump, null, 2));
+  }),
+);
+
+// Прямая миграция данных в новую БД. POST body: { target_url, wipe: bool }.
+// target_url — connection string новой Supabase (или любой Postgres).
+// wipe: true — очистить таргет перед заливкой (DELETE FROM всех таблиц).
+// Схема на целевой БД должна быть уже создана (ensureInitialized прогонит
+// её сама, если переключить DATABASE_URL и redeploy до миграции; ИЛИ можно
+// одноразово сначала мигрировать данные в тот же currentURL для проверки).
+router.post(
+  '/migrate-to',
+  requireRole('admin'),
+  asyncHandler(async (req, res) => {
+    const targetUrl = String(req.body?.target_url || '').trim();
+    if (!targetUrl.startsWith('postgres://') && !targetUrl.startsWith('postgresql://')) {
+      throw BadRequest('target_url должен быть postgres:// или postgresql://');
+    }
+    const wipe = req.body?.wipe === true;
+    const dryRun = req.body?.dry_run === true;
+
+    const targetPool = new pg.Pool({
+      connectionString: targetUrl,
+      max: 3,
+      ssl: { rejectUnauthorized: false },
+      connectionTimeoutMillis: 15000,
+    });
+
+    const started = Date.now();
+    const report = { tables: [], errors: [], wiped: !!wipe, dry_run: !!dryRun };
+
+    try {
+      // Проверка коннекта.
+      const probe = await targetPool.query('SELECT NOW() AS now, current_database() AS db');
+      report.target = { now: probe.rows[0].now, database: probe.rows[0].db };
+
+      // Проверка что схема существует (базовая таблица users).
+      const schemaProbe = await targetPool.query(`SELECT to_regclass('public.users') AS t`);
+      if (!schemaProbe.rows[0].t) {
+        throw BadRequest(
+          'На целевой БД нет таблицы users — сначала переключи DATABASE_URL на target и сделай redeploy, '
+          + 'чтобы ensureInitialized() создал схему. Только после этого запусти migrate-to.',
+        );
+      }
+
+      const tables = await listAllTables();
+      report.tables_planned = tables.length;
+
+      // Отключаем FK-констрейнты на время заливки (иначе не получится вставлять
+      // в детях до родителей / коррелированные записи).
+      await targetPool.query(`SET session_replication_role = 'replica'`);
+
+      if (wipe && !dryRun) {
+        // Чистим целевые таблицы в обратном порядке (дети → родители).
+        for (const table of [...tables].reverse()) {
+          try { await targetPool.query(`DELETE FROM ${table}`); }
+          catch (e) { report.errors.push({ table, phase: 'wipe', error: e.message }); }
+        }
+      }
+
+      // Копируем: для каждой таблицы читаем всё из source, вставляем в target.
+      for (const table of tables) {
+        const started2 = Date.now();
+        let rowsIn = 0, rowsOut = 0;
+        try {
+          const rows = await db.all(`SELECT * FROM ${table}`);
+          rowsIn = rows.length;
+          if (!rows.length) { report.tables.push({ table, in: 0, out: 0 }); continue; }
+          const cols = Object.keys(rows[0]);
+          const colsSql = cols.map((c) => `"${c}"`).join(', ');
+          if (dryRun) {
+            report.tables.push({ table, in: rowsIn, out: 0, dry_run: true });
+            continue;
+          }
+          // Батчами по 500, чтобы не упереться в лимит параметров (~65535 у pg).
+          const BATCH = 500;
+          for (let i = 0; i < rows.length; i += BATCH) {
+            const chunk = rows.slice(i, i + BATCH);
+            const placeholders = [];
+            const params = [];
+            let p = 1;
+            for (const row of chunk) {
+              const rowPh = [];
+              for (const c of cols) {
+                params.push(row[c] === undefined ? null : row[c]);
+                rowPh.push(`$${p++}`);
+              }
+              placeholders.push(`(${rowPh.join(',')})`);
+            }
+            const sql = `INSERT INTO "${table}" (${colsSql}) VALUES ${placeholders.join(',')} ON CONFLICT DO NOTHING`;
+            const r = await targetPool.query(sql, params);
+            rowsOut += r.rowCount || 0;
+          }
+          // Обновить sequence для SERIAL id, если есть.
+          try {
+            await targetPool.query(
+              `SELECT setval(pg_get_serial_sequence('"${table}"', 'id'),
+                             GREATEST(COALESCE((SELECT MAX(id) FROM "${table}"), 1), 1))
+               WHERE pg_get_serial_sequence('"${table}"', 'id') IS NOT NULL`,
+            );
+          } catch { /* нет id-serial у этой таблицы — норм */ }
+          report.tables.push({ table, in: rowsIn, out: rowsOut, ms: Date.now() - started2 });
+        } catch (e) {
+          report.errors.push({ table, phase: 'copy', in: rowsIn, out: rowsOut, error: e.message });
+        }
+      }
+
+      await targetPool.query(`SET session_replication_role = 'origin'`);
+    } finally {
+      await targetPool.end().catch(() => {});
+    }
+
+    report.elapsed_ms = Date.now() - started;
+    report.ok = report.errors.length === 0;
+    res.json(report);
   }),
 );
 
