@@ -49,7 +49,9 @@ export default async function handler(req, res) {
     console.error('[db-init] failed:', e?.code, e?.message);
     const transient = isTransientConnect(e);
     res.statusCode = transient ? 503 : 500;
-    res.setHeader('Content-Type', 'application/json');
+    // charset=utf-8 обязательно: тело содержит русский текст, без явного
+    // charset браузер декодирует как ISO-8859-1 → тарабарщина «Р‘Р°Р·Р°».
+    res.setHeader('Content-Type', 'application/json; charset=utf-8');
     if (transient) res.setHeader('Retry-After', '15');
     res.end(JSON.stringify({
       error: transient
