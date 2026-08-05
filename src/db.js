@@ -388,7 +388,10 @@ function getPool() {
     connectionString: config.databaseUrl,
     max: config.env === 'production' ? 1 : 5,
     ssl: needsSsl ? { rejectUnauthorized: false } : false,
-    connectionTimeoutMillis: 15000,
+    // 10 сек на connect: Supabase pooler отвечает мгновенно, но upstream БД
+    // после паузы просыпается 5-15 сек. Крутим retry с backoff — суммарно
+    // 4×10s + backoff ≈ 47 сек, укладывается в лямбду 60s. См. ensureInitialized.
+    connectionTimeoutMillis: 10000,
   });
   pool.on('error', (err) => {
     // eslint-disable-next-line no-console
@@ -455,12 +458,30 @@ export const db = {
 // ~500-2000мс на каждом холодном старте serverless-лямбды.
 const SCHEMA_VERSION = 32;
 
+// Транзиентные ошибки коннекта — стоит ретраить (БД просыпается, сетевой сбой).
+// Явные не-транзиентные (auth, protocol) — ретрай не поможет, лучше сразу упасть.
+function isTransientDbError(e) {
+  const code = e?.code || '';
+  const msg = String(e?.message || '').toLowerCase();
+  return (
+    code === '08006' || code === '08001' || code === '08000' || code === '08003' || code === '08004'
+    || code === 'ECONNREFUSED' || code === 'ETIMEDOUT' || code === 'ENOTFOUND'
+    || code === 'ECONNRESET' || code === 'EAI_AGAIN'
+    || msg.includes('timeout') || msg.includes('connection terminated')
+    || msg.includes('connect etimedout') || msg.includes('failed to connect')
+  );
+}
+
 export async function ensureInitialized() {
   if (globalThis.__crmInitialized) return;
   let lastErr;
   // Холодный старт serverless-функции иногда срывает первый коннект к пулеру
-  // Supabase. Повторяем со свежим пулом, чтобы разовый сбой не ронял запрос.
-  for (let attempt = 1; attempt <= 3; attempt += 1) {
+  // Supabase. Плюс сам Supabase может паузить БД при длительной неактивности —
+  // просыпается 5-15 сек. Ретраим до 4 раз с exponential backoff (0.5s, 2s, 4s).
+  // Не-транзиентные ошибки (auth, protocol) не ретраим — только теряем время.
+  const MAX_ATTEMPTS = 4;
+  const BACKOFF_MS = [500, 2000, 4000]; // между попытками 1→2, 2→3, 3→4
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt += 1) {
     try {
       const pool = getPool();
       // Схема уже создана после первого деплоя — не гоняем весь DDL на каждом
@@ -1171,11 +1192,19 @@ export async function ensureInitialized() {
       return;
     } catch (e) {
       lastErr = e;
+      const transient = isTransientDbError(e);
       // eslint-disable-next-line no-console
-      console.error(`[db-init] attempt ${attempt}/3 failed:`, e?.code, e?.message);
+      console.error(
+        `[db-init] attempt ${attempt}/${MAX_ATTEMPTS} failed (${transient ? 'transient' : 'fatal'}):`,
+        e?.code, e?.message,
+      );
       try { await globalThis.__crmPool?.end(); } catch { /* ignore */ }
       globalThis.__crmPool = null;
-      if (attempt < 3) await new Promise((r) => setTimeout(r, 400 * attempt));
+      // Не-транзиентные (auth, protocol) не ретраим — бесполезно.
+      if (!transient) break;
+      const delay = BACKOFF_MS[attempt - 1];
+      if (delay == null) break; // последняя попытка — не ждём
+      await new Promise((r) => setTimeout(r, delay));
     }
   }
   throw lastErr;

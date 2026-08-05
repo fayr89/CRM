@@ -28,6 +28,30 @@ function verifyCron(req) {
   return auth === `Bearer ${expected}`;
 }
 
+// Keep-alive пинг БД: Supabase паузит проект после длительной неактивности
+// (особенно ночью, когда auto-reserve-waiting выключен с 22:00 МСК). Ловили
+// такой инцидент 2026-08-05 в 04:45 МСК — БД усыпилась, все /api/* вернули
+// 500 «Failed to connect: :timeout». Этот cron гоняется каждые 5 мин 24/7
+// и делает копеечный SELECT 1 — БД всегда «тёплая».
+router.get(
+  '/ping-db',
+  asyncHandler(async (req, res) => {
+    if (!verifyCron(req)) return res.status(401).send();
+    const started = Date.now();
+    try {
+      const row = await db.get(`SELECT 1 AS ok, NOW() AS now_at`);
+      res.json({ ok: true, elapsed_ms: Date.now() - started, now_at: row?.now_at });
+    } catch (e) {
+      res.status(503).json({
+        ok: false,
+        error: e.message,
+        code: e.code,
+        elapsed_ms: Date.now() - started,
+      });
+    }
+  }),
+);
+
 async function getMoyskladToken() {
   const row = await db.get(`SELECT value FROM app_settings WHERE key = 'moysklad.token'`).catch(() => null);
   if (row?.value) {
