@@ -7368,3 +7368,59 @@ Ai-proposals (Этап 1) и обход обращений (Этап 2): 0 об�
 новых ai_proposals, 0 уточнений, 0 закрыто как дубль.
 Коммиты: diag-роут v858 (`1770188`), снос diag + этот журнал (следующий
 коммит) — смержено в прод.
+
+## 2026-08-06 (v859): designated dev-ветка снова смержена и удалена GitHub'ом; meta без изменений (~125-й обход подряд); проверка v815 через grep — без изменений
+
+Designated dev-ветка (`claude/inspiring-cannon-idx7bg`) отсутствовала на
+origin на старте сессии (обычный паттерн, v169+) — `git fetch
+origin claude/inspiring-cannon-idx7bg` вернул `couldn't find remote ref`.
+Репозиторий стартовал shallow; `git fetch --unshallow` выполнен первым,
+затем отдельный точечный `git fetch origin claude/build-crm-system-JzCP9`
+(урок v850 — не объединять существующий и потенциально несуществующий реф
+в одной команде). Сравнение подтвердило: локальный HEAD байт-в-байт равен
+`origin/claude/build-crm-system-JzCP9` (`04d6db1`, финал v858) —
+восстановлено по правилу «PR уже смержен»: `git checkout -B
+claude/inspiring-cannon-idx7bg origin/claude/build-crm-system-JzCP9` →
+push, без конфликтов.
+
+**Лёгкая проверка находки v815** (уязвимость `admin.js` `migrate-to`/
+`backup`) через `grep` по дереву: `POST /api/admin/migrate-to`
+(произвольный `target_url`, `wipe`+заливка) и дефолтный `GET
+/api/admin/backup` без `?redact=1` (отдаёт `password_hash`/токены) всё ещё
+присутствуют, за `requireRole('admin')`. Источник не изменился — не
+полноценная перепроверка живого прод-эндпоинта (для этого нужны
+admin-креды, которых у diag-подхода нет). Не переэскалировано — эскалировано
+дважды (v815, v840), новых фактов риска нет.
+
+Diag `daily-v859` (read-only опы: meta/list-proposals/get-feedback-summary)
+поднят на dev (`9fa8d8e`), ff-merge dev→prod прошёл fast-forward
+(`04d6db1..9fa8d8e`), push обеих веток. Прод-деплой
+(`dpl_3wcXvenZuT344Rfq8H2Akp9j9Nhu`) — `/health` оставался 200 всё время
+билда (старый деплой на alias), `web_fetch_vercel_url` на
+`/api/diag/daily-v859?op=meta` — 200 с первого запроса (~24с после push).
+
+`op=meta`: `proposals_by_status={"done":63}` (без pending/approved/
+revision/rejected), `feedback_by_status={"open":5,"awaiting_approval":15,
+"closed":44}`, `feedback_last_msg=2026-07-24T11:23:42.025Z`,
+`proposals_last_update=2026-08-01T12:13:34.592Z` — байт-в-байт совпадает
+с v738–v858 (~125-й подряд обход без изменений).
+
+Этап 1 — нет approved/revision/rejected, действовать не по чему.
+Этап 2 — `feedback_last_msg` не сдвинулся относительно последнего полного
+прохода (v816), полный построчный обход тредов снова пропущен как
+избыточный (правило v592).
+
+Diag-эндпоинт снесён на dev-ветке (`git branch --show-current` проверен
+перед сносом); `app.js` (Edit) и удаление `diagDaily.js` (`git rm`)
+застейджены раздельно (граблина v210 учтена), `grep -n diag src/app.js`
+пусто перед коммитом.
+
+Push-уведомление: не отправлено — нет новых фактов, требующих внимания
+пользователя (частотная находка эскалирована 4+ раза, уязвимость v815
+эскалирована v815/v840, полная перепроверка недоступна без admin-кредов,
+feedback/proposals без изменений уже 125 обходов подряд).
+
+Ai-proposals (Этап 1) и обход обращений (Этап 2): 0 обработано, 0 сделано, 0
+новых ai_proposals, 0 уточнений, 0 закрыто как дубль.
+Коммиты: diag-роут v859 (`9fa8d8e`), снос diag + этот журнал (следующий
+коммит) — смержено в прод.
