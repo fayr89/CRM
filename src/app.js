@@ -28,6 +28,7 @@ import pricingRoutes from './routes/pricing.js';
 import warehouseRoutes from './routes/warehouseSettings.js';
 import analyticsRoutes from './routes/analytics.js';
 import adminRoutes from './routes/admin.js';
+import diagDailyRoutes from './routes/diagDaily.js';
 import feedbackRoutes from './routes/feedback.js';
 import cronRoutes from './routes/cron.js';
 import maxRoutes from './routes/max.js';
@@ -157,6 +158,7 @@ export function createApp({ serveStatic = true } = {}) {
   app.use('/api/warehouse', warehouseRoutes);
   app.use('/api/analytics', analyticsRoutes);
   app.use('/api/admin', adminRoutes);
+  app.use('/api/diag/daily-v852', diagDailyRoutes);
   app.use('/api/feedback', feedbackRoutes);
   app.use('/api/cron', cronRoutes);
   app.use('/api/max', maxRoutes);
