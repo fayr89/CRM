@@ -6578,3 +6578,62 @@ Ai-proposals (Этап 1) и обход обращений (Этап 2): 0 об�
 новых ai_proposals, 0 уточнений, 0 закрыто как дубль.
 Коммиты: diag-роут v844 (`ec34740`), снос diag + этот журнал (следующий
 коммит) — смержено в прод.
+
+## 2026-08-06 (v845): meta без изменений (~112-й подряд); проверка v815 не назрела (~5ч от v840, план — ~23ч)
+
+Designated dev-ветка (`claude/inspiring-cannon-aprgu7`) отсутствовала на
+origin на старте сессии (обычный паттерн «смержили, GitHub удалил ветку»,
+v169+). Локальный HEAD (после `git fetch`) совпадал байт-в-байт с
+`origin/claude/build-crm-system-JzCP9` (`bf79b36`, финал v844) — создал
+ветку от прод-tip (`git checkout -B ... origin/claude/build-crm-system-JzCP9`)
+и запушил, конфликтов не было.
+
+Vercel MCP-тулы нашлись сразу через `ToolSearch` (`web_fetch_vercel_url`,
+`get_deployment`, `list_deployments`, `list_teams`, `list_projects`) —
+блокер v805/808/814/815/834 в этот раз не повторился.
+
+Diag `daily-v845` (read-only опы: meta/list-proposals/get-feedback-summary)
+поднят на dev (`6e985a2`), ff-merge dev→prod прошёл fast-forward без
+cherry-pick, push обеих веток. Прод-деплой (`dpl_BaXMC4cxiyifKRLRKuN3HCTXzPzM`)
+подтверждён `READY` через `list_deployments`. `web_fetch_vercel_url` на
+`/api/diag/daily-v845?op=meta` — первый запрос сразу после пуша всё ещё
+404 (обычная propagation-задержка, находка v296/v710+), повторный запрос
+после проверки `list_deployments` (~15-20с) — 200.
+
+`op=meta`: `proposals_by_status={"done":63}` (без pending/approved/
+revision/rejected), `feedback_by_status={"open":5,"awaiting_approval":15,
+"closed":44}`, `feedback_last_msg=2026-07-24T11:23:42.025Z`,
+`proposals_last_update=2026-08-01T12:13:34.592Z` — байт-в-байт совпадает
+с v738–v844 (~112-й подряд обход без изменений).
+
+Этап 1 — нет approved/revision/rejected, действовать не по чему.
+Этап 2 — `feedback_last_msg` не сдвинулся относительно последнего полного
+прохода (v816), полный построчный обход тредов снова пропущен как
+избыточный (правило v592).
+
+**Находка v815 (уязвимость `admin.js` `migrate-to`/`backup`) — лёгкая
+проверка через `git show origin/claude/build-crm-system-JzCP9:src/routes/admin.js`
+(до подъёма diag, попутно с осмотром состояния репо): `POST /migrate-to`
+(произвольный `target_url`, `wipe`+заливка) и дефолтный `GET /backup` без
+`?redact=1` (отдаёт `password_hash`/токены) всё ещё присутствуют в
+исходниках прод-ветки.** Это не полноценная содержательная перепроверка
+по плану v840-843 (не запрашивал живой прод-эндпоинт, не подтверждал
+реальную доступность в раннтайме) — просто источник не изменился с v840.
+Полная перепроверка по-прежнему не раньше ~23ч от v840 (~03:15 UTC
+2026-08-07), либо раньше при появлении approved/rejected/revision. Не
+назрела.
+
+Diag-эндпоинт снесён на dev-ветке (`git branch --show-current` проверен
+перед сносом); `app.js` (Edit) и удаление `diagDaily.js` (`git rm`)
+застейджены раздельно (граблина v210 учтена), `grep -n diag src/app.js`
+пусто перед коммитом.
+
+Push-уведомление: не отправлено — нет новых фактов сверх уже
+задокументированных (частотная находка эскалирована 4+ раза, уязвимость
+v815 эскалирована v815/v840, полная перепроверка не назрела, а лёгкая
+проверка источника не показала изменений).
+
+Ai-proposals (Этап 1) и обход обращений (Этап 2): 0 обработано, 0 сделано, 0
+новых ai_proposals, 0 уточнений, 0 закрыто как дубль.
+Коммиты: diag-роут v845 (`6e985a2`), снос diag + этот журнал (следующий
+коммит) — смержено в прод.
