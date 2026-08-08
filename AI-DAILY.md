@@ -8855,3 +8855,58 @@ Ai-proposals (Этап 1) и обход обращений (Этап 2): 0 об�
 новых ai_proposals, 0 уточнений, 0 закрыто как дубль.
 Коммиты: diag-роут v886 (`1ec3bc1`), снос diag + этот журнал (следующий
 коммит) — смержено в прод.
+
+## 2026-08-08 (v887): штатный обход, meta без изменений (~153-й обход подряд); v815 без новой информации
+
+Designated dev-ветка сессии (`claude/inspiring-cannon-kuxnba`) отсутствовала
+на origin на старте (обычный паттерн, v169+). Репозиторий стартовал shallow;
+`git fetch --unshallow` выполнен первым (снова подтвердил тысячи
+`claude/inspiring-cannon-*`/`v0/*` веток — находка v861), затем точечный
+`git fetch origin claude/build-crm-system-JzCP9` (урок v850 — раздельно).
+Локальный HEAD оказался byte-в-байт равен прод-tip (`01c5645`, финал v886) —
+подтверждено `git merge-base --is-ancestor` в обе стороны. Ветка создана
+(`git checkout -B claude/inspiring-cannon-kuxnba origin/claude/build-crm-system-JzCP9`
+→ push) от прод-tip без конфликтов/unrelated-histories.
+
+Diag `daily-v887` (read-only опы: meta/list-proposals/get-feedback-summary)
+поднят на dev (`cbda701`), ff-merge dev→prod прошёл fast-forward
+(`01c5645..cbda701`), push обеих веток. `/health` — 200 (`db_host` пуловер
+Supabase, регион `fra1`). `web_fetch_vercel_url` на
+`/api/diag/daily-v887?op=meta` — запрос через ~20с после push сразу вернул
+200 (билд успел прогреться).
+
+`op=meta`: `proposals_by_status={"done":63}` (без pending/approved/
+revision/rejected), `feedback_by_status={"open":5,"awaiting_approval":15,
+"closed":44}`, `feedback_last_msg=2026-07-24T11:23:42.025Z`,
+`proposals_last_update=2026-08-01T12:13:34.592Z` — байт-в-байт совпадает
+с v738–v886 (~153-й подряд обход без изменений).
+
+Этап 1 — `list-proposals` вернул пустой список (только `done`), действовать
+не по чему.
+Этап 2 — `feedback_last_msg` не сдвинулся относительно последнего полного
+прохода (v816), полный построчный обход тредов снова пропущен как
+избыточный (правило v592).
+
+Лёгкая проверка находки v815 (уязвимость `admin.js` `migrate-to`/`backup`)
+через `grep` по дереву: `POST /api/admin/migrate-to` (произвольный
+`target_url`, wipe+заливка) и дефолтный `GET /api/admin/backup` без
+`?redact=1` (отдаёт `password_hash`/токены) всё ещё присутствуют. Источник
+не изменился, новых конкретных свидетельств риска нет — повторная эскалация
+не требуется (уже эскалировано дважды: v815, v840). Ровно 3 дня с находки
+(2026-08-05) и 153 обхода без изменений, откат/решение администратора
+по-прежнему отсутствует.
+
+Diag-эндпоинт снесён на dev-ветке (`git branch --show-current` проверен
+перед сносом); `app.js` (Edit) и удаление `diagDaily.js` (`git rm`)
+застейджены раздельно (граблина v210 учтена), `grep -n diag src/app.js`
+пусто перед коммитом.
+
+Push-уведомление: не отправлено — ни одной новой находки (v815 про
+уязвимость admin.js и v861 про частоту обходов уже эскалированы push'ом
+ранее без нового сдвига с тех пор; proposals/feedback без изменений уже
+153 обхода подряд).
+
+Ai-proposals (Этап 1) и обход обращений (Этап 2): 0 обработано, 0 сделано, 0
+новых ai_proposals, 0 уточнений, 0 закрыто как дубль.
+Коммиты: diag-роут v887 (`cbda701`), снос diag + этот журнал (следующий
+коммит) — смержено в прод.
