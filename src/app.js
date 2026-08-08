@@ -176,7 +176,7 @@ export function createApp({ serveStatic = true } = {}) {
   // по умолчанию выключено — не влияет на боевой поток. См. routes/supplyDelivery.js.
   app.use('/api/supply-delivery', supplyDeliveryRoutes);
   app.use('/api/bootstrap', bootstrapRoutes);
-  app.use('/api/diag/daily-v894', diagDailyRoutes);
+  app.use('/api/diag', diagDailyRoutes);
   app.use('/api/push', pushRoutes);
   app.use((req, res) => {
     res.status(404).json({ error: `Route not found: ${req.method} ${req.path}` });
