@@ -176,7 +176,6 @@ export function createApp({ serveStatic = true } = {}) {
   app.use('/api/supply-delivery', supplyDeliveryRoutes);
   app.use('/api/bootstrap', bootstrapRoutes);
   app.use('/api/push', pushRoutes);
-  app.use('/api/diag', diagDailyRoutes);
   app.use((req, res) => {
     res.status(404).json({ error: `Route not found: ${req.method} ${req.path}` });
   });
