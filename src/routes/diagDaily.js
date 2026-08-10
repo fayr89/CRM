@@ -157,11 +157,20 @@ router.get('/daily-v934', async (req, res) => {
       return res.status(201).json(await db.get('SELECT * FROM ai_proposals WHERE id = ?', r.lastInsertRowid));
     }
 
+    if (op === 'get-app-setting') {
+      const key = req.query.setting ? String(req.query.setting) : null;
+      if (!key) return res.status(400).json({ error: 'setting required' });
+      const row = await db
+        .get(`SELECT value, updated_by, updated_at FROM app_settings WHERE key = ?`, key)
+        .catch(() => null);
+      return res.json({ key, row: row || null });
+    }
+
     return res.status(400).json({
       error: 'unknown op',
       ops: ['meta', 'list-feedback', 'feedback-thread', 'post-feedback-message',
         'list-proposals', 'proposal-thread', 'patch-proposal', 'post-proposal-message',
-        'create-proposal'],
+        'create-proposal', 'get-app-setting'],
     });
   } catch (e) {
     return res.status(500).json({ error: String(e?.message || e) });
