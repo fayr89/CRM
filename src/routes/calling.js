@@ -168,12 +168,14 @@ const importRowSchema = z.object({
   phone: z.string().optional().nullable(),
   email: z.string().optional().nullable(),
   city: z.string().optional().nullable(),
+  region: z.string().optional().nullable(),
   industry: z.string().optional().nullable(),
   website: z.string().optional().nullable(),
   inn: z.string().optional().nullable(),
   size_hint: z.string().optional().nullable(),
   position: z.string().optional().nullable(),
   description: z.string().optional().nullable(),
+  priority: z.string().optional().nullable(),
 }).passthrough();
 
 function normalizePhone(p) {
@@ -234,17 +236,25 @@ router.post(
       const dedupKey = phone; // основной ключ дедупа — телефон
       if (seenInFile.has(dedupKey)) { report.skipped_duplicate_in_file++; continue; }
       seenInFile.add(dedupKey);
+      // Нормализуем приоритет: A/B/C, всё остальное → NULL.
+      let priority = null;
+      if (raw.priority != null) {
+        const p = String(raw.priority).trim().toUpperCase();
+        if (p === 'A' || p === 'B' || p === 'C') priority = p;
+      }
       prepared.push({
         first_name: (raw.first_name || raw.company_name || 'Без имени').toString().slice(0, 200),
         last_name: raw.last_name ? String(raw.last_name).slice(0, 200) : null,
         company_name: raw.company_name ? String(raw.company_name).slice(0, 200) : null,
         phone, email, inn,
+        region: raw.region ? String(raw.region).slice(0, 100) : null,
         city: raw.city ? String(raw.city).slice(0, 100) : null,
         industry: raw.industry ? String(raw.industry).slice(0, 100) : null,
         website: raw.website ? String(raw.website).slice(0, 300) : null,
         size_hint: raw.size_hint ? String(raw.size_hint).slice(0, 100) : null,
         position: raw.position ? String(raw.position).slice(0, 100) : null,
         description: raw.description ? String(raw.description).slice(0, 2000) : null,
+        priority,
         raw_import_row: raw,
       });
     }
@@ -278,17 +288,17 @@ router.post(
       const params = [];
       let p = 1;
       for (const r of chunk) {
-        values.push(`($${p++}, $${p++}, $${p++}, $${p++}, $${p++}, $${p++}, $${p++}, $${p++}, $${p++}, $${p++}, $${p++}, $${p++}, $${p++}, $${p++}, 'cold_call', 'new', $${p++}::jsonb)`);
+        values.push(`($${p++}, $${p++}, $${p++}, $${p++}, $${p++}, $${p++}, $${p++}, $${p++}, $${p++}, $${p++}, $${p++}, $${p++}, $${p++}, $${p++}, $${p++}, $${p++}, 'cold_call', 'new', $${p++}::jsonb)`);
         params.push(
           r.first_name, r.last_name, r.company_name, r.phone, r.email, r.inn,
-          r.city, r.industry, r.website, r.size_hint, r.position, r.description,
+          r.region, r.city, r.industry, r.website, r.size_hint, r.position, r.description, r.priority,
           id, campaign.default_project_id, JSON.stringify(r.raw_import_row),
         );
       }
       const sql = `
         INSERT INTO leads
           (first_name, last_name, company_name, phone, email, inn,
-           city, industry, website, size_hint, position, description,
+           region, city, industry, website, size_hint, position, description, priority,
            campaign_id, project_id, source, status, raw_import_row)
         VALUES ${values.join(', ')}
       `;
@@ -384,13 +394,16 @@ router.get(
       where.push(`l.qualification = 'callback'`);
     }
 
+    // Приоритет A=1, B=2, C=3, NULL=99 → A звонят первыми.
+    const priorityOrder = `CASE l.priority WHEN 'A' THEN 1 WHEN 'B' THEN 2 WHEN 'C' THEN 3 ELSE 99 END`;
     const orderBy = scope === 'callbacks'
       ? 'l.next_call_at ASC NULLS LAST'
-      : 'l.next_call_at NULLS FIRST, l.id ASC';
+      : `${priorityOrder}, l.next_call_at NULLS FIRST, l.id ASC`;
 
     const rows = await db.all(
       `SELECT l.id, l.first_name, l.last_name, l.company_name, l.phone, l.email,
-              l.city, l.industry, l.website, l.qualification, l.next_call_at,
+              l.city, l.region, l.industry, l.website, l.qualification, l.next_call_at,
+              l.priority, l.size_hint,
               l.campaign_id, c.name AS campaign_name, c.type AS campaign_type,
               (SELECT MAX(at) FROM call_attempts a WHERE a.lead_id = l.id) AS last_attempt_at,
               (SELECT note FROM call_attempts a WHERE a.lead_id = l.id ORDER BY at DESC LIMIT 1) AS last_note

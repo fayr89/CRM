@@ -182,12 +182,24 @@ function renderLeadCard(container, t, onDone) {
       padding: '12px', marginBottom: '10px',
     },
   });
+  const priorityColors = { A: '#ef4444', B: '#f59e0b', C: '#94a3b8' };
+  const priorityBadge = t.priority
+    ? el('span', {
+        style: {
+          display: 'inline-block', minWidth: '22px', textAlign: 'center',
+          padding: '2px 6px', borderRadius: '4px', fontSize: '11px', fontWeight: '700',
+          background: priorityColors[t.priority] || '#6b7280', color: '#fff', marginRight: '6px',
+        },
+      }, t.priority)
+    : null;
   const title = t.company_name
     ? `${t.company_name}${t.first_name && t.first_name !== 'Без имени' ? ' • ' + t.first_name : ''}`
     : `${t.first_name || 'Без имени'} ${t.last_name || ''}`.trim();
   const meta = [];
+  if (t.region) meta.push(`🗺 ${t.region}`);
   if (t.city) meta.push(`📍 ${t.city}`);
   if (t.industry) meta.push(`🏢 ${t.industry}`);
+  if (t.size_hint) meta.push(`⭐ ${t.size_hint}`);
   if (t.campaign_name) meta.push(`📢 ${t.campaign_name}`);
 
   const lastLine = t.last_attempt_at
@@ -209,7 +221,7 @@ function renderLeadCard(container, t, onDone) {
   card.append(
     el('div', { style: { display: 'flex', justifyContent: 'space-between', gap: '8px', flexWrap: 'wrap' } },
       el('div', {},
-        el('div', { style: { fontWeight: '600', fontSize: '15px' } }, title, ' ', outcomeChip),
+        el('div', { style: { fontWeight: '600', fontSize: '15px' } }, priorityBadge, title, ' ', outcomeChip),
         el('div', { style: { fontSize: '13px', color: '#374151', marginTop: '2px' } }, meta.join(' • ')),
       ),
       el('div', { style: { display: 'flex', gap: '8px', flexWrap: 'wrap' } },
