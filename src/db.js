@@ -373,6 +373,44 @@ CREATE TABLE IF NOT EXISTS app_settings (
   updated_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+-- Обзвонные кампании: список потенциальных клиентов, распределённых на менеджеров.
+--   type='production_order' — ищем заказчиков на наше производство
+--   type='product_sales'    — продаём наши готовые изделия
+-- Скрипт — свободный текст (description); required_points — обязательные пункты
+-- разговора (короткий чек-лист, JSONB массив строк).
+CREATE TABLE IF NOT EXISTS calling_campaigns (
+  id SERIAL PRIMARY KEY,
+  name TEXT NOT NULL,
+  type TEXT NOT NULL DEFAULT 'production_order' CHECK(type IN ('production_order','product_sales')),
+  status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('draft','active','paused','closed')),
+  description TEXT,
+  required_points JSONB DEFAULT '[]'::jsonb,
+  source TEXT,
+  -- FK на projects добавляется в миграции (в SCHEMA-константе projects ещё нет).
+  default_project_id INTEGER,
+  target_calls_per_day INTEGER NOT NULL DEFAULT 30,
+  created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- История попыток звонка. Пишется каждый раз, когда менеджер фиксирует результат.
+-- outcome совпадает по значениям с leads.qualification и после записи попытки
+-- копируется в лид (последнее слово — за последней попыткой).
+CREATE TABLE IF NOT EXISTS call_attempts (
+  id SERIAL PRIMARY KEY,
+  lead_id INTEGER NOT NULL REFERENCES leads(id) ON DELETE CASCADE,
+  user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  outcome TEXT NOT NULL CHECK(outcome IN (
+    'no_answer','not_interested','callback','qualified','meeting_scheduled','converted','dead'
+  )),
+  duration_sec INTEGER,
+  note TEXT,
+  next_call_at TIMESTAMPTZ,
+  covered_points JSONB DEFAULT '[]'::jsonb
+);
 `;
 
 // Reuse the pool across warm serverless invocations.
@@ -456,7 +494,7 @@ export const db = {
 // БАМПАЙ ПРИ КАЖДОМ ДОБАВЛЕНИИ МИГРАЦИИ. Текущие миграции прогоняются
 // только если запись в app_settings.schema_version отличается. Это экономит
 // ~500-2000мс на каждом холодном старте serverless-лямбды.
-const SCHEMA_VERSION = 32;
+const SCHEMA_VERSION = 33;
 
 // Транзиентные ошибки коннекта — стоит ретраить (БД просыпается, сетевой сбой).
 // Явные не-транзиентные (auth, protocol) — ретрай не поможет, лучше сразу упасть.
@@ -1180,6 +1218,79 @@ export async function ensureInitialized() {
       await pool.query('CREATE INDEX IF NOT EXISTS idx_orders_manager_status ON orders(manager_id, status) WHERE manager_id IS NOT NULL');
       // order_items — используется в аналитике/dashboard.
       await pool.query('CREATE INDEX IF NOT EXISTS idx_order_items_order ON order_items(order_id)');
+
+      // ===== Модуль «Обзвон» (SCHEMA_VERSION 33) =====
+      // Таблицы кампаний и попыток — на случай существующих БД (в SCHEMA-константе
+      // уже есть CREATE IF NOT EXISTS для чистых установок).
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS calling_campaigns (
+          id SERIAL PRIMARY KEY,
+          name TEXT NOT NULL,
+          type TEXT NOT NULL DEFAULT 'production_order' CHECK(type IN ('production_order','product_sales')),
+          status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('draft','active','paused','closed')),
+          description TEXT,
+          required_points JSONB DEFAULT '[]'::jsonb,
+          source TEXT,
+          default_project_id INTEGER,
+          target_calls_per_day INTEGER NOT NULL DEFAULT 30,
+          created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+      `);
+      // FK на projects добавляем отдельно — здесь projects точно уже существует.
+      // Идемпотентно: проверяем через pg_constraint.
+      await pool.query(`
+        DO $$ BEGIN
+          IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'calling_campaigns_default_project_fk') THEN
+            ALTER TABLE calling_campaigns
+              ADD CONSTRAINT calling_campaigns_default_project_fk
+              FOREIGN KEY (default_project_id) REFERENCES projects(id) ON DELETE SET NULL;
+          END IF;
+        END $$;
+      `);
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS call_attempts (
+          id SERIAL PRIMARY KEY,
+          lead_id INTEGER NOT NULL REFERENCES leads(id) ON DELETE CASCADE,
+          user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+          at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          outcome TEXT NOT NULL CHECK(outcome IN (
+            'no_answer','not_interested','callback','qualified','meeting_scheduled','converted','dead'
+          )),
+          duration_sec INTEGER,
+          note TEXT,
+          next_call_at TIMESTAMPTZ,
+          covered_points JSONB DEFAULT '[]'::jsonb
+        )
+      `);
+
+      // Флаги пользователя: admin даёт право участвовать в обзвоне (is_active_caller);
+      // сам менеджер может временно поставить «не готов» (calling_ready=false, напр.
+      // ушёл в отпуск); calling_capacity — сколько «в работе» лидов ему даём
+      // одновременно, дефолт 30 (потом настраивается).
+      await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS is_active_caller BOOLEAN NOT NULL DEFAULT FALSE`);
+      await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS calling_ready BOOLEAN NOT NULL DEFAULT TRUE`);
+      await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS calling_capacity INTEGER NOT NULL DEFAULT 30`);
+
+      // Расширения leads под обзвон. Существующие лиды получают NULL — не мешают.
+      // qualification — расширенный статус, дублирует leads.status для UI обзвона
+      // (существующий status используется другими флоу — не трогаем).
+      await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS campaign_id INTEGER REFERENCES calling_campaigns(id) ON DELETE SET NULL`);
+      await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS city TEXT`);
+      await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS industry TEXT`);
+      await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS website TEXT`);
+      await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS inn TEXT`);
+      await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS size_hint TEXT`);
+      await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS raw_import_row JSONB`);
+      await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS qualification TEXT`);
+      await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS next_call_at TIMESTAMPTZ`);
+
+      // Индексы обзвона: горячие запросы — «мои задачи на сегодня» и «история попыток».
+      await pool.query(`CREATE INDEX IF NOT EXISTS idx_leads_owner_qualification ON leads(owner_id, qualification, next_call_at) WHERE campaign_id IS NOT NULL`);
+      await pool.query(`CREATE INDEX IF NOT EXISTS idx_leads_campaign ON leads(campaign_id) WHERE campaign_id IS NOT NULL`);
+      await pool.query(`CREATE INDEX IF NOT EXISTS idx_call_attempts_lead ON call_attempts(lead_id, at DESC)`);
+      await pool.query(`CREATE INDEX IF NOT EXISTS idx_call_attempts_user_at ON call_attempts(user_id, at DESC)`);
 
       // Маркер успешно прогнанных миграций — следующие холодные старты пропустят DDL.
       await pool.query(

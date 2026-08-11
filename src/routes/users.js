@@ -33,6 +33,10 @@ const updateSchema = z.object({
   access_blocks: z.string().optional().nullable(),
   warehouse: z.string().max(100).nullable().optional(),
   warehouses: z.array(z.string().max(100)).nullable().optional(),
+  // Обзвон. is_active_caller/capacity — только админ; calling_ready — сам себе.
+  is_active_caller: z.boolean().optional(),
+  calling_capacity: z.number().int().min(0).max(500).optional(),
+  calling_ready: z.boolean().optional(),
 });
 
 router.use(authenticate);
@@ -45,7 +49,9 @@ router.get(
     const scopeSql = ids === null ? '' : 'WHERE id = ANY(?)';
     const scopeParams = ids === null ? [] : [ids];
     const rows = await db.all(
-      `SELECT id, email, name, role, active, manager_id, access_blocks, warehouse, warehouses, created_at, updated_at
+      `SELECT id, email, name, role, active, manager_id, access_blocks, warehouse, warehouses,
+              is_active_caller, calling_ready, calling_capacity,
+              created_at, updated_at
        FROM users ${scopeSql} ORDER BY id ASC LIMIT ? OFFSET ?`,
       ...scopeParams,
       limit,
@@ -65,7 +71,9 @@ router.get(
     const id = Number(req.params.id);
     if (!(await canAccessUser(req.user, id))) throw Forbidden('Нет доступа к этому пользователю');
     const user = await db.get(
-      `SELECT id, email, name, role, active, manager_id, access_blocks, warehouse, warehouses, created_at, updated_at
+      `SELECT id, email, name, role, active, manager_id, access_blocks, warehouse, warehouses,
+              is_active_caller, calling_ready, calling_capacity,
+              created_at, updated_at
        FROM users WHERE id = ?`,
       id,
     );
@@ -188,12 +196,30 @@ router.patch(
       updates.push('warehouses = ?::jsonb');
       params.push(data.warehouses && data.warehouses.length > 0 ? JSON.stringify(data.warehouses) : null);
     }
+    if (data.is_active_caller !== undefined) {
+      if (!isAdmin) throw Forbidden('Активного обзвонщика назначает только админ');
+      updates.push('is_active_caller = ?');
+      params.push(Boolean(data.is_active_caller));
+    }
+    if (data.calling_capacity !== undefined) {
+      if (!isAdmin) throw Forbidden('Лимит лидов у обзвонщика меняет только админ');
+      updates.push('calling_capacity = ?');
+      params.push(data.calling_capacity);
+    }
+    if (data.calling_ready !== undefined) {
+      // Сам менеджер может ставить «готов/не готов» (напр. ушёл в отпуск).
+      if (!isAdmin && !isSelf) throw Forbidden('Готовность к звонкам меняется своим владельцем');
+      updates.push('calling_ready = ?');
+      params.push(Boolean(data.calling_ready));
+    }
     if (!updates.length) return res.json(existing);
     updates.push('updated_at = NOW()');
     params.push(id);
     await db.run(`UPDATE users SET ${updates.join(', ')} WHERE id = ?`, ...params);
     const updated = await db.get(
-      `SELECT id, email, name, role, active, manager_id, access_blocks, warehouse, created_at, updated_at FROM users WHERE id = ?`,
+      `SELECT id, email, name, role, active, manager_id, access_blocks, warehouse,
+              is_active_caller, calling_ready, calling_capacity,
+              created_at, updated_at FROM users WHERE id = ?`,
       id,
     );
     // Не пишем «password» в details — секрет даже в маркере «изменено» не нужен.

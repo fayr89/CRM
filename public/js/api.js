@@ -352,6 +352,22 @@ export const api = {
   migrateDb: (target_url, opts = {}) => request('POST', '/api/admin/migrate-to',
     { body: { target_url, wipe: !!opts.wipe, dry_run: !!opts.dry_run } }),
 
+  // ============ Обзвон ============
+  callingCampaigns: () => request('GET', '/api/calling/campaigns'),
+  callingCampaign: (id) => request('GET', `/api/calling/campaigns/${id}`),
+  callingCreateCampaign: (body) => request('POST', '/api/calling/campaigns', { body }),
+  callingUpdateCampaign: (id, body) => request('PATCH', `/api/calling/campaigns/${id}`, { body }),
+  callingImport: (id, rows, conflict_mode = 'include') =>
+    request('POST', `/api/calling/campaigns/${id}/import`, { body: { rows, conflict_mode } }),
+  callingDistribute: (id, manager_ids, only_unassigned = true) =>
+    request('POST', `/api/calling/campaigns/${id}/distribute`, { body: { manager_ids, only_unassigned } }),
+  callingMyTasks: (params = {}) => request('GET', '/api/calling/my-tasks', { query: params }),
+  callingLead: (id) => request('GET', `/api/calling/leads/${id}`),
+  callingAttempt: (leadId, body) => request('POST', `/api/calling/leads/${leadId}/attempts`, { body }),
+  callingCampaignStats: (id) => request('GET', `/api/calling/stats/campaign/${id}`),
+  callingManagerStats: (days = 30) => request('GET', '/api/calling/stats/managers', { query: { days } }),
+  callingActiveManagers: () => request('GET', '/api/calling/active-managers'),
+
   // МАХ-бот
   maxMe: () => request('GET', '/api/max/me'),
   maxBindCode: () => request('POST', '/api/max/bind-code'),

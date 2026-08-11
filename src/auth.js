@@ -43,6 +43,20 @@ export async function authenticate(req, _res, next) {
     } catch {
       user.access_blocks = null;
     }
+    // Флаги модуля «Обзвон» — best-effort по той же причине.
+    try {
+      const cf = await db.get(
+        'SELECT is_active_caller, calling_ready, calling_capacity FROM users WHERE id = ?',
+        user.id,
+      );
+      user.is_active_caller = !!cf?.is_active_caller;
+      user.calling_ready = cf?.calling_ready !== false;
+      user.calling_capacity = cf?.calling_capacity ?? 30;
+    } catch {
+      user.is_active_caller = false;
+      user.calling_ready = true;
+      user.calling_capacity = 30;
+    }
     // Имперсонация: только реальный админ может смотреть систему под другой ролью.
     if (payload.act && user.role === 'admin' && payload.act !== 'admin') {
       user.realRole = 'admin';

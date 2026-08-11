@@ -34,6 +34,7 @@ import {
   renderProductionPL,
   renderSupplyDelivery,
 } from './views.js';
+import { renderCalling } from './calling.js';
 
 const root = document.getElementById('app');
 
@@ -56,6 +57,15 @@ const NAV_GROUPS = [
       { hash: '#/contacts', label: 'Контакты', roles: SALES_ROLES, block: 'sales' },
       { hash: '#/companies', label: 'Компании', roles: SALES_ROLES, block: 'sales' },
       { hash: '#/activities', label: 'Задачи', roles: SALES_ROLES, block: 'sales' },
+    ],
+  },
+  {
+    title: '📞 Обзвон',
+    items: [
+      // Раздел «Обзвон»: базы холодных лидов, распределение, звонки менеджеров.
+      // Видимость: admin/rop всегда; остальные роли — только с флагом
+      // is_active_caller (см. navItemVisible → callerOnly).
+      { hash: '#/calling', label: 'Обзвон', roles: [...SALES_ROLES, 'admin', 'rop', 'manager', 'sales'], callerOnly: true },
     ],
   },
   {
@@ -118,7 +128,13 @@ function navItemVisible(user, item) {
     const blocks = user.access_blocks
       ? user.access_blocks.split(',').map((b) => b.trim()).filter(Boolean)
       : ['sales', 'direct'];
-    return blocks.includes(item.block);
+    if (!blocks.includes(item.block)) return false;
+  }
+  // callerOnly: раздел виден только тем, кому админ включил флаг обзвонщика
+  // (admin/rop видят всегда — управляют базой).
+  if (item.callerOnly) {
+    if (user.role === 'admin' || user.role === 'rop') return true;
+    return !!user.is_active_caller;
   }
   return true;
 }
@@ -952,6 +968,7 @@ const ROUTES = {
   '#/production-pl': renderProductionPL,
   '#/ai-inbox': renderAiInbox,
   '#/supply-delivery': renderSupplyDelivery,
+  '#/calling': renderCalling,
 };
 
 // Видимость тест-зоны «Поставки → Доставки» — приходит с бэка (фиче-флаг).
