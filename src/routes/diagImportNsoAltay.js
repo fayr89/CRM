@@ -178,12 +178,19 @@ router.get(
       return res.status(500).json({ step: 'insert-leads', error: e.message, diag, campaignId, inserted_before_error: inserted });
     }
 
-    // Итоги по приоритетам.
-    const byPri = await db.all(
-      `SELECT COALESCE(priority, '?') AS priority, COUNT(*)::int AS n
-       FROM leads WHERE campaign_id = ? GROUP BY 1 ORDER BY 1`,
-      campaignId,
-    );
+    // Итоги по приоритетам. ⚠️ ВАЖНО: db.js-конвертер `?`→`$n` наивно
+    // заменяет ЛЮБЫЕ `?` — литералы тоже. Поэтому в SQL нельзя писать `'?'`
+    // как строку (см. бэклог CLAUDE.md). Использую NULL-safe COALESCE в '-'.
+    let byPri = null;
+    try {
+      byPri = await db.all(
+        `SELECT COALESCE(priority, '-') AS priority, COUNT(*)::int AS n
+         FROM leads WHERE campaign_id = ? GROUP BY 1 ORDER BY 1`,
+        campaignId,
+      );
+    } catch (e) {
+      byPri = { error: e.message };
+    }
 
     res.json({
       ok: true,
