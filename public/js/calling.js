@@ -108,7 +108,7 @@ export async function renderCalling(main) {
 // ============================================================
 async function renderMyTasks(area) {
   const scopeChip = (key, label) => el('button', {
-    class: 'btn', dataset: { k: key }, style: {
+    class: 'btn', 'data-k': key, style: {
       padding: '6px 12px', marginRight: '6px', borderRadius: '20px',
       border: '1px solid #d1d5db', background: '#fff', cursor: 'pointer',
     },
@@ -326,7 +326,7 @@ function openAttemptModal(lead, onDone) {
     pointsWrap.append(el('div', { style: { fontSize: '12px', fontWeight: '600', color: '#374151' } }, 'Отметьте что затронули:'));
     for (const p of pts) {
       pointsWrap.append(el('label', { style: { display: 'block', fontSize: '13px', marginTop: '4px' } },
-        el('input', { type: 'checkbox', dataset: { pt: p } }),
+        el('input', { type: 'checkbox', 'data-pt': p }),
         ' ', p,
       ));
     }
@@ -605,7 +605,7 @@ function openImportModal(campaignId, onDone) {
     mapArea.append(el('div', { style: { fontSize: '12px', fontWeight: '600', marginBottom: '4px' } }, 'Сопоставление колонок:'));
     const mappings = {};
     for (const tf of targetFields) {
-      const sel = el('select', { dataset: { target: tf }, style: { padding: '4px', fontSize: '12px', marginLeft: '6px' } },
+      const sel = el('select', { 'data-target': tf, style: { padding: '4px', fontSize: '12px', marginLeft: '6px' } },
         el('option', { value: '' }, '— не грузить —'),
         ...headers.map((h) => el('option', { value: h, selected: h === guess(tf) }, h)),
       );
@@ -690,7 +690,7 @@ async function openDistributeModal(campaignId, onDone) {
     ));
     for (const m of r.managers) {
       bodyPlaceholder.append(el('label', { style: { display: 'block', padding: '6px 0' } },
-        el('input', { type: 'checkbox', dataset: { mid: m.id }, checked: true }),
+        el('input', { type: 'checkbox', 'data-mid': m.id, checked: true }),
         ` ${m.name} (${m.role})`,
         el('span', { style: { color: '#6b7280', fontSize: '12px' } }, ` — лимит ${m.calling_capacity || 30}`),
         m.calling_ready === false ? el('span', { style: { color: '#ef4444', fontSize: '12px' } }, ' • не готов') : null,
