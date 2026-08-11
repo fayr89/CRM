@@ -44,7 +44,6 @@ import productionReceiptRoutes from './routes/productionReceipt.js';
 import productionSettingsRoutes from './routes/productionSettings.js';
 import supplyDeliveryRoutes from './routes/supplyDelivery.js';
 import callingRoutes from './routes/calling.js';
-import diagImportNsoAltayRoutes from './routes/diagImportNsoAltay.js';
 import bootstrapRoutes from './routes/bootstrap.js';
 import pushRoutes from './routes/push.js';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -177,7 +176,6 @@ export function createApp({ serveStatic = true } = {}) {
   // по умолчанию выключено — не влияет на боевой поток. См. routes/supplyDelivery.js.
   app.use('/api/supply-delivery', supplyDeliveryRoutes);
   app.use('/api/calling', callingRoutes);
-  app.use('/api/diag', diagImportNsoAltayRoutes);
   app.use('/api/bootstrap', bootstrapRoutes);
   app.use('/api/push', pushRoutes);
   app.use((req, res) => {
