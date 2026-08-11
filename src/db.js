@@ -494,7 +494,7 @@ export const db = {
 // БАМПАЙ ПРИ КАЖДОМ ДОБАВЛЕНИИ МИГРАЦИИ. Текущие миграции прогоняются
 // только если запись в app_settings.schema_version отличается. Это экономит
 // ~500-2000мс на каждом холодном старте serverless-лямбды.
-const SCHEMA_VERSION = 34;
+const SCHEMA_VERSION = 35;
 
 // Транзиентные ошибки коннекта — стоит ретраить (БД просыпается, сетевой сбой).
 // Явные не-транзиентные (auth, protocol) — ретрай не поможет, лучше сразу упасть.
@@ -1291,6 +1291,11 @@ export async function ensureInitialized() {
       await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS priority TEXT`);
       // region — регион как отдельное поле (для фильтрации/сортировки).
       await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS region TEXT`);
+      // ЛПР — ФИО, должность, прямой телефон (отдельно от phone ресепшн).
+      // Менеджер получает их у ресепшн и потом уже звонит напрямую.
+      await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS lpr_name TEXT`);
+      await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS lpr_position TEXT`);
+      await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS lpr_phone TEXT`);
 
       // Индексы обзвона: горячие запросы — «мои задачи на сегодня» и «история попыток».
       await pool.query(`CREATE INDEX IF NOT EXISTS idx_leads_owner_qualification ON leads(owner_id, qualification, next_call_at) WHERE campaign_id IS NOT NULL`);

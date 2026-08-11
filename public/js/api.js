@@ -368,6 +368,7 @@ export const api = {
   callingManagerStats: (days = 30) => request('GET', '/api/calling/stats/managers', { query: { days } }),
   callingActiveManagers: () => request('GET', '/api/calling/active-managers'),
   callingCampaignLeads: (id, params = {}) => request('GET', `/api/calling/campaigns/${id}/leads`, { query: params }),
+  callingUpdateLead: (id, body) => request('PATCH', `/api/calling/leads/${id}`, { body }),
 
   // МАХ-бот
   maxMe: () => request('GET', '/api/max/me'),

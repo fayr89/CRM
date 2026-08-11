@@ -403,7 +403,7 @@ router.get(
     const rows = await db.all(
       `SELECT l.id, l.first_name, l.last_name, l.company_name, l.phone, l.email,
               l.city, l.region, l.industry, l.website, l.qualification, l.next_call_at,
-              l.priority, l.size_hint,
+              l.priority, l.size_hint, l.lpr_name, l.lpr_position, l.lpr_phone,
               l.campaign_id, c.name AS campaign_name, c.type AS campaign_type,
               (SELECT MAX(at) FROM call_attempts a WHERE a.lead_id = l.id) AS last_attempt_at,
               (SELECT note FROM call_attempts a WHERE a.lead_id = l.id ORDER BY at DESC LIMIT 1) AS last_note
@@ -461,6 +461,63 @@ router.get(
       id,
     );
     res.json({ lead, attempts });
+  }),
+);
+
+// PATCH /leads/:id — обновить данные контакта.
+// Менеджер правит только свои лиды; admin/rop — любые.
+// Разрешённые поля: контакты (phone/email/website), ЛПР, инн, описание,
+// регион/город/тип/размер. Приоритет и статус НЕ трогаем (это отдельные флоу).
+const leadPatchSchema = z.object({
+  first_name: z.string().max(200).optional().nullable(),
+  last_name: z.string().max(200).optional().nullable(),
+  company_name: z.string().max(200).optional().nullable(),
+  phone: z.string().max(50).optional().nullable(),
+  email: z.string().max(200).optional().nullable().or(z.literal('')),
+  position: z.string().max(100).optional().nullable(),
+  website: z.string().max(300).optional().nullable(),
+  region: z.string().max(100).optional().nullable(),
+  city: z.string().max(100).optional().nullable(),
+  industry: z.string().max(100).optional().nullable(),
+  size_hint: z.string().max(100).optional().nullable(),
+  inn: z.string().max(20).optional().nullable(),
+  description: z.string().max(2000).optional().nullable(),
+  lpr_name: z.string().max(200).optional().nullable(),
+  lpr_position: z.string().max(100).optional().nullable(),
+  lpr_phone: z.string().max(50).optional().nullable(),
+});
+
+router.patch(
+  '/leads/:id',
+  asyncHandler(async (req, res) => {
+    const id = Number(req.params.id);
+    const lead = await db.get(`SELECT * FROM leads WHERE id = ?`, id);
+    if (!lead) throw NotFound('Лид не найден');
+    const isAdmin = req.user.role === 'admin' || req.user.role === 'rop';
+    if (!isAdmin) {
+      requireCallerAccess(req);
+      if (lead.owner_id !== req.user.id) throw Forbidden('Лид назначен другому менеджеру.');
+    }
+    const data = leadPatchSchema.parse(req.body || {});
+    const sets = [];
+    const params = [];
+    for (const [k, v] of Object.entries(data)) {
+      sets.push(`${k} = ?`);
+      params.push(v === '' ? null : v);
+    }
+    if (!sets.length) return res.json(lead);
+    sets.push('updated_at = NOW()');
+    params.push(id);
+    const upd = await db.get(
+      `UPDATE leads SET ${sets.join(', ')} WHERE id = ? RETURNING *`,
+      ...params,
+    );
+    await logAction(req, {
+      action: 'calling.lead_updated',
+      entity_type: 'lead', entity_id: id,
+      details: { changed: Object.keys(data) },
+    });
+    res.json(upd);
   }),
 );
 
@@ -557,6 +614,7 @@ router.get(
     const rows = await db.all(
       `SELECT l.id, l.first_name, l.company_name, l.phone, l.email, l.region, l.city,
               l.industry, l.size_hint, l.priority, l.qualification, l.next_call_at,
+              l.lpr_name, l.lpr_position, l.lpr_phone,
               l.owner_id, u.name AS owner_name,
               (SELECT MAX(at) FROM call_attempts a WHERE a.lead_id = l.id) AS last_attempt_at
        FROM leads l LEFT JOIN users u ON u.id = l.owner_id

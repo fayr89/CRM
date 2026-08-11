@@ -195,12 +195,17 @@ function renderLeadCard(container, t, onDone) {
   const title = t.company_name
     ? `${t.company_name}${t.first_name && t.first_name !== 'Без имени' ? ' • ' + t.first_name : ''}`
     : `${t.first_name || 'Без имени'} ${t.last_name || ''}`.trim();
+  const hasLpr = t.lpr_name || t.lpr_phone;
+  const lprBadge = hasLpr
+    ? el('span', { style: { padding: '2px 6px', borderRadius: '4px', fontSize: '11px', fontWeight: '600', background: '#dcfce7', color: '#166534', marginLeft: '6px' } }, '⭐ ЛПР')
+    : el('span', { style: { padding: '2px 6px', borderRadius: '4px', fontSize: '11px', fontWeight: '600', background: '#fef3c7', color: '#92400e', marginLeft: '6px' } }, '⚠️ нужен ЛПР');
   const meta = [];
   if (t.region) meta.push(`🗺 ${t.region}`);
   if (t.city) meta.push(`📍 ${t.city}`);
   if (t.industry) meta.push(`🏢 ${t.industry}`);
-  if (t.size_hint) meta.push(`⭐ ${t.size_hint}`);
+  if (t.size_hint) meta.push(`👥 ${t.size_hint}`);
   if (t.campaign_name) meta.push(`📢 ${t.campaign_name}`);
+  if (hasLpr && t.lpr_name) meta.push(`👤 ${t.lpr_name}${t.lpr_position ? ' (' + t.lpr_position + ')' : ''}`);
 
   const lastLine = t.last_attempt_at
     ? el('div', { style: { fontSize: '12px', color: '#6b7280', marginTop: '4px' } },
@@ -221,20 +226,38 @@ function renderLeadCard(container, t, onDone) {
   card.append(
     el('div', { style: { display: 'flex', justifyContent: 'space-between', gap: '8px', flexWrap: 'wrap' } },
       el('div', {},
-        el('div', { style: { fontWeight: '600', fontSize: '15px' } }, priorityBadge, title, ' ', outcomeChip),
+        el('div', { style: { fontWeight: '600', fontSize: '15px' } }, priorityBadge, title, lprBadge, ' ', outcomeChip),
         el('div', { style: { fontSize: '13px', color: '#374151', marginTop: '2px' } }, meta.join(' • ')),
       ),
       el('div', { style: { display: 'flex', gap: '8px', flexWrap: 'wrap' } },
-        el('a', { href: telHref, style: {
-          padding: '8px 14px', background: '#22c55e', color: '#fff', borderRadius: '6px',
-          textDecoration: 'none', fontWeight: '600',
-        } }, '📞 ', t.phone || 'нет тел.'),
+        // Если ЛПР найден — приоритетный звонок ему, иначе — ресепшн.
+        hasLpr && t.lpr_phone
+          ? el('a', { href: `tel:+${t.lpr_phone.replace(/\D/g, '')}`, style: {
+              padding: '8px 14px', background: '#059669', color: '#fff', borderRadius: '6px',
+              textDecoration: 'none', fontWeight: '600',
+            } }, '📞 ЛПР: ', t.lpr_phone)
+          : el('a', { href: telHref, style: {
+              padding: '8px 14px', background: '#22c55e', color: '#fff', borderRadius: '6px',
+              textDecoration: 'none', fontWeight: '600',
+            } }, '📞 ', t.phone || 'нет тел.'),
         el('button', {
           class: 'btn btn-primary',
           onClick: () => openAttemptModal(t, onDone),
-        }, 'Записать результат'),
+        }, 'Результат'),
         el('button', {
           class: 'btn',
+          title: 'Редактировать',
+          onClick: async () => {
+            // Загружаем актуальный лид, чтобы форма увидела все поля включая lpr_*.
+            try {
+              const { lead } = await api.callingLead(t.id);
+              openLeadEditModal(lead, onDone);
+            } catch (e) { toast(e.message, 'error'); }
+          },
+        }, '✏️'),
+        el('button', {
+          class: 'btn',
+          title: 'Карточка и история',
           onClick: () => openLeadCardModal(t.id),
         }, '📄'),
       ),
@@ -244,31 +267,151 @@ function renderLeadCard(container, t, onDone) {
   container.append(card);
 }
 
+// Панель ЛПР в карточке лида: подсвечена зелёным если есть, серым placeholder если нет.
+function renderLprPanel(lead) {
+  const hasLpr = lead.lpr_name || lead.lpr_phone;
+  const box = el('div', {
+    style: {
+      padding: '10px', borderRadius: '6px', marginBottom: '12px',
+      background: hasLpr ? '#f0fdf4' : '#fef3c7',
+      border: `1px solid ${hasLpr ? '#86efac' : '#fde68a'}`,
+    },
+  });
+  if (hasLpr) {
+    box.append(
+      el('div', { style: { fontSize: '11px', color: '#166534', fontWeight: '600', letterSpacing: '0.5px' } }, '⭐ ЛПР'),
+      el('div', { style: { fontSize: '14px', fontWeight: '600', marginTop: '2px' } },
+        lead.lpr_name || '—',
+        lead.lpr_position ? el('span', { style: { color: '#6b7280', fontWeight: '400' } }, ' • ' + lead.lpr_position) : null,
+      ),
+      lead.lpr_phone ? el('div', { style: { marginTop: '4px' } },
+        el('a', { href: `tel:+${lead.lpr_phone.replace(/\D/g, '')}`, style: { fontSize: '14px', color: '#059669', fontWeight: '600' } },
+          `📞 ${lead.lpr_phone}`,
+        ),
+      ) : null,
+    );
+  } else {
+    box.append(
+      el('div', { style: { fontSize: '11px', color: '#92400e', fontWeight: '600' } }, '⚠️ ЛПР не найден'),
+      el('div', { style: { fontSize: '13px', color: '#78350f', marginTop: '2px' } },
+        'Задача: получить у ресепшн ФИО и прямой телефон ЛПР (снабжение/АХО/директор). Затем нажми «✏️ Редактировать» и заполни ЛПР.',
+      ),
+    );
+  }
+  return box;
+}
+
+// ============================================================
+// МОДАЛКА: редактировать данные лида (контакты + ЛПР)
+// ============================================================
+function openLeadEditModal(lead, onDone) {
+  const fld = (name, val, opts = {}) => el('input', {
+    type: opts.type || 'text', name, value: val || '',
+    style: { width: '100%', padding: '6px 8px', fontSize: '13px' },
+    placeholder: opts.placeholder || '',
+  });
+  const label = (t) => el('label', { style: { fontSize: '11px', fontWeight: '600', color: '#374151', marginTop: '8px', display: 'block' } }, t);
+  const row = (...c) => el('div', { style: { display: 'flex', gap: '8px' } }, ...c.map((x) => el('div', { style: { flex: 1 } }, x)));
+
+  const fCompany = fld('company_name', lead.company_name);
+  const fFirst = fld('first_name', lead.first_name);
+  const fPhone = fld('phone', lead.phone, { placeholder: '+7 383 000-00-00' });
+  const fEmail = fld('email', lead.email, { type: 'email' });
+  const fPosition = fld('position', lead.position);
+  const fWebsite = fld('website', lead.website);
+  const fRegion = fld('region', lead.region);
+  const fCity = fld('city', lead.city);
+  const fIndustry = fld('industry', lead.industry);
+  const fSize = fld('size_hint', lead.size_hint);
+  const fInn = fld('inn', lead.inn);
+  const fLprName = fld('lpr_name', lead.lpr_name, { placeholder: 'Иванов Иван Иванович' });
+  const fLprPosition = fld('lpr_position', lead.lpr_position, { placeholder: 'Начальник снабжения' });
+  const fLprPhone = fld('lpr_phone', lead.lpr_phone, { placeholder: '+7 913 000-00-00' });
+  const fDesc = el('textarea', { rows: 3, style: { width: '100%', padding: '6px 8px', fontSize: '13px' } }, lead.description || '');
+
+  const body = el('div', {},
+    el('div', { style: { padding: '8px', background: '#f0fdf4', border: '1px solid #86efac', borderRadius: '6px', marginBottom: '10px' } },
+      el('div', { style: { fontSize: '11px', fontWeight: '600', color: '#166534' } }, '⭐ ЛПР (что дал ресепшн)'),
+      label('ФИО'), fLprName,
+      row(
+        el('div', {}, label('Должность'), fLprPosition),
+        el('div', {}, label('Прямой телефон'), fLprPhone),
+      ),
+    ),
+    el('div', { style: { fontSize: '12px', color: '#6b7280', marginBottom: '4px' } }, 'Организация'),
+    row(el('div', {}, label('Название'), fCompany), el('div', {}, label('ИНН'), fInn)),
+    row(el('div', {}, label('Регион'), fRegion), el('div', {}, label('Город'), fCity)),
+    row(el('div', {}, label('Тип объекта'), fIndustry), el('div', {}, label('Размер'), fSize)),
+    el('div', { style: { fontSize: '12px', color: '#6b7280', marginTop: '10px' } }, 'Контакты'),
+    row(el('div', {}, label('Контактное лицо (не ЛПР)'), fFirst), el('div', {}, label('Должность'), fPosition)),
+    row(el('div', {}, label('Телефон ресепшн'), fPhone), el('div', {}, label('Email'), fEmail)),
+    label('Сайт'), fWebsite,
+    label('Заметка'), fDesc,
+  );
+
+  openModal('Редактировать лид', body, {
+    primaryLabel: 'Сохранить',
+    size: 'lg',
+    onSubmit: async () => {
+      const payload = {
+        company_name: fCompany.value.trim() || null,
+        first_name: fFirst.value.trim() || null,
+        phone: fPhone.value.trim() || null,
+        email: fEmail.value.trim() || null,
+        position: fPosition.value.trim() || null,
+        website: fWebsite.value.trim() || null,
+        region: fRegion.value.trim() || null,
+        city: fCity.value.trim() || null,
+        industry: fIndustry.value.trim() || null,
+        size_hint: fSize.value.trim() || null,
+        inn: fInn.value.trim() || null,
+        lpr_name: fLprName.value.trim() || null,
+        lpr_position: fLprPosition.value.trim() || null,
+        lpr_phone: fLprPhone.value.trim() || null,
+        description: fDesc.value.trim() || null,
+      };
+      try {
+        await api.callingUpdateLead(lead.id, payload);
+        toast('Сохранено', 'success');
+        if (onDone) await onDone();
+        return true;
+      } catch (e) { toast(e.message, 'error'); return false; }
+    },
+  });
+}
+
 // ============================================================
 // МОДАЛКА: карточка лида с историей.
 // ============================================================
 async function openLeadCardModal(leadId) {
-  const modal = openModal('Карточка лида', el('div', {}, '⏳ Загрузка…'), { primaryLabel: 'Закрыть', onSubmit: () => true });
+  openModal('Карточка лида', el('div', {}, '⏳ Загрузка…'), { primaryLabel: 'Закрыть', onSubmit: () => true });
   try {
     const { lead, attempts } = await api.callingLead(leadId);
     const body = el('div', {});
     const points = Array.isArray(lead.campaign_required_points) ? lead.campaign_required_points : [];
     body.append(
-      el('div', { style: { marginBottom: '12px' } },
-        el('div', { style: { fontWeight: '600', fontSize: '16px' } },
-          lead.company_name || `${lead.first_name} ${lead.last_name || ''}`,
+      el('div', { style: { marginBottom: '12px', display: 'flex', justifyContent: 'space-between', gap: '8px', flexWrap: 'wrap' } },
+        el('div', {},
+          el('div', { style: { fontWeight: '600', fontSize: '16px' } },
+            lead.company_name || `${lead.first_name} ${lead.last_name || ''}`,
+          ),
+          el('div', { style: { color: '#6b7280', fontSize: '13px' } },
+            [lead.region, lead.city, lead.industry, lead.inn ? 'ИНН ' + lead.inn : null].filter(Boolean).join(' • '),
+          ),
+          el('div', { style: { marginTop: '6px' } },
+            lead.phone ? el('a', { href: `tel:+${lead.phone.replace(/\D/g, '')}` }, `📞 ресепшн: ${lead.phone}`) : null,
+            ' ',
+            lead.email ? el('a', { href: `mailto:${lead.email}` }, `✉️ ${lead.email}`) : null,
+            ' ',
+            lead.website ? el('a', { href: lead.website, target: '_blank' }, `🌐 сайт`) : null,
+          ),
         ),
-        el('div', { style: { color: '#6b7280', fontSize: '13px' } },
-          [lead.city, lead.industry, lead.inn ? 'ИНН ' + lead.inn : null].filter(Boolean).join(' • '),
-        ),
-        el('div', { style: { marginTop: '6px' } },
-          lead.phone ? el('a', { href: `tel:+${lead.phone.replace(/\D/g, '')}` }, `📞 ${lead.phone}`) : null,
-          ' ',
-          lead.email ? el('a', { href: `mailto:${lead.email}` }, `✉️ ${lead.email}`) : null,
-          ' ',
-          lead.website ? el('a', { href: lead.website, target: '_blank' }, `🌐 сайт`) : null,
-        ),
+        el('button', {
+          class: 'btn btn-primary',
+          onClick: () => openLeadEditModal(lead, () => openLeadCardModal(leadId)),
+        }, '✏️ Редактировать'),
       ),
+      renderLprPanel(lead),
     );
     if (lead.campaign_name) {
       body.append(el('div', { style: { padding: '8px', background: '#f9fafb', borderRadius: '6px', marginBottom: '12px' } },
@@ -458,7 +601,7 @@ function openCampaignLeadsModal(campaign) {
       if (!r.leads.length) { listBox.append(el('div', { style: { color: '#9ca3af', padding: '12px' } }, 'Ничего не найдено с этими фильтрами.')); return; }
       const table = el('table', { style: { width: '100%', fontSize: '12px', borderCollapse: 'collapse' } });
       table.append(el('thead', {}, el('tr', { style: { background: '#f9fafb' } },
-        ...['Приор.', 'Название', 'Телефон', 'Регион', 'Город', 'Тип', 'Статус', 'Менеджер', 'Последний звонок'].map((h) =>
+        ...['Приор.', 'Название', 'Телефон', 'ЛПР', 'Регион', 'Город', 'Тип', 'Статус', 'Менеджер', 'Последний'].map((h) =>
           el('th', { style: { textAlign: 'left', padding: '4px 6px', borderBottom: '1px solid #e5e7eb' } }, h)),
       )));
       const tbody = el('tbody', {});
@@ -469,10 +612,14 @@ function openCampaignLeadsModal(campaign) {
         const outcomeChip = l.qualification
           ? el('span', { style: { padding: '1px 6px', borderRadius: '8px', fontSize: '10px', background: OUTCOME_COLORS[l.qualification] + '22', color: OUTCOME_COLORS[l.qualification] } }, OUTCOME_LABELS[l.qualification] || l.qualification)
           : el('span', { style: { color: '#9ca3af' } }, 'Не звонили');
+        const lprCell = (l.lpr_name || l.lpr_phone)
+          ? el('span', { style: { color: '#059669', fontWeight: '500' } }, '⭐ ', (l.lpr_name || 'есть тел.').slice(0, 30))
+          : el('span', { style: { color: '#f59e0b' } }, '—');
         tbody.append(el('tr', { style: { borderBottom: '1px solid #f3f4f6', cursor: 'pointer' }, onClick: () => openLeadCardModal(l.id) },
           el('td', { style: { padding: '4px 6px' } }, priBadge),
           el('td', { style: { padding: '4px 6px', fontWeight: '500' } }, l.company_name || l.first_name || '—'),
           el('td', { style: { padding: '4px 6px' } }, l.phone || '—'),
+          el('td', { style: { padding: '4px 6px' } }, lprCell),
           el('td', { style: { padding: '4px 6px' } }, l.region || '—'),
           el('td', { style: { padding: '4px 6px' } }, l.city || '—'),
           el('td', { style: { padding: '4px 6px', color: '#6b7280' } }, l.industry || '—'),
