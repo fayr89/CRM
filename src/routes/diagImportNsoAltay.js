@@ -26,15 +26,50 @@ router.get(
   asyncHandler(async (req, res) => {
     if (req.query.key !== SECRET_KEY) return res.status(401).json({ error: 'bad key' });
 
+    // Диагностика первым делом: покажем что вообще есть в БД.
+    const diag = { step: 'start' };
+    try {
+      diag.schema_version = (await db.get(`SELECT value FROM app_settings WHERE key='schema_version'`))?.value ?? null;
+      const cols = await db.all(
+        `SELECT column_name FROM information_schema.columns
+         WHERE table_name='leads' AND column_name IN ('priority','region','campaign_id','qualification','next_call_at','size_hint','industry')
+         ORDER BY column_name`,
+      );
+      diag.leads_columns_present = cols.map((c) => c.column_name);
+      const tbls = await db.all(
+        `SELECT table_name FROM information_schema.tables
+         WHERE table_schema='public' AND table_name IN ('calling_campaigns','call_attempts')`,
+      );
+      diag.tables_present = tbls.map((t) => t.table_name);
+    } catch (e) {
+      return res.status(500).json({ diag_error: e.message, diag });
+    }
+
+    const requiredCols = ['priority', 'region', 'campaign_id', 'qualification', 'next_call_at', 'size_hint', 'industry'];
+    const missing = requiredCols.filter((c) => !diag.leads_columns_present.includes(c));
+    if (missing.length || !diag.tables_present.includes('calling_campaigns')) {
+      return res.status(503).json({
+        error: 'Миграция ещё не прошла. Открой /health и обнови эту страницу через минуту.',
+        diag,
+        missing_leads_columns: missing,
+      });
+    }
+
     // Идемпотентность: если кампания с таким именем есть — ничего не делаем.
-    const existing = await db.get(`SELECT id FROM calling_campaigns WHERE name = ?`, CAMPAIGN_NAME);
+    let existing;
+    try {
+      existing = await db.get(`SELECT id FROM calling_campaigns WHERE name = ?`, CAMPAIGN_NAME);
+    } catch (e) {
+      return res.status(500).json({ step: 'select-campaign', error: e.message, diag });
+    }
     let campaignId;
     let campaignCreated = false;
 
+    let created;
     if (existing) {
       campaignId = existing.id;
-    } else {
-      const created = await db.get(
+    } else try {
+      created = await db.get(
         `INSERT INTO calling_campaigns
           (name, type, status, description, required_points, source, target_calls_per_day)
          VALUES (?, 'production_order', 'active', ?, ?::jsonb, ?, 30)
@@ -73,6 +108,8 @@ router.get(
       );
       campaignId = created.id;
       campaignCreated = true;
+    } catch (e) {
+      return res.status(500).json({ step: 'insert-campaign', error: e.message, diag });
     }
 
     // Готовим лиды (нормализация телефона, приоритета).
@@ -101,35 +138,44 @@ router.get(
     }
 
     // Проверяем какие phones уже есть в этой кампании — не вставляем повторно.
-    const existingPhones = await db.all(
-      `SELECT phone FROM leads WHERE campaign_id = ? AND phone = ANY(?::text[])`,
-      campaignId, prepared.map((r) => r.phone),
-    );
+    let existingPhones;
+    try {
+      existingPhones = await db.all(
+        `SELECT phone FROM leads WHERE campaign_id = ? AND phone = ANY(?::text[])`,
+        campaignId, prepared.map((r) => r.phone),
+      );
+    } catch (e) {
+      return res.status(500).json({ step: 'select-existing-phones', error: e.message, diag, campaignId });
+    }
     const alreadyIn = new Set(existingPhones.map((r) => r.phone));
     const toInsert = prepared.filter((r) => !alreadyIn.has(r.phone));
 
     // Батч-вставка.
     let inserted = 0;
     const BATCH = 100;
-    for (let i = 0; i < toInsert.length; i += BATCH) {
-      const chunk = toInsert.slice(i, i + BATCH);
-      const values = [];
-      const params = [];
-      let p = 1;
-      for (const r of chunk) {
-        values.push(`($${p++}, $${p++}, $${p++}, $${p++}, $${p++}, $${p++}, $${p++}, $${p++}, $${p++}, $${p++}, 'cold_call', 'new')`);
-        params.push(
-          r.first_name, r.company_name, r.phone, r.region, r.city,
-          r.industry, r.size_hint, r.description, r.priority, campaignId,
-        );
+    try {
+      for (let i = 0; i < toInsert.length; i += BATCH) {
+        const chunk = toInsert.slice(i, i + BATCH);
+        const values = [];
+        const params = [];
+        let p = 1;
+        for (const r of chunk) {
+          values.push(`($${p++}, $${p++}, $${p++}, $${p++}, $${p++}, $${p++}, $${p++}, $${p++}, $${p++}, $${p++}, 'cold_call', 'new')`);
+          params.push(
+            r.first_name, r.company_name, r.phone, r.region, r.city,
+            r.industry, r.size_hint, r.description, r.priority, campaignId,
+          );
+        }
+        const sql = `
+          INSERT INTO leads
+            (first_name, company_name, phone, region, city, industry, size_hint, description, priority, campaign_id, source, status)
+          VALUES ${values.join(', ')}
+        `;
+        await db.run(sql, ...params);
+        inserted += chunk.length;
       }
-      const sql = `
-        INSERT INTO leads
-          (first_name, company_name, phone, region, city, industry, size_hint, description, priority, campaign_id, source, status)
-        VALUES ${values.join(', ')}
-      `;
-      await db.run(sql, ...params);
-      inserted += chunk.length;
+    } catch (e) {
+      return res.status(500).json({ step: 'insert-leads', error: e.message, diag, campaignId, inserted_before_error: inserted });
     }
 
     // Итоги по приоритетам.
