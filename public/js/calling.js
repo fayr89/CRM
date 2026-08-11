@@ -770,7 +770,10 @@ async function renderCallers(area) {
   const users = r.data || r.items || r.users || [];
 
   for (const u of users) {
-    if (u.role === 'admin' || u.role === 'director_prod' || u.role === 'aus') continue;
+    // Раньше здесь отфильтровывал admin/director_prod/aus — но админ САМ хочет
+    // быть обзвонщиком (иначе не попадёт в round-robin distribute).
+    // Оставляю только чисто-производственные роли, где обзвон бессмысленен.
+    if (u.role === 'director_prod' || u.role === 'foreman' || u.role === 'master' || u.role === 'supply') continue;
     const activeChk = el('input', { type: 'checkbox', checked: !!u.is_active_caller });
     const capInput = el('input', { type: 'number', min: 0, max: 500, value: u.calling_capacity || 30, style: { width: '70px', padding: '4px' } });
     const save = async (payload) => {
