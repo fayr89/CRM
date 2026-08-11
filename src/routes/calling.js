@@ -522,6 +522,57 @@ router.post(
   }),
 );
 
+// ============ СОДЕРЖИМОЕ КАМПАНИИ (список лидов) ============
+
+// GET /campaigns/:id/leads?priority=A&owner_id=5&qualification=no_answer&limit=100&offset=0
+// Только admin/rop видят всё; менеджер — только свои лиды.
+router.get(
+  '/campaigns/:id/leads',
+  asyncHandler(async (req, res) => {
+    const id = Number(req.params.id);
+    const campaign = await db.get(`SELECT id, name FROM calling_campaigns WHERE id = ?`, id);
+    if (!campaign) throw NotFound('Кампания не найдена');
+    const isAdmin = req.user.role === 'admin' || req.user.role === 'rop';
+    if (!isAdmin) requireCallerAccess(req);
+
+    const where = ['l.campaign_id = ?'];
+    const params = [id];
+    if (!isAdmin) { where.push('l.owner_id = ?'); params.push(req.user.id); }
+    if (req.query.priority) { where.push('l.priority = ?'); params.push(String(req.query.priority)); }
+    if (req.query.qualification === 'not_contacted') {
+      where.push('l.qualification IS NULL');
+    } else if (req.query.qualification) {
+      where.push('l.qualification = ?'); params.push(String(req.query.qualification));
+    }
+    if (req.query.owner_id === 'unassigned') {
+      where.push('l.owner_id IS NULL');
+    } else if (req.query.owner_id) {
+      where.push('l.owner_id = ?'); params.push(Number(req.query.owner_id));
+    }
+    const limit = Math.min(500, Math.max(1, Number(req.query.limit) || 100));
+    const offset = Math.max(0, Number(req.query.offset) || 0);
+
+    const priorityOrder = `CASE l.priority WHEN 'A' THEN 1 WHEN 'B' THEN 2 WHEN 'C' THEN 3 ELSE 99 END`;
+
+    const rows = await db.all(
+      `SELECT l.id, l.first_name, l.company_name, l.phone, l.email, l.region, l.city,
+              l.industry, l.size_hint, l.priority, l.qualification, l.next_call_at,
+              l.owner_id, u.name AS owner_name,
+              (SELECT MAX(at) FROM call_attempts a WHERE a.lead_id = l.id) AS last_attempt_at
+       FROM leads l LEFT JOIN users u ON u.id = l.owner_id
+       WHERE ${where.join(' AND ')}
+       ORDER BY ${priorityOrder}, l.id ASC
+       LIMIT ? OFFSET ?`,
+      ...params, limit, offset,
+    );
+    const total = await db.get(
+      `SELECT COUNT(*)::int AS n FROM leads l WHERE ${where.join(' AND ')}`,
+      ...params,
+    );
+    res.json({ campaign, leads: rows, total: total.n, limit, offset });
+  }),
+);
+
 // ============ АНАЛИТИКА ============
 
 // GET /stats/campaign/:id — сводка кампании.

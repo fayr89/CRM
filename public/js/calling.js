@@ -396,6 +396,7 @@ async function renderCampaigns(area) {
           ),
         ),
         el('div', { style: { display: 'flex', gap: '6px', flexWrap: 'wrap' } },
+          el('button', { class: 'btn btn-primary', onClick: () => openCampaignLeadsModal(c) }, '👁 Открыть'),
           el('button', { class: 'btn', onClick: () => openImportModal(c.id, () => renderCampaigns(area)) }, '📥 Импорт'),
           el('button', { class: 'btn', onClick: () => openDistributeModal(c.id, () => renderCampaigns(area)) }, '👥 Распределить'),
           el('button', { class: 'btn', onClick: () => openCampaignForm(c, () => renderCampaigns(area)) }, '✏️ Редактировать'),
@@ -403,6 +404,103 @@ async function renderCampaigns(area) {
       ),
     ));
   }
+}
+
+// ============================================================
+// МОДАЛКА: содержимое кампании (список лидов + фильтры)
+// ============================================================
+function openCampaignLeadsModal(campaign) {
+  const priorityColors = { A: '#ef4444', B: '#f59e0b', C: '#94a3b8' };
+  const filterPri = el('select', { style: { padding: '4px', fontSize: '13px' } },
+    el('option', { value: '' }, 'Все приоритеты'),
+    el('option', { value: 'A' }, 'A (крупные)'),
+    el('option', { value: 'B' }, 'B (средние)'),
+    el('option', { value: 'C' }, 'C (малые)'),
+  );
+  const filterQual = el('select', { style: { padding: '4px', fontSize: '13px' } },
+    el('option', { value: '' }, 'Все статусы'),
+    el('option', { value: 'not_contacted' }, 'Не звонили'),
+    el('option', { value: 'no_answer' }, '📵 Не ответил'),
+    el('option', { value: 'callback' }, '⏰ Callback'),
+    el('option', { value: 'qualified' }, '✅ Заинтересован'),
+    el('option', { value: 'meeting_scheduled' }, '📅 Встреча'),
+    el('option', { value: 'not_interested' }, '❌ Отказ'),
+    el('option', { value: 'converted' }, '💰 Готов покупать'),
+    el('option', { value: 'dead' }, '⚰️ Мёртвый'),
+  );
+  const filterOwner = el('select', { style: { padding: '4px', fontSize: '13px' } },
+    el('option', { value: '' }, 'Все менеджеры'),
+    el('option', { value: 'unassigned' }, 'Не назначены'),
+  );
+  const summary = el('div', { style: { fontSize: '13px', color: '#6b7280', marginBottom: '8px' } });
+  const listBox = el('div', { style: { maxHeight: '55vh', overflowY: 'auto' } });
+
+  const body = el('div', {},
+    el('div', { style: { display: 'flex', gap: '8px', flexWrap: 'wrap', marginBottom: '8px' } },
+      filterPri, filterQual, filterOwner,
+    ),
+    summary,
+    listBox,
+  );
+
+  async function load() {
+    listBox.innerHTML = '⏳';
+    const params = {};
+    if (filterPri.value) params.priority = filterPri.value;
+    if (filterQual.value) params.qualification = filterQual.value;
+    if (filterOwner.value) params.owner_id = filterOwner.value;
+    params.limit = 200;
+    try {
+      const r = await api.callingCampaignLeads(campaign.id, params);
+      clear(listBox);
+      clear(summary);
+      summary.append(`Найдено: ${r.total}. Показано первые ${r.leads.length}.`);
+      if (!r.leads.length) { listBox.append(el('div', { style: { color: '#9ca3af', padding: '12px' } }, 'Ничего не найдено с этими фильтрами.')); return; }
+      const table = el('table', { style: { width: '100%', fontSize: '12px', borderCollapse: 'collapse' } });
+      table.append(el('thead', {}, el('tr', { style: { background: '#f9fafb' } },
+        ...['Приор.', 'Название', 'Телефон', 'Регион', 'Город', 'Тип', 'Статус', 'Менеджер', 'Последний звонок'].map((h) =>
+          el('th', { style: { textAlign: 'left', padding: '4px 6px', borderBottom: '1px solid #e5e7eb' } }, h)),
+      )));
+      const tbody = el('tbody', {});
+      for (const l of r.leads) {
+        const priBadge = l.priority
+          ? el('span', { style: { display: 'inline-block', minWidth: '18px', textAlign: 'center', padding: '1px 4px', borderRadius: '3px', fontSize: '10px', fontWeight: '700', background: priorityColors[l.priority] || '#6b7280', color: '#fff' } }, l.priority)
+          : '—';
+        const outcomeChip = l.qualification
+          ? el('span', { style: { padding: '1px 6px', borderRadius: '8px', fontSize: '10px', background: OUTCOME_COLORS[l.qualification] + '22', color: OUTCOME_COLORS[l.qualification] } }, OUTCOME_LABELS[l.qualification] || l.qualification)
+          : el('span', { style: { color: '#9ca3af' } }, 'Не звонили');
+        tbody.append(el('tr', { style: { borderBottom: '1px solid #f3f4f6', cursor: 'pointer' }, onClick: () => openLeadCardModal(l.id) },
+          el('td', { style: { padding: '4px 6px' } }, priBadge),
+          el('td', { style: { padding: '4px 6px', fontWeight: '500' } }, l.company_name || l.first_name || '—'),
+          el('td', { style: { padding: '4px 6px' } }, l.phone || '—'),
+          el('td', { style: { padding: '4px 6px' } }, l.region || '—'),
+          el('td', { style: { padding: '4px 6px' } }, l.city || '—'),
+          el('td', { style: { padding: '4px 6px', color: '#6b7280' } }, l.industry || '—'),
+          el('td', { style: { padding: '4px 6px' } }, outcomeChip),
+          el('td', { style: { padding: '4px 6px', color: '#6b7280' } }, l.owner_name || '—'),
+          el('td', { style: { padding: '4px 6px', fontSize: '11px', color: '#9ca3af' } }, l.last_attempt_at ? fmtDateTime(l.last_attempt_at) : '—'),
+        ));
+      }
+      table.append(tbody);
+      listBox.append(table);
+    } catch (e) {
+      clear(listBox);
+      listBox.append(el('div', { style: { color: '#ef4444' } }, `Ошибка: ${e.message}`));
+    }
+  }
+
+  filterPri.addEventListener('change', load);
+  filterQual.addEventListener('change', load);
+  filterOwner.addEventListener('change', load);
+
+  openModal(`📢 ${campaign.name}`, body, { primaryLabel: 'Закрыть', onSubmit: () => true, size: 'wide' });
+
+  // Загрузка списка менеджеров для фильтра — параллельно.
+  api.callingActiveManagers().then((r) => {
+    for (const m of (r.managers || [])) filterOwner.append(el('option', { value: m.id }, m.name));
+  }).catch(() => {});
+
+  load();
 }
 
 function openCampaignForm(existing, onDone) {
