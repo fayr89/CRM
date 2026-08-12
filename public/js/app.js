@@ -35,7 +35,7 @@ import {
   renderSupplyDelivery,
 } from './views.js';
 import { renderCalling } from './calling.js';
-import { renderProductionRequests } from './productionRequests.js';
+import { renderProductionRequests, renderProductionCalendar } from './productionRequests.js';
 
 const root = document.getElementById('app');
 
@@ -99,6 +99,7 @@ const NAV_GROUPS = [
       { hash: '#/production-orders', label: '📅 План производства', roles: ['admin', 'director_prod', 'foreman', 'master'] },
       { hash: '#/contracts', label: '📄 Подряды', roles: ['admin', 'director_prod', 'foreman', 'master'] },
       { hash: '#/production-requests', label: '🧮 Просчёт заявок', roles: ['admin', 'rop', 'director_prod', 'foreman'] },
+      { hash: '#/production-calendar', label: '🗓 Календарь сроков', roles: ['admin', 'rop', 'director_prod', 'foreman', 'master'] },
       { hash: '#/production-pl', label: '💰 Доходность', roles: ['admin', 'director_prod'] },
     ],
   },
@@ -976,6 +977,7 @@ const ROUTES = {
   '#/supply-delivery': renderSupplyDelivery,
   '#/calling': renderCalling,
   '#/production-requests': renderProductionRequests,
+  '#/production-calendar': renderProductionCalendar,
 };
 
 // Видимость тест-зоны «Поставки → Доставки» — приходит с бэка (фиче-флаг).

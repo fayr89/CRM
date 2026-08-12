@@ -494,7 +494,7 @@ export const db = {
 // БАМПАЙ ПРИ КАЖДОМ ДОБАВЛЕНИИ МИГРАЦИИ. Текущие миграции прогоняются
 // только если запись в app_settings.schema_version отличается. Это экономит
 // ~500-2000мс на каждом холодном старте serverless-лямбды.
-const SCHEMA_VERSION = 36;
+const SCHEMA_VERSION = 37;
 
 // Транзиентные ошибки коннекта — стоит ретраить (БД просыпается, сетевой сбой).
 // Явные не-транзиентные (auth, protocol) — ретрай не поможет, лучше сразу упасть.
@@ -1369,6 +1369,62 @@ export async function ensureInitialized() {
       await pool.query(`CREATE INDEX IF NOT EXISTS idx_prod_requests_status ON production_requests(status, created_at DESC)`);
       await pool.query(`CREATE INDEX IF NOT EXISTS idx_prod_request_files_request ON production_request_files(request_id)`);
       await pool.query(`CREATE INDEX IF NOT EXISTS idx_prod_request_history_request ON production_request_price_history(request_id, at DESC)`);
+
+      // ===== Расширение просчётов (SCHEMA_VERSION 37) =====
+      // 1. Новый статус awaiting_payment (approved → awaiting_payment → in_progress).
+      //    Плюс поле production_deadline (утверждается производством после согласования).
+      // 2. visibility на файлах: 'all' (видят все) | 'production_only' (только производство/admin).
+      // 3. production_request_messages — чат внутри заявки.
+
+      // Пересобираем CHECK-constraint на status (в PG нельзя изменить CHECK, только drop+add).
+      await pool.query(`ALTER TABLE production_requests DROP CONSTRAINT IF EXISTS production_requests_status_check`);
+      await pool.query(`
+        ALTER TABLE production_requests ADD CONSTRAINT production_requests_status_check
+        CHECK(status IN (
+          'draft','awaiting_cost','priced','negotiating','approved','awaiting_payment',
+          'in_progress','fulfilled','paid','cancelled','rejected'
+        ))
+      `);
+      await pool.query(`ALTER TABLE production_requests ADD COLUMN IF NOT EXISTS production_deadline TIMESTAMPTZ`);
+      await pool.query(`ALTER TABLE production_requests ADD COLUMN IF NOT EXISTS deadline_set_by INTEGER REFERENCES users(id) ON DELETE SET NULL`);
+      await pool.query(`ALTER TABLE production_requests ADD COLUMN IF NOT EXISTS deadline_set_at TIMESTAMPTZ`);
+      await pool.query(`ALTER TABLE production_requests ADD COLUMN IF NOT EXISTS payment_received_at TIMESTAMPTZ`);
+      await pool.query(`ALTER TABLE production_requests ADD COLUMN IF NOT EXISTS payment_marked_by INTEGER REFERENCES users(id) ON DELETE SET NULL`);
+
+      // history: расширяем список событий.
+      await pool.query(`ALTER TABLE production_request_price_history DROP CONSTRAINT IF EXISTS production_request_price_history_event_check`);
+      await pool.query(`
+        ALTER TABLE production_request_price_history ADD CONSTRAINT production_request_price_history_event_check
+        CHECK(event IN (
+          'initial_price','manager_counter','production_reprice','rejected','cancelled',
+          'approved','deadline_set','payment_received','started','fulfilled','paid'
+        ))
+      `);
+
+      // Файлы: visibility.
+      await pool.query(`ALTER TABLE production_request_files ADD COLUMN IF NOT EXISTS visibility TEXT NOT NULL DEFAULT 'all'`);
+      await pool.query(`ALTER TABLE production_request_files DROP CONSTRAINT IF EXISTS production_request_files_visibility_check`);
+      await pool.query(`
+        ALTER TABLE production_request_files ADD CONSTRAINT production_request_files_visibility_check
+        CHECK(visibility IN ('all','production_only'))
+      `);
+
+      // Чат в заявке. Автор — пользователь; text — сообщение; kind — тип
+      // ('message' — обычное, 'system' — системное про смену статуса, автогенерируемое).
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS production_request_messages (
+          id SERIAL PRIMARY KEY,
+          request_id INTEGER NOT NULL REFERENCES production_requests(id) ON DELETE CASCADE,
+          user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+          text TEXT NOT NULL,
+          kind TEXT NOT NULL DEFAULT 'message' CHECK(kind IN ('message','system')),
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+      `);
+      await pool.query(`CREATE INDEX IF NOT EXISTS idx_prod_request_messages_request ON production_request_messages(request_id, created_at ASC)`);
+
+      // Дополнительный индекс на updated_at для быстрого сортированного списка.
+      await pool.query(`CREATE INDEX IF NOT EXISTS idx_prod_requests_updated ON production_requests(updated_at DESC)`);
 
       // Маркер успешно прогнанных миграций — следующие холодные старты пропустят DDL.
       await pool.query(

@@ -17,11 +17,12 @@ import { authenticate } from '../auth.js';
 import { db } from '../db.js';
 import { BadRequest, Forbidden, NotFound, asyncHandler } from '../errors.js';
 import { logAction } from '../services/audit.js';
+import { notify } from '../services/notifications.js';
 
 const router = Router();
 router.use(authenticate);
 
-const STATUSES = ['draft', 'awaiting_cost', 'priced', 'negotiating', 'approved', 'in_progress', 'fulfilled', 'paid', 'cancelled', 'rejected'];
+const STATUSES = ['draft', 'awaiting_cost', 'priced', 'negotiating', 'approved', 'awaiting_payment', 'in_progress', 'fulfilled', 'paid', 'cancelled', 'rejected'];
 const PROD_ROLES = ['director_prod', 'foreman'];
 const MANAGER_ROLES = ['manager', 'sales', 'rop'];
 
@@ -67,16 +68,21 @@ router.get(
     }
     const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
     const rows = await db.all(
-      `SELECT r.*, m.name AS manager_name, c.first_name AS contact_first, c.last_name AS contact_last,
+      `SELECT r.id, r.title, r.status, r.manager_id, r.contact_id, r.company_id,
+              r.client_price, r.cost_price, r.reward_type, r.reward_value, r.reward_computed,
+              r.deadline, r.production_deadline, r.created_at, r.updated_at,
+              m.name AS manager_name,
+              c.first_name AS contact_first, c.last_name AS contact_last,
               co.name AS company_name,
-              (SELECT COUNT(*)::int FROM production_request_files f WHERE f.request_id = r.id) AS files_count
+              (SELECT COUNT(*)::int FROM production_request_files f WHERE f.request_id = r.id) AS files_count,
+              (SELECT COUNT(*)::int FROM production_request_messages msg WHERE msg.request_id = r.id) AS messages_count
        FROM production_requests r
        LEFT JOIN users m ON m.id = r.manager_id
        LEFT JOIN contacts c ON c.id = r.contact_id
        LEFT JOIN companies co ON co.id = r.company_id
        ${whereSql}
        ORDER BY r.updated_at DESC
-       LIMIT 500`,
+       LIMIT 100`,
       ...params,
     );
     res.json({ requests: rows.map((r) => sanitizeRequest(r, u)) });
@@ -106,8 +112,13 @@ router.get(
     if (!isFullAccess(u) && row.manager_id !== u.id) {
       throw Forbidden('Заявка не ваша');
     }
+    // Файлы: менеджер не видит production_only.
+    const canSeeAllFiles = isFullAccess(u);
     const files = await db.all(
-      `SELECT id, filename, mime, size_bytes, uploaded_at FROM production_request_files WHERE request_id = ? ORDER BY id`,
+      `SELECT id, filename, mime, size_bytes, uploaded_at, visibility, uploaded_by
+       FROM production_request_files
+       WHERE request_id = ?${canSeeAllFiles ? '' : " AND visibility = 'all'"}
+       ORDER BY id`,
       id,
     );
     const history = await db.all(
@@ -235,6 +246,7 @@ router.post('/:id/submit', asyncHandler(async (req, res) => {
     id,
   );
   await logAction(req, { action: 'production_request.submit', entity_type: 'production_request', entity_id: id });
+  await notifyProduction(id, upd, 'submit', u).catch(() => {});
   res.json(sanitizeRequest(upd, u));
 }));
 
@@ -278,6 +290,7 @@ router.post('/:id/price', asyncHandler(async (req, res) => {
     return r;
   });
   await logAction(req, { action: 'production_request.priced', entity_type: 'production_request', entity_id: id, details: { event } });
+  await notifyManagerOfRequest(id, upd, `Просчёт готов. Цена клиенту: ${data.client_price} ₽, ваше вознаграждение: ${upd.reward_computed} ₽`, u).catch(() => {});
   res.json(sanitizeRequest(upd, u));
 }));
 
@@ -322,9 +335,84 @@ router.post('/:id/approve', asyncHandler(async (req, res) => {
       `INSERT INTO production_request_price_history (request_id, event, client_price, reward_computed, actor_id) VALUES (?, 'approved', ?, ?, ?)`,
       id, r.client_price, r.reward_computed, u.id,
     );
+    await tx.run(
+      `INSERT INTO production_request_messages (request_id, user_id, kind, text)
+       VALUES (?, ?, 'system', ?)`,
+      id, u.id, 'Клиент согласился. Заявка ждёт утверждения срока сдачи производством.',
+    );
     return r;
   });
   await logAction(req, { action: 'production_request.approved', entity_type: 'production_request', entity_id: id });
+  await notifyProduction(id, upd, 'approved', u).catch(() => {});
+  res.json(sanitizeRequest(upd, u));
+}));
+
+// Производство: approved → awaiting_payment (утверждает срок сдачи).
+// Срок появляется в производственном календаре.
+router.post('/:id/set-deadline', asyncHandler(async (req, res) => {
+  const id = Number(req.params.id);
+  const u = req.user;
+  if (!isProd(u) && !isAdmin(u)) throw Forbidden('Срок утверждает производство или админ');
+  const row = await db.get(`SELECT * FROM production_requests WHERE id = ?`, id);
+  if (!row) throw NotFound('Заявка не найдена');
+  if (row.status !== 'approved') throw BadRequest('Срок утверждается из статуса «Согласовано»');
+  const data = z.object({
+    production_deadline: z.string().datetime(),
+    note: z.string().max(500).optional().nullable(),
+  }).parse(req.body || {});
+  const upd = await db.withTransaction(async (tx) => {
+    const r = await tx.get(
+      `UPDATE production_requests SET
+         production_deadline=?, deadline_set_by=?, deadline_set_at=NOW(),
+         status='awaiting_payment', updated_at=NOW()
+       WHERE id=? RETURNING *`,
+      data.production_deadline, u.id, id,
+    );
+    await tx.run(
+      `INSERT INTO production_request_price_history (request_id, event, note, actor_id)
+       VALUES (?, 'deadline_set', ?, ?)`,
+      id, `Срок сдачи: ${data.production_deadline}${data.note ? '. ' + data.note : ''}`, u.id,
+    );
+    await tx.run(
+      `INSERT INTO production_request_messages (request_id, user_id, kind, text)
+       VALUES (?, ?, 'system', ?)`,
+      id, u.id, `Срок сдачи утверждён: ${data.production_deadline.slice(0, 10)}. Ждём оплату для запуска в работу.`,
+    );
+    return r;
+  });
+  await logAction(req, { action: 'production_request.deadline_set', entity_type: 'production_request', entity_id: id, details: { deadline: data.production_deadline } });
+  await notifyManagerOfRequest(id, upd, `Срок сдачи утверждён (${data.production_deadline.slice(0, 10)}). Ожидается оплата.`, u).catch(() => {});
+  res.json(sanitizeRequest(upd, u));
+}));
+
+// Производство/админ: awaiting_payment → in_progress (оплата пришла).
+router.post('/:id/mark-paid', asyncHandler(async (req, res) => {
+  const id = Number(req.params.id);
+  const u = req.user;
+  if (!isProd(u) && !isAdmin(u)) throw Forbidden();
+  const row = await db.get(`SELECT * FROM production_requests WHERE id = ?`, id);
+  if (!row) throw NotFound('Заявка не найдена');
+  if (row.status !== 'awaiting_payment') throw BadRequest('Оплату отмечаем в статусе «Ждёт оплаты»');
+  const upd = await db.withTransaction(async (tx) => {
+    const r = await tx.get(
+      `UPDATE production_requests SET
+         payment_received_at=NOW(), payment_marked_by=?, status='in_progress', updated_at=NOW()
+       WHERE id=? RETURNING *`,
+      u.id, id,
+    );
+    await tx.run(
+      `INSERT INTO production_request_price_history (request_id, event, actor_id) VALUES (?, 'payment_received', ?)`,
+      id, u.id,
+    );
+    await tx.run(
+      `INSERT INTO production_request_messages (request_id, user_id, kind, text)
+       VALUES (?, ?, 'system', ?)`,
+      id, u.id, 'Оплата получена. Заявка взята в работу.',
+    );
+    return r;
+  });
+  await logAction(req, { action: 'production_request.payment_received', entity_type: 'production_request', entity_id: id });
+  await notifyManagerOfRequest(id, upd, 'Оплата получена, заявка в работе', u).catch(() => {});
   res.json(sanitizeRequest(upd, u));
 }));
 
@@ -353,6 +441,7 @@ router.post('/:id/counter', asyncHandler(async (req, res) => {
     return r;
   });
   await logAction(req, { action: 'production_request.counter', entity_type: 'production_request', entity_id: id });
+  await notifyProduction(id, upd, 'counter', u).catch(() => {});
   res.json(sanitizeRequest(upd, u));
 }));
 
@@ -446,33 +535,45 @@ router.get('/files/:fileId', asyncHandler(async (req, res) => {
     fid,
   );
   if (!f) throw NotFound('Файл не найден');
-  if (!isFullAccess(u) && f.manager_id !== u.id) throw Forbidden('Не ваш файл');
+  // Менеджер: только СВОЯ заявка + не 'production_only'.
+  if (!isFullAccess(u)) {
+    if (f.manager_id !== u.id) throw Forbidden('Не ваш файл');
+    if (f.visibility === 'production_only') throw Forbidden('Файл доступен только производству');
+  }
   const buf = Buffer.from(f.data_base64, 'base64');
   res.setHeader('Content-Type', f.mime || 'application/octet-stream');
   res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(f.filename)}"`);
   res.send(buf);
 }));
 
-// Загрузить файл к существующей заявке (только менеджер-владелец, только draft).
+// Загрузить файл к существующей заявке.
+// visibility='all' (по умолчанию) — менеджер-владелец в draft или admin.
+// visibility='production_only' — производство/admin в любом статусе (файл калькуляции).
 router.post('/:id/files', asyncHandler(async (req, res) => {
   const id = Number(req.params.id);
   const u = req.user;
   const row = await db.get(`SELECT * FROM production_requests WHERE id = ?`, id);
   if (!row) throw NotFound('Заявка не найдена');
-  if (!isFullAccess(u) && row.manager_id !== u.id) throw Forbidden('Не ваша');
-  if (row.status !== 'draft' && !isAdmin(u)) throw BadRequest('Добавлять файлы можно только в черновике');
   const data = z.object({
     filename: z.string().max(300),
     mime: z.string().max(100).optional().nullable(),
     data_base64: z.string(),
+    visibility: z.enum(['all', 'production_only']).default('all'),
   }).parse(req.body || {});
+
+  if (data.visibility === 'production_only') {
+    if (!isProd(u) && !isAdmin(u)) throw Forbidden('Файлы калькуляции загружает только производство или админ');
+  } else {
+    if (!isFullAccess(u) && row.manager_id !== u.id) throw Forbidden('Не ваша');
+    if (row.status !== 'draft' && !isAdmin(u)) throw BadRequest('Файлы к заявке добавляют только в черновике');
+  }
   const raw = stripDataUri(data.data_base64);
   const size = Math.floor(raw.length * 0.75);
   if (size > MAX_FILE_BYTES) throw BadRequest('Файл больше 10 МБ');
   const f = await db.get(
-    `INSERT INTO production_request_files (request_id, filename, mime, size_bytes, data_base64, uploaded_by)
-     VALUES (?, ?, ?, ?, ?, ?) RETURNING id, filename, mime, size_bytes, uploaded_at`,
-    id, data.filename, data.mime || null, size, raw, u.id,
+    `INSERT INTO production_request_files (request_id, filename, mime, size_bytes, data_base64, uploaded_by, visibility)
+     VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING id, filename, mime, size_bytes, uploaded_at, visibility`,
+    id, data.filename, data.mime || null, size, raw, u.id, data.visibility,
   );
   res.status(201).json(f);
 }));
@@ -495,5 +596,124 @@ router.delete('/files/:fileId', asyncHandler(async (req, res) => {
   await db.run(`DELETE FROM production_request_files WHERE id = ?`, fid);
   res.status(204).end();
 }));
+
+// ============ ЧАТ В ЗАЯВКЕ ============
+
+// GET /:id/messages — весь тред.
+router.get('/:id/messages', asyncHandler(async (req, res) => {
+  const id = Number(req.params.id);
+  const u = req.user;
+  const row = await db.get(`SELECT manager_id FROM production_requests WHERE id = ?`, id);
+  if (!row) throw NotFound('Заявка не найдена');
+  if (!isFullAccess(u) && row.manager_id !== u.id) throw Forbidden('Не ваша');
+  const msgs = await db.all(
+    `SELECT m.*, u.name AS user_name, u.role AS user_role
+     FROM production_request_messages m LEFT JOIN users u ON u.id = m.user_id
+     WHERE m.request_id = ? ORDER BY m.created_at ASC`,
+    id,
+  );
+  res.json({ messages: msgs });
+}));
+
+// POST /:id/messages — написать сообщение.
+router.post('/:id/messages', asyncHandler(async (req, res) => {
+  const id = Number(req.params.id);
+  const u = req.user;
+  const row = await db.get(`SELECT * FROM production_requests WHERE id = ?`, id);
+  if (!row) throw NotFound('Заявка не найдена');
+  if (!isFullAccess(u) && row.manager_id !== u.id) throw Forbidden('Не ваша');
+  const data = z.object({ text: z.string().min(1).max(4000) }).parse(req.body || {});
+  const m = await db.get(
+    `INSERT INTO production_request_messages (request_id, user_id, text)
+     VALUES (?, ?, ?) RETURNING *`,
+    id, u.id, data.text,
+  );
+  // Уведомляем всех участников кроме автора.
+  await notifyChatParticipants(id, row, u, data.text.slice(0, 200)).catch(() => {});
+  res.status(201).json(m);
+}));
+
+// ============ КАЛЕНДАРЬ ============
+
+// GET /calendar?from=2026-08-01&to=2026-09-30 — заявки со сроком сдачи в диапазоне.
+router.get('/calendar/entries', asyncHandler(async (req, res) => {
+  const u = req.user;
+  const from = req.query.from ? String(req.query.from) : null;
+  const to = req.query.to ? String(req.query.to) : null;
+  const where = ['r.production_deadline IS NOT NULL', `r.status NOT IN ('cancelled','rejected','paid')`];
+  const params = [];
+  if (!isFullAccess(u)) { where.push('r.manager_id = ?'); params.push(u.id); }
+  if (from) { where.push('r.production_deadline >= ?'); params.push(from); }
+  if (to) { where.push('r.production_deadline <= ?'); params.push(to); }
+  const rows = await db.all(
+    `SELECT r.id, r.title, r.status, r.production_deadline, r.deadline_set_at,
+            r.client_price, r.reward_computed,
+            m.name AS manager_name,
+            c.first_name AS contact_first, c.last_name AS contact_last,
+            co.name AS company_name
+     FROM production_requests r
+     LEFT JOIN users m ON m.id = r.manager_id
+     LEFT JOIN contacts c ON c.id = r.contact_id
+     LEFT JOIN companies co ON co.id = r.company_id
+     WHERE ${where.join(' AND ')}
+     ORDER BY r.production_deadline ASC
+     LIMIT 300`,
+    ...params,
+  );
+  res.json({ entries: rows.map((r) => sanitizeRequest(r, u)) });
+}));
+
+// ============ ХЕЛПЕРЫ УВЕДОМЛЕНИЙ ============
+
+async function notifyManagerOfRequest(requestId, request, text, actor) {
+  if (!request.manager_id || request.manager_id === actor.id) return;
+  await notify(
+    request.manager_id,
+    'production_request',
+    `Заявка #${requestId}: ${request.title || ''}`,
+    text,
+    `#/production-requests?id=${requestId}`,
+  );
+}
+
+async function notifyProduction(requestId, request, event, actor) {
+  const prod = await db.all(
+    `SELECT id FROM users WHERE role IN ('director_prod','foreman') AND active=TRUE AND id <> ?`,
+    actor.id,
+  );
+  const titles = {
+    approved: 'Клиент согласился — нужно утвердить срок',
+    submit: 'Новая заявка на просчёт',
+    counter: 'Менеджер вернул с торгом — пересчитать',
+  };
+  for (const p of prod) {
+    await notify(
+      p.id,
+      'production_request',
+      `Заявка #${requestId}: ${request.title || ''}`,
+      titles[event] || `Событие: ${event}`,
+      `#/production-requests?id=${requestId}`,
+    );
+  }
+}
+
+async function notifyChatParticipants(requestId, request, author, text) {
+  const targets = new Set();
+  if (request.manager_id && request.manager_id !== author.id) targets.add(request.manager_id);
+  const others = await db.all(
+    `SELECT id FROM users WHERE active=TRUE AND role IN ('director_prod','foreman','admin') AND id <> ?`,
+    author.id,
+  );
+  for (const o of others) targets.add(o.id);
+  for (const uid of targets) {
+    await notify(
+      uid,
+      'production_request_chat',
+      `💬 Заявка #${requestId}: ${author.name}`,
+      text,
+      `#/production-requests?id=${requestId}`,
+    );
+  }
+}
 
 export default router;

@@ -384,8 +384,13 @@ export const api = {
   prStart: (id) => request('POST', `/api/production-requests/${id}/start`),
   prFulfill: (id) => request('POST', `/api/production-requests/${id}/fulfill`),
   prPay: (id) => request('POST', `/api/production-requests/${id}/pay`),
+  prSetDeadline: (id, body) => request('POST', `/api/production-requests/${id}/set-deadline`, { body }),
+  prMarkPaid: (id) => request('POST', `/api/production-requests/${id}/mark-paid`),
   prUploadFile: (id, body) => request('POST', `/api/production-requests/${id}/files`, { body }),
   prDeleteFile: (fid) => request('DELETE', `/api/production-requests/files/${fid}`),
+  prMessages: (id) => request('GET', `/api/production-requests/${id}/messages`),
+  prSendMessage: (id, text) => request('POST', `/api/production-requests/${id}/messages`, { body: { text } }),
+  prCalendar: (params = {}) => request('GET', '/api/production-requests/calendar/entries', { query: params }),
 
   // МАХ-бот
   maxMe: () => request('GET', '/api/max/me'),

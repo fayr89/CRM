@@ -10,6 +10,7 @@ const STATUSES = [
   { key: 'priced', label: '💰 Просчитано', color: '#8b5cf6' },
   { key: 'negotiating', label: '🔁 Торг', color: '#f59e0b' },
   { key: 'approved', label: '✅ Согласовано', color: '#22c55e' },
+  { key: 'awaiting_payment', label: '⌛ Ждёт оплаты', color: '#ea580c' },
   { key: 'in_progress', label: '🛠 В работе', color: '#06b6d4' },
   { key: 'fulfilled', label: '📦 Выполнено', color: '#059669' },
   { key: 'paid', label: '💵 Выплачено', color: '#166534' },
@@ -303,35 +304,54 @@ async function openViewModal(id, onDone) {
       body.append(el('div', { style: { padding: '8px', background: '#f9fafb', borderRadius: '6px', marginBottom: '10px', fontSize: '13px', whiteSpace: 'pre-wrap' } }, req.description));
     }
 
-    // Файлы.
+    // Файлы. Разделяем на общие и калькуляцию (production_only).
     if (files.length) {
-      const filesBox = el('div', { style: { marginBottom: '10px' } },
-        el('div', { style: { fontSize: '11px', fontWeight: '600', color: '#374151' } }, `📎 Файлы (${files.length}):`),
-      );
-      for (const f of files) {
-        filesBox.append(el('div', { style: { padding: '4px 0' } },
-          el('a', {
-            href: `/api/production-requests/files/${f.id}`,
-            onClick: async (e) => {
-              e.preventDefault();
-              // Скачиваем с Bearer-заголовком.
-              try {
-                const res = await fetch(`/api/production-requests/files/${f.id}`, { headers: { Authorization: 'Bearer ' + localStorage.getItem('crm_token') } });
-                if (!res.ok) throw new Error(`HTTP ${res.status}`);
-                const blob = await res.blob();
-                const url = URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.href = url; a.download = f.filename;
-                document.body.appendChild(a); a.click(); a.remove();
-                URL.revokeObjectURL(url);
-              } catch (err) { toast(err.message, 'error'); }
-            },
-            style: { color: '#3b82f6', textDecoration: 'underline' },
-          }, `📎 ${f.filename}`),
-          el('span', { style: { color: '#9ca3af', fontSize: '11px', marginLeft: '8px' } }, `(${(f.size_bytes / 1024).toFixed(0)} КБ)`),
-        ));
+      const generalFiles = files.filter((f) => f.visibility !== 'production_only');
+      const calcFiles = files.filter((f) => f.visibility === 'production_only');
+      if (generalFiles.length) body.append(renderFilesBox('📎 Файлы от менеджера', generalFiles));
+      if (calcFiles.length && isFullAccess(user)) {
+        body.append(renderFilesBox('🧾 Калькуляция производства (менеджер НЕ видит)', calcFiles, '#fef3c7', '#fde68a'));
       }
-      body.append(filesBox);
+    }
+    // Кнопка загрузить калькуляцию для production (в статусе awaiting_cost/negotiating/priced/approved).
+    if (isFullAccess(user) && ['awaiting_cost', 'negotiating', 'priced', 'approved', 'awaiting_payment', 'in_progress'].includes(req.status)) {
+      const uploadCalcBtn = el('label', {
+        style: { display: 'inline-block', padding: '4px 10px', background: '#fbbf24', color: '#78350f', borderRadius: '4px', cursor: 'pointer', fontSize: '12px', marginBottom: '10px', fontWeight: '600' },
+      }, '➕ Приложить калькуляцию (только производство)',
+        el('input', {
+          type: 'file', style: { display: 'none' },
+          onChange: async (e) => {
+            const f = e.target.files?.[0]; if (!f) return;
+            if (f.size > 10 * 1024 * 1024) { toast('Файл больше 10 МБ', 'error'); return; }
+            const b64 = await new Promise((r, j) => { const rd = new FileReader(); rd.onload = () => r(rd.result); rd.onerror = j; rd.readAsDataURL(f); });
+            try {
+              await api.prUploadFile(req.id, { filename: f.name, mime: f.type, data_base64: b64, visibility: 'production_only' });
+              toast('Калькуляция загружена', 'success');
+              if (onDone) await onDone();
+              closeModal(); setTimeout(() => openViewModal(id, onDone), 200);
+            } catch (err) { toast(err.message, 'error'); }
+          },
+        }),
+      );
+      body.append(uploadCalcBtn);
+    }
+
+    // Срок сдачи (после утверждения).
+    if (req.production_deadline) {
+      const daysLeft = Math.ceil((new Date(req.production_deadline) - Date.now()) / (1000 * 60 * 60 * 24));
+      const overdue = daysLeft < 0;
+      body.append(el('div', {
+        style: {
+          padding: '10px', borderRadius: '6px', marginBottom: '10px', fontSize: '13px',
+          background: overdue ? '#fee2e2' : (daysLeft < 3 ? '#fef3c7' : '#dbeafe'),
+          border: `1px solid ${overdue ? '#fca5a5' : (daysLeft < 3 ? '#fde68a' : '#93c5fd')}`,
+        },
+      },
+        el('b', {}, '📅 Срок сдачи: ', fmtDate(req.production_deadline)),
+        overdue
+          ? el('span', { style: { color: '#dc2626' } }, ` — ⚠️ просрочено на ${Math.abs(daysLeft)} дн.`)
+          : el('span', {}, ` — осталось ${daysLeft} дн.`),
+      ));
     }
 
     // Финансы. Что видит зависит от роли.
@@ -406,9 +426,16 @@ async function openViewModal(id, onDone) {
       } }, '🚫 Не берём в работу'));
     }
     if (req.status === 'approved' && (isProd(user) || canAsAdmin)) {
-      actions.append(el('button', { class: 'btn btn-primary', onClick: async () => {
-        try { await api.prStart(id); toast('Взято в работу', 'success'); if (onDone) await onDone(); closeModal(); } catch (e) { toast(e.message, 'error'); }
-      } }, '🛠 Взять в работу'));
+      actions.append(el('button', { class: 'btn btn-primary', onClick: () => openDeadlineModal(req, onDone) }, '📅 Утвердить срок сдачи'));
+    }
+    if (req.status === 'awaiting_payment' && (isProd(user) || canAsAdmin)) {
+      actions.append(el('button', {
+        class: 'btn btn-primary',
+        onClick: async () => {
+          if (!confirm('Подтвердить получение оплаты? Заявка перейдёт «В работу».')) return;
+          try { await api.prMarkPaid(id); toast('Оплата зафиксирована', 'success'); if (onDone) await onDone(); closeModal(); } catch (e) { toast(e.message, 'error'); }
+        },
+      }, '💵 Оплата получена'));
     }
     if (req.status === 'in_progress' && (isProd(user) || canAsAdmin)) {
       actions.append(el('button', { class: 'btn btn-primary', onClick: async () => {
@@ -425,6 +452,9 @@ async function openViewModal(id, onDone) {
 
     body.append(actions);
 
+    // Чат в самом низу карточки.
+    renderChatSection(body, id);
+
     // Заменяем содержимое модалки.
     const modalBody = document.querySelector('.modal-backdrop:last-child .modal-body');
     if (modalBody) { clear(modalBody); modalBody.append(body); }
@@ -434,6 +464,194 @@ async function openViewModal(id, onDone) {
 function closeModal() {
   const b = document.querySelectorAll('.modal-backdrop');
   if (b.length) b[b.length - 1].remove();
+}
+
+function renderFilesBox(title, files, bg = '#f9fafb', border = '#e5e7eb') {
+  const box = el('div', { style: { padding: '8px', background: bg, border: `1px solid ${border}`, borderRadius: '6px', marginBottom: '10px' } },
+    el('div', { style: { fontSize: '11px', fontWeight: '600', color: '#374151', marginBottom: '4px' } }, title),
+  );
+  for (const f of files) {
+    box.append(el('div', { style: { padding: '3px 0' } },
+      el('a', {
+        href: '#',
+        onClick: async (e) => {
+          e.preventDefault();
+          try {
+            const res = await fetch(`/api/production-requests/files/${f.id}`, { headers: { Authorization: 'Bearer ' + localStorage.getItem('crm_token') } });
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            const blob = await res.blob();
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url; a.download = f.filename;
+            document.body.appendChild(a); a.click(); a.remove();
+            URL.revokeObjectURL(url);
+          } catch (err) { toast(err.message, 'error'); }
+        },
+        style: { color: '#3b82f6', textDecoration: 'underline', fontSize: '13px' },
+      }, `📎 ${f.filename}`),
+      el('span', { style: { color: '#9ca3af', fontSize: '11px', marginLeft: '8px' } }, `(${(f.size_bytes / 1024).toFixed(0)} КБ)`),
+    ));
+  }
+  return box;
+}
+
+// ============================================================
+// МОДАЛКА: утверждение срока сдачи (approved → awaiting_payment)
+// ============================================================
+function openDeadlineModal(req, onDone) {
+  const dateI = el('input', { type: 'date', style: { padding: '8px' }, min: new Date().toISOString().slice(0, 10) });
+  const noteI = el('textarea', { rows: 2, style: { width: '100%', padding: '8px' }, placeholder: 'Комментарий (опционально)' });
+  const body = el('div', {},
+    el('div', { style: { padding: '8px', background: '#eff6ff', borderRadius: '4px', marginBottom: '8px', fontSize: '12px' } },
+      'После утверждения срока заявка появится в производственном календаре и перейдёт в статус «⌛ Ждёт оплаты».',
+    ),
+    el('label', { style: { fontSize: '12px', fontWeight: '600' } }, 'Планируемая дата сдачи:'),
+    dateI,
+    el('label', { style: { fontSize: '12px', fontWeight: '600', marginTop: '8px', display: 'block' } }, 'Комментарий:'),
+    noteI,
+  );
+  openModal('Утвердить срок сдачи', body, {
+    primaryLabel: 'Утвердить',
+    onSubmit: async () => {
+      if (!dateI.value) { toast('Укажите дату', 'error'); return false; }
+      try {
+        await api.prSetDeadline(req.id, {
+          production_deadline: new Date(dateI.value + 'T18:00:00').toISOString(),
+          note: noteI.value.trim() || null,
+        });
+        toast('Срок утверждён. Заявка в календаре, ждёт оплаты.', 'success');
+        if (onDone) await onDone();
+        closeModal(); closeModal();
+        return true;
+      } catch (e) { toast(e.message, 'error'); return false; }
+    },
+  });
+}
+
+// ============================================================
+// ЧАТ: рендер и отправка сообщений внутри карточки заявки.
+// ============================================================
+async function renderChatSection(container, requestId) {
+  const list = el('div', { style: { maxHeight: '260px', overflowY: 'auto', padding: '6px', background: '#f9fafb', borderRadius: '6px', fontSize: '13px' } });
+  const input = el('textarea', { rows: 2, style: { width: '100%', padding: '6px', marginTop: '6px' }, placeholder: 'Написать сообщение…' });
+  const sendBtn = el('button', { class: 'btn btn-primary', style: { marginTop: '4px' } }, 'Отправить');
+
+  container.append(
+    el('div', { style: { fontSize: '12px', fontWeight: '600', color: '#374151', marginTop: '10px', paddingTop: '10px', borderTop: '1px solid #e5e7eb' } }, '💬 Обсуждение'),
+    list, input, sendBtn,
+  );
+
+  async function reload() {
+    list.textContent = '⏳';
+    try {
+      const r = await api.prMessages(requestId);
+      const msgs = r.messages || [];
+      list.textContent = '';
+      if (!msgs.length) list.append(el('div', { style: { color: '#9ca3af', padding: '6px' } }, 'Пока нет сообщений'));
+      for (const m of msgs) {
+        const isSys = m.kind === 'system';
+        list.append(el('div', {
+          style: {
+            padding: '4px 8px', margin: '3px 0', borderRadius: '4px',
+            background: isSys ? '#eff6ff' : '#fff',
+            fontStyle: isSys ? 'italic' : 'normal',
+            color: isSys ? '#1e40af' : '#111827',
+            fontSize: isSys ? '12px' : '13px',
+          },
+        },
+          el('div', { style: { fontSize: '11px', color: '#6b7280', marginBottom: '2px' } },
+            isSys ? '⚙ система' : `${m.user_name || '?'} · ${fmtDateTime(m.created_at)}`,
+          ),
+          el('div', { style: { whiteSpace: 'pre-wrap' } }, m.text),
+        ));
+      }
+      list.scrollTop = list.scrollHeight;
+    } catch (e) { list.textContent = 'Ошибка: ' + e.message; }
+  }
+
+  sendBtn.addEventListener('click', async () => {
+    const text = input.value.trim();
+    if (!text) return;
+    try {
+      await api.prSendMessage(requestId, text);
+      input.value = '';
+      await reload();
+    } catch (e) { toast(e.message, 'error'); }
+  });
+
+  await reload();
+}
+
+// ============================================================
+// СТРАНИЦА: производственный календарь
+// ============================================================
+export async function renderProductionCalendar(main) {
+  main.append(
+    el('div', { class: 'page-header' },
+      el('div', {},
+        el('h1', { class: 'page-title' }, '🗓 Производственный календарь'),
+        el('div', { class: 'page-subtitle' }, 'Утверждённые сроки сдачи заявок производством. Сортировка по дате.'),
+      ),
+    ),
+  );
+  const listBox = el('div', {});
+  main.append(listBox);
+  try {
+    const r = await api.prCalendar();
+    if (!r.entries?.length) {
+      listBox.append(el('div', { style: { padding: '32px', textAlign: 'center', color: '#9ca3af' } }, 'Ни у одной заявки ещё нет утверждённого срока сдачи.'));
+      return;
+    }
+    // Группируем по месяцам.
+    const byMonth = {};
+    for (const e of r.entries) {
+      const d = new Date(e.production_deadline);
+      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+      (byMonth[key] = byMonth[key] || []).push(e);
+    }
+    const now = new Date();
+    const today = now.toISOString().slice(0, 10);
+    for (const [monthKey, items] of Object.entries(byMonth)) {
+      const [y, m] = monthKey.split('-');
+      const monthName = new Date(Number(y), Number(m) - 1, 1).toLocaleDateString('ru-RU', { month: 'long', year: 'numeric' });
+      listBox.append(el('div', { style: { fontWeight: '700', fontSize: '16px', marginTop: '16px', marginBottom: '6px', color: '#374151' } }, monthName));
+      for (const e of items) {
+        const dl = e.production_deadline.slice(0, 10);
+        const days = Math.ceil((new Date(e.production_deadline) - now) / (1000 * 60 * 60 * 24));
+        const status = STATUSES.find((s) => s.key === e.status) || { key: e.status, label: e.status, color: '#6b7280' };
+        const overdue = days < 0;
+        const soon = days >= 0 && days <= 3;
+        const bgColor = overdue ? '#fee2e2' : soon ? '#fef3c7' : '#fff';
+        const bord = overdue ? '#fca5a5' : soon ? '#fde68a' : '#e5e7eb';
+        listBox.append(el('div', {
+          style: {
+            padding: '10px', background: bgColor, border: `1px solid ${bord}`, borderRadius: '6px',
+            marginBottom: '6px', cursor: 'pointer',
+            display: 'flex', justifyContent: 'space-between', gap: '8px', flexWrap: 'wrap',
+          },
+          onClick: () => openViewModal(e.id, () => renderProductionCalendar(listBox.parentElement)),
+        },
+          el('div', {},
+            el('div', { style: { fontWeight: '600', fontSize: '14px' } }, `📅 ${dl} — ${e.title}`),
+            el('div', { style: { fontSize: '12px', color: '#374151', marginTop: '2px' } },
+              '👤 ' + clientText(e), ' · ',
+              el('span', { style: { color: status.color, fontWeight: '600' } }, status.label),
+              e.manager_name ? ` · менеджер: ${e.manager_name}` : '',
+            ),
+          ),
+          el('div', { style: { textAlign: 'right', fontSize: '13px' } },
+            overdue
+              ? el('span', { style: { color: '#dc2626', fontWeight: '700' } }, `⚠️ Просрочено ${Math.abs(days)} дн.`)
+              : (days === 0 ? el('span', { style: { color: '#f59e0b', fontWeight: '700' } }, '🔥 Сегодня')
+                : el('span', { style: { color: soon ? '#f59e0b' : '#059669', fontWeight: '600' } }, `Осталось ${days} дн.`)),
+            e.client_price ? el('div', { style: { color: '#059669', fontWeight: '600', fontSize: '12px' } }, fmtMoney(Number(e.client_price), 'RUB')) : null,
+          ),
+        ));
+      }
+    }
+  } catch (e) {
+    listBox.append(el('div', { style: { color: '#ef4444' } }, 'Ошибка: ' + e.message));
+  }
 }
 
 // ============================================================
