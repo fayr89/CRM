@@ -718,75 +718,162 @@ async function renderChatSection(container, requestId) {
 }
 
 // ============================================================
-// СТРАНИЦА: производственный календарь
+// СТРАНИЦА: производственный календарь (месячная сетка)
 // ============================================================
 export async function renderProductionCalendar(main) {
-  main.append(
-    el('div', { class: 'page-header' },
-      el('div', {},
-        el('h1', { class: 'page-title' }, '🗓 Производственный календарь'),
-        el('div', { class: 'page-subtitle' }, 'Утверждённые сроки сдачи заявок производством. Сортировка по дате.'),
-      ),
-    ),
-  );
-  const listBox = el('div', {});
-  main.append(listBox);
-  try {
-    const r = await api.prCalendar();
-    if (!r.entries?.length) {
-      listBox.append(el('div', { style: { padding: '32px', textAlign: 'center', color: '#9ca3af' } }, 'Ни у одной заявки ещё нет утверждённого срока сдачи.'));
-      return;
-    }
-    // Группируем по месяцам.
-    const byMonth = {};
-    for (const e of r.entries) {
-      const d = new Date(e.production_deadline);
-      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-      (byMonth[key] = byMonth[key] || []).push(e);
-    }
-    const now = new Date();
-    const today = now.toISOString().slice(0, 10);
-    for (const [monthKey, items] of Object.entries(byMonth)) {
-      const [y, m] = monthKey.split('-');
-      const monthName = new Date(Number(y), Number(m) - 1, 1).toLocaleDateString('ru-RU', { month: 'long', year: 'numeric' });
-      listBox.append(el('div', { style: { fontWeight: '700', fontSize: '16px', marginTop: '16px', marginBottom: '6px', color: '#374151' } }, monthName));
-      for (const e of items) {
-        const dl = e.production_deadline.slice(0, 10);
-        const days = Math.ceil((new Date(e.production_deadline) - now) / (1000 * 60 * 60 * 24));
-        const status = STATUSES.find((s) => s.key === e.status) || { key: e.status, label: e.status, color: '#6b7280' };
-        const overdue = days < 0;
-        const soon = days >= 0 && days <= 3;
-        const bgColor = overdue ? '#fee2e2' : soon ? '#fef3c7' : '#fff';
-        const bord = overdue ? '#fca5a5' : soon ? '#fde68a' : '#e5e7eb';
-        listBox.append(el('div', {
-          style: {
-            padding: '10px', background: bgColor, border: `1px solid ${bord}`, borderRadius: '6px',
-            marginBottom: '6px', cursor: 'pointer',
-            display: 'flex', justifyContent: 'space-between', gap: '8px', flexWrap: 'wrap',
-          },
-          onClick: () => openViewModal(e.id, () => renderProductionCalendar(listBox.parentElement)),
-        },
-          el('div', {},
-            el('div', { style: { fontWeight: '600', fontSize: '14px' } }, `📅 ${dl} — ${e.title}`),
-            el('div', { style: { fontSize: '12px', color: '#374151', marginTop: '2px' } },
-              '👤 ' + clientText(e), ' · ',
-              el('span', { style: { color: status.color, fontWeight: '600' } }, status.label),
-              e.manager_name ? ` · менеджер: ${e.manager_name}` : '',
-            ),
-          ),
-          el('div', { style: { textAlign: 'right', fontSize: '13px' } },
-            overdue
-              ? el('span', { style: { color: '#dc2626', fontWeight: '700' } }, `⚠️ Просрочено ${Math.abs(days)} дн.`)
-              : (days === 0 ? el('span', { style: { color: '#f59e0b', fontWeight: '700' } }, '🔥 Сегодня')
-                : el('span', { style: { color: soon ? '#f59e0b' : '#059669', fontWeight: '600' } }, `Осталось ${days} дн.`)),
-            e.client_price ? el('div', { style: { color: '#059669', fontWeight: '600', fontSize: '12px' } }, fmtMoney(Number(e.client_price), 'RUB')) : null,
-          ),
+  // Состояние: текущий месяц.
+  const now = new Date();
+  let viewYear = now.getFullYear();
+  let viewMonth = now.getMonth(); // 0..11
+
+  const header = el('div', { class: 'page-header' });
+  const awaitBox = el('div', { style: { marginBottom: '12px' } });
+  const nav = el('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' } });
+  const grid = el('div', {});
+  main.append(header, awaitBox, nav, grid);
+
+  async function reload() {
+    // Шапка.
+    clear(header);
+    header.append(el('div', {},
+      el('h1', { class: 'page-title' }, '🗓 Производственный календарь'),
+      el('div', { class: 'page-subtitle' }, 'Сроки сдачи заявок. Клик по заявке — карточка. Секция сверху — заявки без утверждённого срока.'),
+    ));
+
+    // Секция «Ждут утверждения срока».
+    clear(awaitBox);
+    try {
+      const r = await api.prList({ status: 'approved' });
+      const need = (r.requests || []).filter((x) => !x.production_deadline);
+      if (need.length) {
+        const box = el('div', {
+          style: { padding: '10px', background: '#fef3c7', border: '1px solid #fde68a', borderRadius: '6px' },
+        });
+        box.append(el('div', { style: { fontWeight: '600', fontSize: '13px', color: '#78350f', marginBottom: '4px' } },
+          `⚠️ Ждут утверждения срока сдачи (${need.length}):`,
         ));
+        for (const req of need) {
+          const chip = el('span', {
+            style: { display: 'inline-block', padding: '4px 10px', margin: '2px', background: '#fff', border: '1px solid #fbbf24', borderRadius: '4px', cursor: 'pointer', fontSize: '13px' },
+            onClick: () => openViewModal(req.id, () => renderProductionCalendar(main)),
+          }, req.title, ' — ', el('b', { style: { color: '#059669' } }, req.client_price ? fmtMoney(Number(req.client_price), 'RUB') : ''));
+          box.append(chip);
+        }
+        awaitBox.append(box);
       }
+    } catch { /* ignore */ }
+
+    // Навигация по месяцам.
+    clear(nav);
+    const monthName = new Date(viewYear, viewMonth, 1).toLocaleDateString('ru-RU', { month: 'long', year: 'numeric' });
+    nav.append(
+      el('button', { class: 'btn', onClick: () => { viewMonth--; if (viewMonth < 0) { viewMonth = 11; viewYear--; } reload(); } }, '◀'),
+      el('div', { style: { fontSize: '18px', fontWeight: '700', color: '#374151', textTransform: 'capitalize' } }, monthName),
+      el('div', {},
+        el('button', { class: 'btn', style: { marginRight: '4px' }, onClick: () => { viewYear = now.getFullYear(); viewMonth = now.getMonth(); reload(); } }, 'Сегодня'),
+        el('button', { class: 'btn', onClick: () => { viewMonth++; if (viewMonth > 11) { viewMonth = 0; viewYear++; } reload(); } }, '▶'),
+      ),
+    );
+
+    // Данные месяца + запас +-1 неделя.
+    const firstDay = new Date(viewYear, viewMonth, 1);
+    const lastDay = new Date(viewYear, viewMonth + 1, 0);
+    const from = new Date(viewYear, viewMonth, 1);
+    from.setDate(1);
+    from.setDate(from.getDate() - 7);
+    const to = new Date(viewYear, viewMonth + 1, 0);
+    to.setDate(to.getDate() + 7);
+
+    let entries = [];
+    try {
+      const r = await api.prCalendar({ from: from.toISOString(), to: to.toISOString() });
+      entries = r.entries || [];
+    } catch (e) { grid.textContent = 'Ошибка: ' + e.message; return; }
+
+    // Индексируем по дате YYYY-MM-DD.
+    const byDate = {};
+    for (const e of entries) {
+      const d = e.production_deadline.slice(0, 10);
+      (byDate[d] = byDate[d] || []).push(e);
     }
-  } catch (e) {
-    listBox.append(el('div', { style: { color: '#ef4444' } }, 'Ошибка: ' + e.message));
+
+    // Строим сетку 7 колонок. Понедельник — первый день (RU).
+    clear(grid);
+    const dayHeaders = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'];
+    const gridEl = el('div', {
+      style: {
+        display: 'grid', gridTemplateColumns: 'repeat(7, minmax(0, 1fr))',
+        gap: '4px', background: '#f3f4f6', padding: '4px', borderRadius: '6px',
+      },
+    });
+    for (const h of dayHeaders) gridEl.append(el('div', {
+      style: { padding: '4px', fontWeight: '700', fontSize: '11px', color: '#6b7280', textAlign: 'center' },
+    }, h));
+
+    // Первый день месяца — какой день недели? Пн=0, Вс=6.
+    const jsDow = firstDay.getDay(); // 0=Вс, 1=Пн
+    const startOffset = (jsDow + 6) % 7; // Пн=0
+
+    // Пустые ячейки до начала месяца — заполняем предыдущим месяцем.
+    for (let i = 0; i < startOffset; i++) {
+      const d = new Date(viewYear, viewMonth, 1 - (startOffset - i));
+      gridEl.append(renderCalendarCell(d, byDate, true, () => renderProductionCalendar(main)));
+    }
+    // Сам месяц.
+    for (let day = 1; day <= lastDay.getDate(); day++) {
+      const d = new Date(viewYear, viewMonth, day);
+      gridEl.append(renderCalendarCell(d, byDate, false, () => renderProductionCalendar(main)));
+    }
+    // Заполняем хвост до полной недели.
+    const totalCells = startOffset + lastDay.getDate();
+    const tailCount = (7 - (totalCells % 7)) % 7;
+    for (let i = 1; i <= tailCount; i++) {
+      const d = new Date(viewYear, viewMonth + 1, i);
+      gridEl.append(renderCalendarCell(d, byDate, true, () => renderProductionCalendar(main)));
+    }
+    grid.append(gridEl);
   }
+
+  await reload();
+}
+
+function renderCalendarCell(date, byDate, outOfMonth, onDone) {
+  const now = new Date();
+  const todayStr = new Date(now - now.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+  const key = new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+  const items = byDate[key] || [];
+  const isToday = key === todayStr;
+  const isPast = key < todayStr;
+  const cell = el('div', {
+    style: {
+      background: '#fff', minHeight: '90px', padding: '4px', borderRadius: '4px',
+      opacity: outOfMonth ? 0.4 : 1,
+      border: isToday ? '2px solid #3b82f6' : '1px solid transparent',
+      display: 'flex', flexDirection: 'column',
+    },
+  });
+  cell.append(el('div', {
+    style: {
+      fontSize: '11px', fontWeight: isToday ? '700' : '600',
+      color: isToday ? '#3b82f6' : (isPast ? '#9ca3af' : '#374151'),
+      marginBottom: '2px',
+    },
+  }, String(date.getDate())));
+  for (const req of items) {
+    const status = STATUSES.find((s) => s.key === req.status) || { color: '#6b7280' };
+    cell.append(el('div', {
+      title: `${req.title} · ${clientText(req)}${req.client_price ? ' · ' + fmtMoney(Number(req.client_price), 'RUB') : ''}`,
+      style: {
+        fontSize: '10px', padding: '2px 4px', marginBottom: '2px',
+        background: status.color + '22', color: status.color,
+        borderLeft: `3px solid ${status.color}`, borderRadius: '2px',
+        overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+        cursor: 'pointer', lineHeight: '1.2',
+      },
+      onClick: (e) => { e.stopPropagation(); openViewModal(req.id, onDone); },
+    }, req.title));
+  }
+  return cell;
 }
 
 // ============================================================
