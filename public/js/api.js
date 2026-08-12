@@ -377,6 +377,7 @@ export const api = {
   prUpdate: (id, body) => request('PATCH', `/api/production-requests/${id}`, { body }),
   prSubmit: (id) => request('POST', `/api/production-requests/${id}/submit`),
   prPrice: (id, body) => request('POST', `/api/production-requests/${id}/price`, { body }),
+  prSetReward: (id, body) => request('POST', `/api/production-requests/${id}/set-reward`, { body }),
   prReject: (id, note) => request('POST', `/api/production-requests/${id}/reject`, { body: { note } }),
   prApprove: (id) => request('POST', `/api/production-requests/${id}/approve`),
   prCounter: (id, body) => request('POST', `/api/production-requests/${id}/counter`, { body }),

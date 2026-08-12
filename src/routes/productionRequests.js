@@ -29,13 +29,23 @@ const MANAGER_ROLES = ['manager', 'sales', 'rop'];
 function isProd(u) { return PROD_ROLES.includes(u.role); }
 function isAdmin(u) { return u.role === 'admin' || u.role === 'rop'; }
 function isFullAccess(u) { return u.role === 'admin' || u.role === 'rop' || isProd(u); }
+// Вознаграждение менеджера видят и назначают: только директор производства + admin/rop.
+// Foreman (начальник цеха) НЕ видит — иначе может сравнить с зарплатой и т.д.
+function canSeeReward(u) { return u.role === 'admin' || u.role === 'rop' || u.role === 'director_prod'; }
 
-// Основной сериализатор: скрывает cost_price от менеджера.
+// Основной сериализатор:
+//   - менеджеру скрываем cost_price (себестоимость производства);
+//   - foreman скрываем reward_* (вознаграждение менеджера) — «мотивация» его не касается.
 function sanitizeRequest(row, user) {
   if (!row) return row;
   const canSeeCost = isFullAccess(user);
   const out = { ...row };
   if (!canSeeCost) delete out.cost_price;
+  if (!canSeeReward(user)) {
+    delete out.reward_type;
+    delete out.reward_value;
+    delete out.reward_computed;
+  }
   return out;
 }
 
@@ -255,11 +265,16 @@ router.post('/:id/submit', asyncHandler(async (req, res) => {
 }));
 
 // Производство: awaiting_cost → priced (или negotiating → priced при повторном просчёте).
+// reward_type/reward_value ОПЦИОНАЛЬНЫ:
+//   - foreman НЕ передаёт их (в UI поля скрыты) → в БД будут NULL пока директор не установит;
+//   - director_prod/admin/rop могут задать сразу — цена + вознаграждение единым действием.
+// Если reward не задан — заявка становится priced, но пока reward=null менеджер увидит
+// «вознаграждение уточняется» (finish в UI). Директор потом использует /:id/set-reward.
 const priceSchema = z.object({
   cost_price: z.number().nonnegative(),
   client_price: z.number().nonnegative(),
-  reward_type: z.enum(['percent', 'fixed']),
-  reward_value: z.number().nonnegative(),
+  reward_type: z.enum(['percent', 'fixed']).optional().nullable(),
+  reward_value: z.number().nonnegative().optional().nullable(),
   note: z.string().max(2000).optional().nullable(),
 });
 router.post('/:id/price', asyncHandler(async (req, res) => {
@@ -272,29 +287,75 @@ router.post('/:id/price', asyncHandler(async (req, res) => {
     throw BadRequest('Просчитывать можно только в статусе «На просчёте» или «Торг»');
   }
   const data = priceSchema.parse(req.body || {});
-  const rewardComputed = computeReward(data.client_price, data.reward_type, data.reward_value);
+  // foreman не может задавать вознаграждение — молча игнорируем, даже если передал.
+  const canReward = canSeeReward(u);
+  const rt = canReward ? (data.reward_type || null) : null;
+  const rv = canReward ? (data.reward_value != null ? data.reward_value : null) : null;
+  const rewardComputed = (rt && rv != null) ? computeReward(data.client_price, rt, rv) : null;
   const event = row.status === 'awaiting_cost' ? 'initial_price' : 'production_reprice';
 
   const upd = await db.withTransaction(async (tx) => {
+    // Сохраняем существующее вознаграждение если foreman не заполнил (не обнуляем).
+    const finalRt = canReward ? rt : row.reward_type;
+    const finalRv = canReward ? rv : row.reward_value;
+    const finalRc = canReward ? rewardComputed : (finalRt && finalRv != null ? computeReward(data.client_price, finalRt, finalRv) : row.reward_computed);
     const r = await tx.get(
       `UPDATE production_requests SET
          cost_price = ?, client_price = ?, reward_type = ?, reward_value = ?, reward_computed = ?,
          priced_by = ?, priced_at = NOW(), status = 'priced', updated_at = NOW()
        WHERE id = ? RETURNING *`,
-      data.cost_price, data.client_price, data.reward_type, data.reward_value, rewardComputed,
+      data.cost_price, data.client_price, finalRt, finalRv, finalRc,
       u.id, id,
     );
     await tx.run(
       `INSERT INTO production_request_price_history
         (request_id, event, cost_price, client_price, reward_type, reward_value, reward_computed, note, actor_id)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      id, event, data.cost_price, data.client_price, data.reward_type, data.reward_value, rewardComputed,
+      id, event, data.cost_price, data.client_price, finalRt, finalRv, finalRc,
       data.note || null, u.id,
     );
     return r;
   });
-  await logAction(req, { action: 'production_request.priced', entity_type: 'production_request', entity_id: id, details: { event } });
-  await notifyManagerOfRequest(id, upd, `Просчёт готов. Цена клиенту: ${data.client_price} ₽, ваше вознаграждение: ${upd.reward_computed} ₽`, u).catch(() => {});
+  await logAction(req, { action: 'production_request.priced', entity_type: 'production_request', entity_id: id, details: { event, has_reward: !!upd.reward_computed } });
+  if (upd.reward_computed != null) {
+    await notifyManagerOfRequest(id, upd, `Просчёт готов. Цена: ${data.client_price} ₽, ваше вознаграждение: ${upd.reward_computed} ₽`, u).catch(() => {});
+  } else {
+    await notifyManagerOfRequest(id, upd, `Просчёт готов. Цена: ${data.client_price} ₽. Вознаграждение уточняет директор.`, u).catch(() => {});
+  }
+  res.json(sanitizeRequest(upd, u));
+}));
+
+// Отдельный endpoint: только для director_prod/admin/rop — задать/изменить вознаграждение
+// менеджера. Работает в любом статусе кроме терминальных (cancelled/rejected/paid).
+router.post('/:id/set-reward', asyncHandler(async (req, res) => {
+  const id = Number(req.params.id);
+  const u = req.user;
+  if (!canSeeReward(u)) throw Forbidden('Вознаграждение задаёт директор производства или админ');
+  const row = await db.get(`SELECT * FROM production_requests WHERE id = ?`, id);
+  if (!row) throw NotFound('Заявка не найдена');
+  if (['cancelled', 'rejected', 'paid'].includes(row.status)) throw BadRequest('Заявка завершена');
+  const data = z.object({
+    reward_type: z.enum(['percent', 'fixed']),
+    reward_value: z.number().nonnegative(),
+    note: z.string().max(500).optional().nullable(),
+  }).parse(req.body || {});
+  const computed = computeReward(row.client_price, data.reward_type, data.reward_value);
+  const upd = await db.withTransaction(async (tx) => {
+    const r = await tx.get(
+      `UPDATE production_requests SET
+         reward_type = ?, reward_value = ?, reward_computed = ?, updated_at = NOW()
+       WHERE id = ? RETURNING *`,
+      data.reward_type, data.reward_value, computed, id,
+    );
+    await tx.run(
+      `INSERT INTO production_request_price_history (request_id, event, client_price, reward_type, reward_value, reward_computed, note, actor_id)
+       VALUES (?, 'production_reprice', ?, ?, ?, ?, ?, ?)`,
+      id, row.client_price, data.reward_type, data.reward_value, computed,
+      `Установлено вознаграждение: ${computed} ₽${data.note ? '. ' + data.note : ''}`, u.id,
+    );
+    return r;
+  });
+  await notifyManagerOfRequest(id, upd, `Ваше вознаграждение по заявке установлено: ${computed} ₽`, u).catch(() => {});
   res.json(sanitizeRequest(upd, u));
 }));
 

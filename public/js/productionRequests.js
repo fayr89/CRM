@@ -21,6 +21,8 @@ const PROD_ROLES = ['director_prod', 'foreman'];
 const isProd = (u) => PROD_ROLES.includes(u.role);
 const isAdmin = (u) => u.role === 'admin' || u.role === 'rop';
 const isFullAccess = (u) => isAdmin(u) || isProd(u);
+// Вознаграждение менеджера видит только директор/админ (foreman — нет).
+const canSeeReward = (u) => u.role === 'admin' || u.role === 'rop' || u.role === 'director_prod';
 
 export async function renderProductionRequests(main) {
   const user = getStoredUser() || {};
@@ -117,18 +119,30 @@ function renderKanbanCard(req, onDone) {
     card.append(el('div', { style: { fontSize: '12px', marginTop: '4px', color: '#059669', fontWeight: '600' } },
       `Клиенту: ${fmtMoney(price, 'RUB')}`,
     ));
+    // Вознаграждение — видят только менеджер (owner), директор/админ.
+    // Foreman не видит — reward_computed уже вырезан на бэке.
     if (req.reward_computed != null) {
       card.append(el('div', { style: { fontSize: '11px', color: '#3b82f6' } },
         `Ваше: ${fmtMoney(Number(req.reward_computed), 'RUB')}`,
       ));
     }
-    // Cost видит только производство/admin.
+    // Cost видит только производство/admin. Маржа считается по-разному:
+    // - для директора: маржа = client_price - cost - reward (истинная);
+    // - для foreman: reward скрыт, показываем «наценка = price - cost».
     if (isFullAccess(user) && req.cost_price != null) {
       const cost = Number(req.cost_price);
-      const margin = price - cost;
-      card.append(el('div', { style: { fontSize: '11px', color: '#9ca3af' } },
-        `Себест: ${fmtMoney(cost, 'RUB')} · маржа ${fmtMoney(margin, 'RUB')}`,
-      ));
+      if (canSeeReward(user)) {
+        const reward = Number(req.reward_computed || 0);
+        const margin = price - cost - reward;
+        card.append(el('div', { style: { fontSize: '11px', color: '#9ca3af' } },
+          `Себест: ${fmtMoney(cost, 'RUB')} · маржа ${fmtMoney(margin, 'RUB')}`,
+        ));
+      } else {
+        const markup = price - cost;
+        card.append(el('div', { style: { fontSize: '11px', color: '#9ca3af' } },
+          `Себест: ${fmtMoney(cost, 'RUB')} · наценка ${fmtMoney(markup, 'RUB')}`,
+        ));
+      }
     }
   }
   const foot = [];
@@ -485,16 +499,45 @@ async function openViewModal(id, onDone) {
       const finBox = el('div', { style: { padding: '10px', background: '#f0fdf4', border: '1px solid #86efac', borderRadius: '6px', marginBottom: '10px' } });
       finBox.append(el('div', { style: { fontSize: '11px', color: '#166534', fontWeight: '600' } }, '💰 Финансы'));
       finBox.append(el('div', { style: { fontSize: '16px', fontWeight: '700', marginTop: '4px' } }, `Клиенту: ${fmtMoney(Number(req.client_price), 'RUB')}`));
+      // Вознаграждение — видят: менеджер-владелец (для мотивации), директор, admin.
+      // Foreman не видит; reward_computed уже вырезан на бэке.
       if (req.reward_computed != null) {
         const rewardText = req.reward_type === 'percent'
           ? `${fmtMoney(Number(req.reward_computed), 'RUB')} (${req.reward_value}%)`
           : `${fmtMoney(Number(req.reward_computed), 'RUB')} (фикс)`;
         finBox.append(el('div', { style: { fontSize: '13px', color: '#3b82f6', marginTop: '2px', fontWeight: '600' } }, `Ваше вознаграждение: ${rewardText}`));
+      } else if (canSeeReward(user)) {
+        // Директор/admin видят, что вознаграждение ЕЩЁ не установлено — с кнопкой.
+        finBox.append(el('div', { style: { fontSize: '12px', color: '#dc2626', marginTop: '4px', fontWeight: '600' } },
+          '⚠️ Вознаграждение менеджера ещё не установлено',
+        ));
+        finBox.append(el('div', { style: { marginTop: '4px' } },
+          el('button', { class: 'btn btn-sm btn-primary', onClick: () => openRewardModal(req, onDone) }, '💼 Установить вознаграждение'),
+        ));
       }
+      // Себестоимость и маржа — для полного доступа. Маржа считается с учётом reward
+      // если директор, без reward — для foreman.
       if (isFullAccess(user) && req.cost_price != null) {
-        const margin = Number(req.client_price) - Number(req.cost_price);
-        finBox.append(el('div', { style: { fontSize: '12px', color: '#6b7280', marginTop: '4px' } },
-          `Себестоимость: ${fmtMoney(Number(req.cost_price), 'RUB')} · Маржа: ${fmtMoney(margin, 'RUB')} · Просчитал: ${req.priced_by_name || '—'} ${req.priced_at ? '(' + fmtDateTime(req.priced_at) + ')' : ''}`,
+        const cost = Number(req.cost_price);
+        const price = Number(req.client_price);
+        if (canSeeReward(user)) {
+          const reward = Number(req.reward_computed || 0);
+          const margin = price - cost - reward;
+          finBox.append(el('div', { style: { fontSize: '12px', color: '#6b7280', marginTop: '4px' } },
+            `Себестоимость: ${fmtMoney(cost, 'RUB')} · Маржа: ${fmtMoney(margin, 'RUB')} · Просчитал: ${req.priced_by_name || '—'} ${req.priced_at ? '(' + fmtDateTime(req.priced_at) + ')' : ''}`,
+          ));
+        } else {
+          // foreman видит только себестоимость и наценку (price - cost), без reward.
+          const markup = price - cost;
+          finBox.append(el('div', { style: { fontSize: '12px', color: '#6b7280', marginTop: '4px' } },
+            `Себестоимость: ${fmtMoney(cost, 'RUB')} · Наценка: ${fmtMoney(markup, 'RUB')} · Просчитал: ${req.priced_by_name || '—'} ${req.priced_at ? '(' + fmtDateTime(req.priced_at) + ')' : ''}`,
+          ));
+        }
+      }
+      // Директор/admin могут перезадать вознаграждение отдельной кнопкой.
+      if (canSeeReward(user) && req.reward_computed != null && !['paid', 'cancelled', 'rejected'].includes(req.status)) {
+        finBox.append(el('div', { style: { marginTop: '4px' } },
+          el('a', { href: '#', style: { fontSize: '11px', color: '#3b82f6' }, onClick: (e) => { e.preventDefault(); openRewardModal(req, onDone); } }, '✏️ Изменить вознаграждение'),
         ));
       }
       body.append(finBox);
@@ -1106,8 +1149,13 @@ function renderCalendarCell(date, byDate, outOfMonth, onDone) {
 
 // ============================================================
 // МОДАЛКА: просчёт (производство)
+// Для foreman: только cost + client_price. Вознаграждение вводит директор
+// (отдельной кнопкой). Для director/admin: и cost/price, и вознаграждение
+// одним действием.
 // ============================================================
 function openPriceModal(req, onDone) {
+  const user = getStoredUser() || {};
+  const showReward = canSeeReward(user);
   const costI = el('input', { type: 'number', step: '0.01', min: '0', style: { width: '100%', padding: '8px' }, value: req.cost_price || '' });
   const priceI = el('input', { type: 'number', step: '0.01', min: '0', style: { width: '100%', padding: '8px' }, value: req.client_price || '' });
   const rewardTypeSel = el('select', { style: { padding: '8px' } },
@@ -1121,14 +1169,20 @@ function openPriceModal(req, onDone) {
   function updatePreview() {
     const price = Number(priceI.value) || 0;
     const cost = Number(costI.value) || 0;
-    const rv = Number(rewardValI.value) || 0;
-    const rt = rewardTypeSel.value;
-    const reward = rt === 'percent' ? price * rv / 100 : rv;
-    const margin = price - cost - reward;
-    preview.textContent = `Клиенту: ${fmtMoney(price, 'RUB')} · Себест: ${fmtMoney(cost, 'RUB')} · Менеджеру: ${fmtMoney(reward, 'RUB')} · Наша маржа: ${fmtMoney(margin, 'RUB')}`;
+    if (showReward) {
+      const rv = Number(rewardValI.value) || 0;
+      const rt = rewardTypeSel.value;
+      const reward = rt === 'percent' ? price * rv / 100 : rv;
+      const margin = price - cost - reward;
+      preview.textContent = `Клиенту: ${fmtMoney(price, 'RUB')} · Себест: ${fmtMoney(cost, 'RUB')} · Менеджеру: ${fmtMoney(reward, 'RUB')} · Наша маржа: ${fmtMoney(margin, 'RUB')}`;
+    } else {
+      // foreman: без вознаграждения, показываем наценку.
+      const markup = price - cost;
+      preview.textContent = `Клиенту: ${fmtMoney(price, 'RUB')} · Себест: ${fmtMoney(cost, 'RUB')} · Наценка: ${fmtMoney(markup, 'RUB')}`;
+    }
   }
-  [costI, priceI, rewardTypeSel, rewardValI].forEach((i) => i.addEventListener('input', updatePreview));
-  [costI, priceI, rewardTypeSel, rewardValI].forEach((i) => i.addEventListener('change', updatePreview));
+  const watched = showReward ? [costI, priceI, rewardTypeSel, rewardValI] : [costI, priceI];
+  watched.forEach((i) => { i.addEventListener('input', updatePreview); i.addEventListener('change', updatePreview); });
   updatePreview();
 
   const body = el('div', {},
@@ -1137,14 +1191,21 @@ function openPriceModal(req, onDone) {
     },
       '💡 ',
       el('b', {}, 'Важно:'),
-      ' менеджер увидит ТОЛЬКО «Цена клиенту» и своё вознаграждение. Себестоимость и маржу видишь только ты, директор и админ. ',
+      ' менеджер увидит ТОЛЬКО «Цена клиенту»',
+      showReward ? ' и своё вознаграждение' : '',
+      '. Себестоимость и внутренние расчёты — только для производства и админа. ',
       el('b', {}, 'Не забудь приложить калькуляцию'),
       ' через жёлтую кнопку «➕ Приложить калькуляцию» на карточке заявки — этот файл менеджер тоже не увидит.',
+      !showReward ? el('div', { style: { marginTop: '6px' } },
+        '👤 Вознаграждение менеджера в этой форме не задаётся — его определяет ',
+        el('b', {}, 'директор производства'),
+        ' отдельно, после того как вы сохранили просчёт.',
+      ) : null,
     ),
     el('label', { style: { fontSize: '12px', fontWeight: '600' } }, 'Себестоимость (материалы + работа + накладные) ₽:'), costI,
     el('label', { style: { fontSize: '12px', fontWeight: '600', marginTop: '8px', display: 'block' } }, 'Конечная цена клиенту ₽ (менеджер увидит только её):'), priceI,
-    el('label', { style: { fontSize: '12px', fontWeight: '600', marginTop: '8px', display: 'block' } }, 'Вознаграждение менеджера:'),
-    el('div', { style: { display: 'flex', gap: '6px' } }, rewardTypeSel, rewardValI),
+    showReward ? el('label', { style: { fontSize: '12px', fontWeight: '600', marginTop: '8px', display: 'block' } }, 'Вознаграждение менеджера:') : null,
+    showReward ? el('div', { style: { display: 'flex', gap: '6px' } }, rewardTypeSel, rewardValI) : null,
     preview,
     el('label', { style: { fontSize: '12px', fontWeight: '600', marginTop: '8px', display: 'block' } }, 'Комментарий (опционально):'), noteI,
   );
@@ -1154,19 +1215,64 @@ function openPriceModal(req, onDone) {
     onSubmit: async () => {
       const cost = Number(costI.value);
       const price = Number(priceI.value);
-      const rewardVal = Number(rewardValI.value);
       if (!(price > 0) || !(cost >= 0)) { toast('Введите положительные суммы', 'error'); return false; }
-      if (!(rewardVal >= 0)) { toast('Введите вознаграждение', 'error'); return false; }
+      const payload = { cost_price: cost, client_price: price, note: noteI.value.trim() || null };
+      if (showReward) {
+        const rewardVal = Number(rewardValI.value);
+        if (!(rewardVal >= 0)) { toast('Введите вознаграждение', 'error'); return false; }
+        payload.reward_type = rewardTypeSel.value;
+        payload.reward_value = rewardVal;
+      }
       try {
-        await api.prPrice(req.id, {
-          cost_price: cost, client_price: price,
-          reward_type: rewardTypeSel.value, reward_value: rewardVal,
-          note: noteI.value.trim() || null,
-        });
-        toast('Просчёт сохранён. Менеджер увидит цену и своё вознаграждение.', 'success');
+        await api.prPrice(req.id, payload);
+        toast('Просчёт сохранён', 'success');
         if (onDone) await onDone();
-        closeModal(); // закрыть просчёт
-        closeModal(); // закрыть карточку заявки (потом рекомендую снова открыть)
+        closeModal(); closeModal();
+        return true;
+      } catch (e) { toast(e.message, 'error'); return false; }
+    },
+  });
+}
+
+// ============================================================
+// МОДАЛКА: установить/изменить вознаграждение менеджера (только директор/админ).
+// ============================================================
+function openRewardModal(req, onDone) {
+  const rewardTypeSel = el('select', { style: { padding: '8px' } },
+    el('option', { value: 'percent', selected: req.reward_type !== 'fixed' }, '% от цены'),
+    el('option', { value: 'fixed', selected: req.reward_type === 'fixed' }, 'Фикс ₽'),
+  );
+  const rewardValI = el('input', { type: 'number', step: '0.01', min: '0', style: { width: '120px', padding: '8px' }, value: req.reward_value || 10 });
+  const noteI = el('input', { type: 'text', style: { width: '100%', padding: '8px' }, placeholder: 'Комментарий (опц.)' });
+  const preview = el('div', { style: { padding: '8px', background: '#f0f9ff', borderRadius: '4px', marginTop: '6px', fontSize: '13px' } });
+  function upd() {
+    const price = Number(req.client_price) || 0;
+    const rv = Number(rewardValI.value) || 0;
+    const rt = rewardTypeSel.value;
+    const r = rt === 'percent' ? price * rv / 100 : rv;
+    preview.textContent = `Клиенту: ${fmtMoney(price, 'RUB')} → менеджеру: ${fmtMoney(r, 'RUB')}`;
+  }
+  rewardTypeSel.addEventListener('change', upd);
+  rewardValI.addEventListener('input', upd);
+  setTimeout(upd, 0);
+  const body = el('div', {},
+    el('div', { style: { fontSize: '12px', color: '#6b7280', marginBottom: '8px' } }, 'Устанавливается директором производства/админом. Foreman не видит.'),
+    el('label', { style: { fontSize: '12px', fontWeight: '600' } }, 'Вознаграждение:'),
+    el('div', { style: { display: 'flex', gap: '6px' } }, rewardTypeSel, rewardValI),
+    preview,
+    el('label', { style: { fontSize: '12px', fontWeight: '600', marginTop: '8px', display: 'block' } }, 'Комментарий:'),
+    noteI,
+  );
+  openModal('Вознаграждение менеджера', body, {
+    primaryLabel: 'Сохранить',
+    onSubmit: async () => {
+      const rv = Number(rewardValI.value);
+      if (!(rv >= 0)) { toast('Введите вознаграждение', 'error'); return false; }
+      try {
+        await api.prSetReward(req.id, { reward_type: rewardTypeSel.value, reward_value: rv, note: noteI.value.trim() || null });
+        toast('Вознаграждение установлено', 'success');
+        if (onDone) await onDone();
+        closeModal(); closeModal();
         return true;
       } catch (e) { toast(e.message, 'error'); return false; }
     },
