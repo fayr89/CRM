@@ -348,41 +348,65 @@ router.post('/:id/approve', asyncHandler(async (req, res) => {
   res.json(sanitizeRequest(upd, u));
 }));
 
-// Производство: approved → awaiting_payment (утверждает срок сдачи).
-// Срок появляется в производственном календаре.
+// Производство: approved → awaiting_payment. Утверждается 3 даты:
+//   production_deadline — когда сдаём клиенту.
+//   work_start_date / work_end_date — плановый период РАБОТ (для календаря).
+// Даты приходят как YYYY-MM-DD (DATE), храним в БД как DATE (без времени).
+// Валидация: work_start ≤ work_end ≤ production_deadline (все три обязательны).
 router.post('/:id/set-deadline', asyncHandler(async (req, res) => {
   const id = Number(req.params.id);
   const u = req.user;
   if (!isProd(u) && !isAdmin(u)) throw Forbidden('Срок утверждает производство или админ');
   const row = await db.get(`SELECT * FROM production_requests WHERE id = ?`, id);
   if (!row) throw NotFound('Заявка не найдена');
-  if (row.status !== 'approved') throw BadRequest('Срок утверждается из статуса «Согласовано»');
+  if (row.status !== 'approved' && row.status !== 'awaiting_payment' && row.status !== 'in_progress') {
+    throw BadRequest('Срок утверждается/меняется из статусов Согласовано / Ждёт оплаты / В работе');
+  }
+  // YYYY-MM-DD валидация.
+  const dateRe = /^\d{4}-\d{2}-\d{2}$/;
   const data = z.object({
-    production_deadline: z.string().datetime(),
+    production_deadline: z.string().regex(dateRe, 'YYYY-MM-DD'),
+    work_start_date: z.string().regex(dateRe, 'YYYY-MM-DD'),
+    work_end_date: z.string().regex(dateRe, 'YYYY-MM-DD'),
     note: z.string().max(500).optional().nullable(),
   }).parse(req.body || {});
+  if (data.work_start_date > data.work_end_date) throw BadRequest('Начало работ позже окончания.');
+  if (data.work_end_date > data.production_deadline) throw BadRequest('Окончание работ позже срока сдачи клиенту.');
+
+  // Если уже в awaiting_payment/in_progress — просто обновляем даты, статус не меняем.
+  const nextStatus = row.status === 'approved' ? 'awaiting_payment' : row.status;
+
   const upd = await db.withTransaction(async (tx) => {
     const r = await tx.get(
       `UPDATE production_requests SET
-         production_deadline=?, deadline_set_by=?, deadline_set_at=NOW(),
-         status='awaiting_payment', updated_at=NOW()
-       WHERE id=? RETURNING *`,
-      data.production_deadline, u.id, id,
+         production_deadline = ?::date,
+         work_start_date = ?::date,
+         work_end_date = ?::date,
+         deadline_set_by = ?, deadline_set_at = NOW(),
+         status = ?, updated_at = NOW()
+       WHERE id = ? RETURNING *`,
+      data.production_deadline, data.work_start_date, data.work_end_date,
+      u.id, nextStatus, id,
     );
+    const noteText = `Сдача клиенту: ${data.production_deadline} · работа ${data.work_start_date} — ${data.work_end_date}${data.note ? '. ' + data.note : ''}`;
     await tx.run(
       `INSERT INTO production_request_price_history (request_id, event, note, actor_id)
        VALUES (?, 'deadline_set', ?, ?)`,
-      id, `Срок сдачи: ${data.production_deadline}${data.note ? '. ' + data.note : ''}`, u.id,
+      id, noteText, u.id,
     );
     await tx.run(
       `INSERT INTO production_request_messages (request_id, user_id, kind, text)
        VALUES (?, ?, 'system', ?)`,
-      id, u.id, `Срок сдачи утверждён: ${data.production_deadline.slice(0, 10)}. Ждём оплату для запуска в работу.`,
+      id, u.id, `📅 Сроки обновлены. Сдача клиенту: ${data.production_deadline}. Работа: ${data.work_start_date} — ${data.work_end_date}.`,
     );
     return r;
   });
-  await logAction(req, { action: 'production_request.deadline_set', entity_type: 'production_request', entity_id: id, details: { deadline: data.production_deadline } });
-  await notifyManagerOfRequest(id, upd, `Срок сдачи утверждён (${data.production_deadline.slice(0, 10)}). Ожидается оплата.`, u).catch(() => {});
+  await logAction(req, {
+    action: 'production_request.deadline_set',
+    entity_type: 'production_request', entity_id: id,
+    details: { deadline: data.production_deadline, work_start: data.work_start_date, work_end: data.work_end_date },
+  });
+  await notifyManagerOfRequest(id, upd, `Срок сдачи ${data.production_deadline}. Работа ${data.work_start_date}–${data.work_end_date}.`, u).catch(() => {});
   res.json(sanitizeRequest(upd, u));
 }));
 
@@ -723,6 +747,7 @@ router.get('/calendar/entries', asyncHandler(async (req, res) => {
   }
   const rows = await db.all(
     `SELECT r.id, r.title, r.status, r.production_deadline, r.deadline_set_at,
+            r.work_start_date, r.work_end_date,
             r.approved_at, r.payment_received_at, r.fulfilled_at, r.paid_at, r.created_at,
             r.client_price, r.reward_computed,
             m.name AS manager_name,

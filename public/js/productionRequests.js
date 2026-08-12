@@ -435,22 +435,37 @@ async function openViewModal(id, onDone) {
       body.append(uploadCalcBtn);
     }
 
-    // Срок сдачи (после утверждения).
+    // Срок сдачи + период работы (после утверждения).
     if (req.production_deadline) {
       const daysLeft = Math.ceil((new Date(req.production_deadline) - Date.now()) / (1000 * 60 * 60 * 24));
       const overdue = daysLeft < 0;
-      body.append(el('div', {
+      const box = el('div', {
         style: {
           padding: '10px', borderRadius: '6px', marginBottom: '10px', fontSize: '13px',
           background: overdue ? '#fee2e2' : (daysLeft < 3 ? '#fef3c7' : '#dbeafe'),
           border: `1px solid ${overdue ? '#fca5a5' : (daysLeft < 3 ? '#fde68a' : '#93c5fd')}`,
         },
       },
-        el('b', {}, '📅 Срок сдачи: ', fmtDate(req.production_deadline)),
-        overdue
-          ? el('span', { style: { color: '#dc2626' } }, ` — ⚠️ просрочено на ${Math.abs(daysLeft)} дн.`)
-          : el('span', {}, ` — осталось ${daysLeft} дн.`),
-      ));
+        el('div', {},
+          el('b', {}, '📅 Сдача клиенту: ', fmtDate(req.production_deadline)),
+          overdue
+            ? el('span', { style: { color: '#dc2626' } }, ` — ⚠️ просрочено на ${Math.abs(daysLeft)} дн.`)
+            : el('span', {}, ` — осталось ${daysLeft} дн.`),
+        ),
+      );
+      if (req.work_start_date && req.work_end_date) {
+        const days = Math.ceil((new Date(req.work_end_date) - new Date(req.work_start_date)) / (1000 * 60 * 60 * 24)) + 1;
+        box.append(el('div', { style: { marginTop: '4px', fontSize: '12px', color: '#374151' } },
+          `🛠 Работа производства: ${fmtDate(req.work_start_date)} — ${fmtDate(req.work_end_date)} (${days} дн.)`,
+        ));
+      }
+      // Кнопка «изменить сроки» для производства/admin, если в awaiting_payment/in_progress.
+      if ((isProd(user) || isAdmin(user)) && ['awaiting_payment', 'in_progress'].includes(req.status)) {
+        box.append(el('div', { style: { marginTop: '6px' } },
+          el('a', { href: '#', style: { fontSize: '12px', color: '#3b82f6' }, onClick: (e) => { e.preventDefault(); openDeadlineModal(req, onDone); } }, '✏️ Изменить сроки'),
+        ));
+      }
+      body.append(box);
     }
 
     // Финансы. Что видит зависит от роли.
@@ -645,29 +660,94 @@ function renderFilesBox(title, files, bg = '#f9fafb', border = '#e5e7eb') {
 
 // ============================================================
 // МОДАЛКА: утверждение срока сдачи (approved → awaiting_payment)
+// Три даты: сдача клиенту + начало работ + конец работ. Плюс автоподсчёт
+// длительности. Плюс валидация start ≤ end ≤ deadline.
 // ============================================================
 function openDeadlineModal(req, onDone) {
-  const dateI = el('input', { type: 'date', style: { padding: '8px' }, min: new Date().toISOString().slice(0, 10) });
-  const noteI = el('textarea', { rows: 2, style: { width: '100%', padding: '8px' }, placeholder: 'Комментарий (опционально)' });
+  const today = new Date().toISOString().slice(0, 10);
+  const toDate = (s) => (s ? String(s).slice(0, 10) : '');
+  const deadlineI = el('input', { type: 'date', style: { padding: '8px' }, min: today, value: toDate(req.production_deadline) });
+  const durationI = el('input', { type: 'number', min: '1', max: '365', style: { padding: '8px', width: '90px' }, placeholder: 'дней' });
+  const startI = el('input', { type: 'date', style: { padding: '8px' }, min: today, value: toDate(req.work_start_date) });
+  const endI = el('input', { type: 'date', style: { padding: '8px' }, min: today, value: toDate(req.work_end_date) });
+  const info = el('div', { style: { fontSize: '12px', color: '#374151', marginTop: '4px' } });
+
+  // Автоподсказка длительности при вводе start/end.
+  function recalcDuration() {
+    if (startI.value && endI.value) {
+      const days = Math.max(1, Math.ceil((new Date(endI.value) - new Date(startI.value)) / (1000 * 60 * 60 * 24)) + 1);
+      durationI.value = String(days);
+      updateInfo();
+    }
+  }
+  // При вводе длительности + известной дате сдачи — автоставим start.
+  function fillFromDuration() {
+    const n = Number(durationI.value);
+    if (!n || !deadlineI.value) return;
+    const end = new Date(deadlineI.value);
+    const start = new Date(end);
+    start.setDate(end.getDate() - (n - 1));
+    startI.value = start.toISOString().slice(0, 10);
+    endI.value = end.toISOString().slice(0, 10);
+    updateInfo();
+  }
+  function updateInfo() {
+    if (deadlineI.value && startI.value && endI.value) {
+      if (startI.value > endI.value) { info.textContent = '⚠️ Начало работ позже окончания'; info.style.color = '#dc2626'; return; }
+      if (endI.value > deadlineI.value) { info.textContent = '⚠️ Окончание работ позже срока сдачи клиенту'; info.style.color = '#dc2626'; return; }
+      const days = Math.ceil((new Date(endI.value) - new Date(startI.value)) / (1000 * 60 * 60 * 24)) + 1;
+      const bufferDays = Math.floor((new Date(deadlineI.value) - new Date(endI.value)) / (1000 * 60 * 60 * 24));
+      info.textContent = `Работа: ${days} дн. · Запас до сдачи: ${bufferDays} дн.`;
+      info.style.color = '#059669';
+    } else info.textContent = '';
+  }
+  deadlineI.addEventListener('change', updateInfo);
+  startI.addEventListener('change', recalcDuration);
+  endI.addEventListener('change', recalcDuration);
+  durationI.addEventListener('change', fillFromDuration);
+  setTimeout(updateInfo, 0);
+
   const body = el('div', {},
     el('div', { style: { padding: '8px', background: '#eff6ff', borderRadius: '4px', marginBottom: '8px', fontSize: '12px' } },
-      '💡 После утверждения срока заявка появится в производственном календаре и перейдёт в статус «⌛ Ждёт оплаты». Ставь реалистичную дату — учти загрузку цеха и время на материалы. Изменить срок потом сложнее.',
+      '💡 Три даты: ',
+      el('b', {}, 'Сдача клиенту'),
+      ' — когда обещаем отдать. ',
+      el('b', {}, 'Работа'),
+      ' — реальный период производства (например 2 дня из 30-дневного окна). Между работой и сдачей — запас на форс-мажоры/логистику. В календаре плитка показывает только период РАБОТЫ — цех видит реальную нагрузку.',
     ),
-    el('label', { style: { fontSize: '12px', fontWeight: '600' } }, 'Планируемая дата сдачи:'),
-    dateI,
-    el('label', { style: { fontSize: '12px', fontWeight: '600', marginTop: '8px', display: 'block' } }, 'Комментарий:'),
-    noteI,
+    el('label', { style: { fontSize: '12px', fontWeight: '600' } }, '📅 Сдача клиенту:'),
+    deadlineI,
+    el('label', { style: { fontSize: '12px', fontWeight: '600', marginTop: '10px', display: 'block' } }, '🛠 Период работы производства:'),
+    el('div', { style: { display: 'flex', gap: '6px', alignItems: 'center', flexWrap: 'wrap' } },
+      el('span', { style: { fontSize: '11px', color: '#6b7280' } }, 'с'),
+      startI,
+      el('span', { style: { fontSize: '11px', color: '#6b7280' } }, 'по'),
+      endI,
+      el('span', { style: { fontSize: '11px', color: '#6b7280' } }, '·'),
+      el('span', { style: { fontSize: '11px', color: '#6b7280' } }, 'или задать длит.'),
+      durationI,
+      el('span', { style: { fontSize: '11px', color: '#6b7280' } }, 'дн.'),
+    ),
+    info,
+    el('label', { style: { fontSize: '12px', fontWeight: '600', marginTop: '10px', display: 'block' } }, 'Комментарий:'),
+    el('textarea', { rows: 2, id: 'deadline_note', style: { width: '100%', padding: '8px' }, placeholder: 'Опционально: что важно учесть, откуда запас и т.п.' }),
   );
-  openModal('Утвердить срок сдачи', body, {
+
+  openModal('Утвердить сроки заявки', body, {
     primaryLabel: 'Утвердить',
     onSubmit: async () => {
-      if (!dateI.value) { toast('Укажите дату', 'error'); return false; }
+      if (!deadlineI.value) { toast('Укажите срок сдачи клиенту', 'error'); return false; }
+      if (!startI.value || !endI.value) { toast('Укажите период работы производства', 'error'); return false; }
+      if (startI.value > endI.value) { toast('Начало работ позже окончания', 'error'); return false; }
+      if (endI.value > deadlineI.value) { toast('Окончание работ позже срока сдачи', 'error'); return false; }
       try {
         await api.prSetDeadline(req.id, {
-          production_deadline: new Date(dateI.value + 'T18:00:00').toISOString(),
-          note: noteI.value.trim() || null,
+          production_deadline: deadlineI.value,
+          work_start_date: startI.value,
+          work_end_date: endI.value,
+          note: document.getElementById('deadline_note')?.value.trim() || null,
         });
-        toast('Срок утверждён. Заявка в календаре, ждёт оплаты.', 'success');
+        toast('Сроки сохранены. Заявка в календаре.', 'success');
         if (onDone) await onDone();
         closeModal(); closeModal();
         return true;
@@ -792,15 +872,17 @@ export async function renderProductionCalendar(main) {
   },
     el('summary', { style: { cursor: 'pointer', fontWeight: '600', color: '#374151' } }, '📘 Как читать календарь'),
     el('div', { style: { marginTop: '6px', lineHeight: '1.5' } },
-      '• Каждая плитка — заявка, растянутая на все дни работы над ней (от начала до срока).',
+      '• Плитка — период РАБОТ производства (например 2 дня), а не всё время ожидания клиента.',
       el('br', {}),
-      '• Плитка с ⚑ (флажок) и ярким цветом — день сдачи.',
+      '• Плитка ⚑ (яркая) — день сдачи клиенту.',
       el('br', {}),
-      '• Цвет по статусу: 🟠 ждёт оплаты · 🔵 в работе · 🟢 выполнено.',
+      '• Контурная плитка (пунктир) — день сдачи ВНЕ периода работ (буфер на форс-мажоры/логистику).',
+      el('br', {}),
+      '• Цвет по статусу: 🟠 ждёт оплаты · 🔵 в работе · 🟢 выполнено · 💵 выплачено.',
       el('br', {}),
       '• Синяя рамка = сегодня. Приглушённые ячейки — соседние месяцы.',
       el('br', {}),
-      '• Жёлтая панель сверху = заявки, где срок ещё не утверждён (клик по чипу → карточка → «Утвердить срок сдачи»).',
+      '• Жёлтая панель сверху = заявки, где сроки ещё не утверждены (клик по чипу → карточка → «Утвердить сроки»).',
     ),
   );
   const awaitBox = el('div', { style: { marginBottom: '12px' } });
@@ -866,21 +948,35 @@ export async function renderProductionCalendar(main) {
       entries = r.entries || [];
     } catch (e) { grid.textContent = 'Ошибка: ' + e.message; return; }
 
-    // Индексируем по каждому дню периода [start, end], а не только дню сдачи.
-    // start = COALESCE(payment_received_at, deadline_set_at, approved_at, created_at)
-    // end   = COALESCE(fulfilled_at, production_deadline)
-    // Так в календаре видно ВСЁ время работы над заявкой.
+    // Индексируем по каждому дню периода РАБОТЫ производства.
+    //   Если утверждены work_start_date / work_end_date — используем их (плановая
+    //   загрузка цеха: реальные 2 дня, а не 30-дневное ожидание клиента).
+    //   Иначе fallback: старая логика от начала обработки до сдачи (не портит
+    //   отображение для заявок, где новые поля ещё не заполнены).
+    // Отдельно помечаем день production_deadline (сдача клиенту) — флажок ⚑.
     const byDate = {};
     for (const e of entries) {
-      const startISO = e.payment_received_at || e.deadline_set_at || e.approved_at || e.created_at;
-      const endISO = e.fulfilled_at || e.production_deadline;
-      if (!startISO || !endISO) continue;
-      const start = new Date(startISO.slice(0, 10));
-      const end = new Date(endISO.slice(0, 10));
-      const dlKey = e.production_deadline.slice(0, 10);
+      const dlKey = e.production_deadline ? e.production_deadline.slice(0, 10) : null;
+      let startKey, endKey;
+      if (e.work_start_date && e.work_end_date) {
+        startKey = e.work_start_date.slice(0, 10);
+        endKey = e.work_end_date.slice(0, 10);
+      } else {
+        const startISO = e.payment_received_at || e.deadline_set_at || e.approved_at || e.created_at;
+        const endISO = e.fulfilled_at || e.production_deadline;
+        if (!startISO || !endISO) continue;
+        startKey = startISO.slice(0, 10);
+        endKey = endISO.slice(0, 10);
+      }
+      const start = new Date(startKey);
+      const end = new Date(endKey);
       for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
         const key = d.toISOString().slice(0, 10);
         (byDate[key] = byDate[key] || []).push({ ...e, _isDeadlineDay: key === dlKey });
+      }
+      // Если день сдачи находится ВНЕ рабочего периода — тоже покажем плитку.
+      if (dlKey && (dlKey < startKey || dlKey > endKey)) {
+        (byDate[dlKey] = byDate[dlKey] || []).push({ ...e, _isDeadlineDay: true, _dlOnly: true });
       }
     }
 
@@ -949,13 +1045,18 @@ function renderCalendarCell(date, byDate, outOfMonth, onDone) {
   for (const req of items) {
     const status = STATUSES.find((s) => s.key === req.status) || { color: '#6b7280' };
     const isDeadline = req._isDeadlineDay;
-    // День сдачи — плитка ярче и с флажком, обычный день — заливка легче.
+    const dlOnly = req._dlOnly;
+    // День сдачи — плитка ярче и с флажком.
+    // Обычный рабочий день — легкая заливка.
+    // «Только сдача» (день deadline ВНЕ работы, буфер) — контурная плитка.
+    const bg = dlOnly ? '#fff' : (isDeadline ? status.color : status.color + '33');
+    const color = dlOnly ? status.color : (isDeadline ? '#fff' : status.color);
+    const border = dlOnly ? `1px dashed ${status.color}` : 'none';
     cell.append(el('div', {
-      title: `${req.title} · ${clientText(req)}${req.client_price ? ' · ' + fmtMoney(Number(req.client_price), 'RUB') : ''}${isDeadline ? ' · СДАЧА' : ''}`,
+      title: `${req.title} · ${clientText(req)}${req.client_price ? ' · ' + fmtMoney(Number(req.client_price), 'RUB') : ''}${isDeadline ? ' · СДАЧА' : ' · РАБОТА'}`,
       style: {
         fontSize: '10px', padding: '2px 4px', marginBottom: '2px',
-        background: isDeadline ? status.color : status.color + '33',
-        color: isDeadline ? '#fff' : status.color,
+        background: bg, color, border,
         borderLeft: `3px solid ${status.color}`, borderRadius: '2px',
         overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
         cursor: 'pointer', lineHeight: '1.2', fontWeight: isDeadline ? '700' : '400',

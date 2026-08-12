@@ -494,7 +494,7 @@ export const db = {
 // БАМПАЙ ПРИ КАЖДОМ ДОБАВЛЕНИИ МИГРАЦИИ. Текущие миграции прогоняются
 // только если запись в app_settings.schema_version отличается. Это экономит
 // ~500-2000мс на каждом холодном старте serverless-лямбды.
-const SCHEMA_VERSION = 38;
+const SCHEMA_VERSION = 39;
 
 // Транзиентные ошибки коннекта — стоит ретраить (БД просыпается, сетевой сбой).
 // Явные не-транзиентные (auth, protocol) — ретрай не поможет, лучше сразу упасть.
@@ -1431,6 +1431,14 @@ export async function ensureInitialized() {
       // сообщением чата. В общем списке файлов фильтруются (не дублируются).
       await pool.query(`ALTER TABLE production_request_files ADD COLUMN IF NOT EXISTS chat_message_id INTEGER REFERENCES production_request_messages(id) ON DELETE SET NULL`);
       await pool.query(`CREATE INDEX IF NOT EXISTS idx_prod_request_files_chat_msg ON production_request_files(chat_message_id) WHERE chat_message_id IS NOT NULL`);
+
+      // ===== Разделение сроков: сдача клиенту vs работа производства (SCHEMA_VERSION 39) =====
+      // production_deadline уже был — это дата сдачи клиенту. Добавляем плановый
+      // период работ производства: work_start_date и work_end_date (DATE, без времени).
+      // work_start_date ≤ work_end_date ≤ production_deadline (валидируется в API).
+      // Календарь рисует полосу по работе (не по всему периоду ожидания клиента).
+      await pool.query(`ALTER TABLE production_requests ADD COLUMN IF NOT EXISTS work_start_date DATE`);
+      await pool.query(`ALTER TABLE production_requests ADD COLUMN IF NOT EXISTS work_end_date DATE`);
 
       // Маркер успешно прогнанных миграций — следующие холодные старты пропустят DDL.
       await pool.query(
