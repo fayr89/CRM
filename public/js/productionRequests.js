@@ -41,6 +41,8 @@ export async function renderProductionRequests(main) {
         ? el('button', { class: 'btn btn-primary', onClick: () => openCreateModal(() => reload()) }, '+ Новая заявка')
         : null,
     ),
+    // Кратка-подсказка вверху раздела — раскрывается по клику.
+    renderInstructionHint(user),
   );
 
   const showCancelledToggle = el('label', { style: { fontSize: '13px', color: '#6b7280', marginBottom: '8px', display: 'inline-block' } },
@@ -248,6 +250,15 @@ function openCreateModal(onDone) {
   }
 
   const body = el('div', {},
+    el('div', {
+      style: { padding: '8px', background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: '4px', marginBottom: '10px', fontSize: '12px', color: '#1e40af' },
+    },
+      '💡 ',
+      el('b', {}, 'Совет:'),
+      ' чем точнее опишешь изделие и лучше приложишь фото/чертежи — тем быстрее и точнее просчёт. Не забудь ',
+      el('b', {}, '«Отправить на просчёт»'),
+      ' после создания, иначе заявка останется черновиком у тебя.',
+    ),
     el('label', { style: { fontSize: '12px', fontWeight: '600' } }, 'Клиент (обязательно):'),
     clientSearchRow, clientHint, clientMatches, clientSelected,
     el('label', { style: { fontSize: '12px', fontWeight: '600', marginTop: '12px', display: 'block' } }, 'Название заявки:'),
@@ -554,6 +565,28 @@ function closeModal() {
   if (b.length) b[b.length - 1].remove();
 }
 
+// Свёрнутая подсказка по роли — читается один раз, потом сворачивается через localStorage.
+function renderInstructionHint(user) {
+  const storeKey = 'pr_hint_seen_' + user.role;
+  let seen = false;
+  try { seen = localStorage.getItem(storeKey) === '1'; } catch { /* ignore */ }
+  const bodyText = isProd(user)
+    ? '1) Заявки от менеджеров сортируются в канбане слева-направо. Твоя колонка — «🧮 На просчёте». 2) Открой карточку, скачай файлы менеджера, приложи свою калькуляцию (жёлтая кнопка — менеджер её НЕ видит), задай цену клиенту и вознаграждение. 3) После согласования клиентом — утверди срок сдачи (появится в календаре). 4) Когда оплата пришла — «Оплата получена», заявка в работе. 5) Изделие готово — «Готово».'
+    : isAdmin(user)
+      ? 'Ты видишь всё: себестоимость, цену клиенту, вознаграждение, файлы калькуляции. Твоя финальная кнопка — «💵 Выплатить менеджеру» после «Выполнено».'
+      : '1) Создай заявку («+ Новая заявка») с описанием и файлами. Обязательно клиент. 2) Отправь на просчёт — придёт готовая цена + твоё вознаграждение. 3) Согласуй с клиентом. Если клиент торгуется — «Клиент просит другую цену». 4) Отслеживай в календаре срок. 5) Когда админ отметит выплату — вознаграждение твоё.';
+  const box = el('details', {
+    style: { padding: '8px 12px', background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: '6px', margin: '8px 0', fontSize: '13px' },
+    open: !seen,
+  });
+  const summary = el('summary', { style: { cursor: 'pointer', fontWeight: '600', color: '#1e40af' } }, '📘 Как работать в этом разделе (краткая инструкция)');
+  box.append(summary, el('div', { style: { marginTop: '6px', lineHeight: '1.5' } }, bodyText));
+  box.addEventListener('toggle', () => {
+    if (!box.open) { try { localStorage.setItem(storeKey, '1'); } catch { /* ignore */ } }
+  });
+  return box;
+}
+
 function renderFilesBox(title, files, bg = '#f9fafb', border = '#e5e7eb') {
   const box = el('div', { style: { padding: '8px', background: bg, border: `1px solid ${border}`, borderRadius: '6px', marginBottom: '10px' } },
     el('div', { style: { fontSize: '11px', fontWeight: '600', color: '#374151', marginBottom: '4px' } }, title),
@@ -591,7 +624,7 @@ function openDeadlineModal(req, onDone) {
   const noteI = el('textarea', { rows: 2, style: { width: '100%', padding: '8px' }, placeholder: 'Комментарий (опционально)' });
   const body = el('div', {},
     el('div', { style: { padding: '8px', background: '#eff6ff', borderRadius: '4px', marginBottom: '8px', fontSize: '12px' } },
-      'После утверждения срока заявка появится в производственном календаре и перейдёт в статус «⌛ Ждёт оплаты».',
+      '💡 После утверждения срока заявка появится в производственном календаре и перейдёт в статус «⌛ Ждёт оплаты». Ставь реалистичную дату — учти загрузку цеха и время на материалы. Изменить срок потом сложнее.',
     ),
     el('label', { style: { fontSize: '12px', fontWeight: '600' } }, 'Планируемая дата сдачи:'),
     dateI,
@@ -727,10 +760,26 @@ export async function renderProductionCalendar(main) {
   let viewMonth = now.getMonth(); // 0..11
 
   const header = el('div', { class: 'page-header' });
+  const legend = el('details', {
+    style: { padding: '8px 12px', background: '#f9fafb', border: '1px solid #e5e7eb', borderRadius: '6px', marginBottom: '10px', fontSize: '12px' },
+  },
+    el('summary', { style: { cursor: 'pointer', fontWeight: '600', color: '#374151' } }, '📘 Как читать календарь'),
+    el('div', { style: { marginTop: '6px', lineHeight: '1.5' } },
+      '• Каждая плитка — заявка, растянутая на все дни работы над ней (от начала до срока).',
+      el('br', {}),
+      '• Плитка с ⚑ (флажок) и ярким цветом — день сдачи.',
+      el('br', {}),
+      '• Цвет по статусу: 🟠 ждёт оплаты · 🔵 в работе · 🟢 выполнено.',
+      el('br', {}),
+      '• Синяя рамка = сегодня. Приглушённые ячейки — соседние месяцы.',
+      el('br', {}),
+      '• Жёлтая панель сверху = заявки, где срок ещё не утверждён (клик по чипу → карточка → «Утвердить срок сдачи»).',
+    ),
+  );
   const awaitBox = el('div', { style: { marginBottom: '12px' } });
   const nav = el('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' } });
   const grid = el('div', {});
-  main.append(header, awaitBox, nav, grid);
+  main.append(header, legend, awaitBox, nav, grid);
 
   async function reload() {
     // Шапка.
@@ -918,6 +967,15 @@ function openPriceModal(req, onDone) {
   updatePreview();
 
   const body = el('div', {},
+    el('div', {
+      style: { padding: '8px', background: '#fef3c7', border: '1px solid #fde68a', borderRadius: '4px', marginBottom: '10px', fontSize: '12px', color: '#78350f' },
+    },
+      '💡 ',
+      el('b', {}, 'Важно:'),
+      ' менеджер увидит ТОЛЬКО «Цена клиенту» и своё вознаграждение. Себестоимость и маржу видишь только ты, директор и админ. ',
+      el('b', {}, 'Не забудь приложить калькуляцию'),
+      ' через жёлтую кнопку «➕ Приложить калькуляцию» на карточке заявки — этот файл менеджер тоже не увидит.',
+    ),
     el('label', { style: { fontSize: '12px', fontWeight: '600' } }, 'Себестоимость (материалы + работа + накладные) ₽:'), costI,
     el('label', { style: { fontSize: '12px', fontWeight: '600', marginTop: '8px', display: 'block' } }, 'Конечная цена клиенту ₽ (менеджер увидит только её):'), priceI,
     el('label', { style: { fontSize: '12px', fontWeight: '600', marginTop: '8px', display: 'block' } }, 'Вознаграждение менеджера:'),
