@@ -112,12 +112,13 @@ router.get(
     if (!isFullAccess(u) && row.manager_id !== u.id) {
       throw Forbidden('Заявка не ваша');
     }
-    // Файлы: менеджер не видит production_only.
+    // Файлы: менеджер не видит production_only. Файлы чата (chat_message_id
+    // IS NOT NULL) исключаем из общего списка — они показываются внутри чата.
     const canSeeAllFiles = isFullAccess(u);
     const files = await db.all(
       `SELECT id, filename, mime, size_bytes, uploaded_at, visibility, uploaded_by
        FROM production_request_files
-       WHERE request_id = ?${canSeeAllFiles ? '' : " AND visibility = 'all'"}
+       WHERE request_id = ? AND chat_message_id IS NULL${canSeeAllFiles ? '' : " AND visibility = 'all'"}
        ORDER BY id`,
       id,
     );
@@ -599,7 +600,7 @@ router.delete('/files/:fileId', asyncHandler(async (req, res) => {
 
 // ============ ЧАТ В ЗАЯВКЕ ============
 
-// GET /:id/messages — весь тред.
+// GET /:id/messages — весь тред. Возвращает вложение файла (если было).
 router.get('/:id/messages', asyncHandler(async (req, res) => {
   const id = Number(req.params.id);
   const u = req.user;
@@ -607,30 +608,72 @@ router.get('/:id/messages', asyncHandler(async (req, res) => {
   if (!row) throw NotFound('Заявка не найдена');
   if (!isFullAccess(u) && row.manager_id !== u.id) throw Forbidden('Не ваша');
   const msgs = await db.all(
-    `SELECT m.*, u.name AS user_name, u.role AS user_role
-     FROM production_request_messages m LEFT JOIN users u ON u.id = m.user_id
+    `SELECT m.id, m.request_id, m.user_id, m.text, m.kind, m.created_at,
+            u.name AS user_name, u.role AS user_role,
+            f.id AS attachment_id, f.filename AS attachment_filename,
+            f.mime AS attachment_mime, f.size_bytes AS attachment_size
+     FROM production_request_messages m
+     LEFT JOIN users u ON u.id = m.user_id
+     LEFT JOIN production_request_files f ON f.chat_message_id = m.id
      WHERE m.request_id = ? ORDER BY m.created_at ASC`,
     id,
   );
   res.json({ messages: msgs });
 }));
 
-// POST /:id/messages — написать сообщение.
+// POST /:id/messages — написать сообщение. Опционально с вложением.
+// Тело: { text: string, attachment?: { filename, mime, data_base64 } }.
+// Хотя бы одно из text/attachment должно быть.
 router.post('/:id/messages', asyncHandler(async (req, res) => {
   const id = Number(req.params.id);
   const u = req.user;
   const row = await db.get(`SELECT * FROM production_requests WHERE id = ?`, id);
   if (!row) throw NotFound('Заявка не найдена');
   if (!isFullAccess(u) && row.manager_id !== u.id) throw Forbidden('Не ваша');
-  const data = z.object({ text: z.string().min(1).max(4000) }).parse(req.body || {});
-  const m = await db.get(
-    `INSERT INTO production_request_messages (request_id, user_id, text)
-     VALUES (?, ?, ?) RETURNING *`,
-    id, u.id, data.text,
-  );
-  // Уведомляем всех участников кроме автора.
-  await notifyChatParticipants(id, row, u, data.text.slice(0, 200)).catch(() => {});
-  res.status(201).json(m);
+  const data = z.object({
+    text: z.string().max(4000).optional().default(''),
+    attachment: z.object({
+      filename: z.string().max(300),
+      mime: z.string().max(100).optional().nullable(),
+      data_base64: z.string(),
+    }).optional().nullable(),
+  }).parse(req.body || {});
+  const hasText = (data.text || '').trim().length > 0;
+  const hasAttachment = !!data.attachment;
+  if (!hasText && !hasAttachment) throw BadRequest('Введите текст или прикрепите файл');
+
+  const result = await db.withTransaction(async (tx) => {
+    // Сообщение (текст может быть пустым если только файл).
+    const m = await tx.get(
+      `INSERT INTO production_request_messages (request_id, user_id, text)
+       VALUES (?, ?, ?) RETURNING *`,
+      id, u.id, hasText ? data.text.trim() : (hasAttachment ? `📎 ${data.attachment.filename}` : ''),
+    );
+    let attachment = null;
+    if (hasAttachment) {
+      const raw = stripDataUri(data.attachment.data_base64);
+      const size = Math.floor(raw.length * 0.75);
+      if (size > MAX_FILE_BYTES) throw BadRequest('Файл больше 10 МБ');
+      attachment = await tx.get(
+        `INSERT INTO production_request_files
+           (request_id, filename, mime, size_bytes, data_base64, uploaded_by, visibility, chat_message_id)
+         VALUES (?, ?, ?, ?, ?, ?, 'all', ?)
+         RETURNING id, filename, mime, size_bytes`,
+        id, data.attachment.filename, data.attachment.mime || null, size, raw, u.id, m.id,
+      );
+    }
+    return {
+      ...m,
+      attachment_id: attachment?.id || null,
+      attachment_filename: attachment?.filename || null,
+      attachment_mime: attachment?.mime || null,
+      attachment_size: attachment?.size_bytes || null,
+    };
+  });
+
+  const preview = hasText ? data.text.trim().slice(0, 200) : `📎 ${data.attachment.filename}`;
+  await notifyChatParticipants(id, row, u, preview).catch(() => {});
+  res.status(201).json(result);
 }));
 
 // ============ КАЛЕНДАРЬ ============

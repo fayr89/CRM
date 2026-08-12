@@ -622,11 +622,33 @@ function openDeadlineModal(req, onDone) {
 async function renderChatSection(container, requestId) {
   const list = el('div', { style: { maxHeight: '260px', overflowY: 'auto', padding: '6px', background: '#f9fafb', borderRadius: '6px', fontSize: '13px' } });
   const input = el('textarea', { rows: 2, style: { width: '100%', padding: '6px', marginTop: '6px' }, placeholder: 'Написать сообщение…' });
-  const sendBtn = el('button', { class: 'btn btn-primary', style: { marginTop: '4px' } }, 'Отправить');
+  const attachLabel = el('label', {
+    style: { display: 'inline-block', padding: '4px 10px', background: '#e5e7eb', color: '#374151', borderRadius: '4px', cursor: 'pointer', fontSize: '12px' },
+  }, '📎 Прикрепить');
+  const attachInput = el('input', { type: 'file', style: { display: 'none' } });
+  attachLabel.append(attachInput);
+  const attachedInfo = el('span', { style: { marginLeft: '8px', fontSize: '12px', color: '#6b7280' } });
+  const sendBtn = el('button', { class: 'btn btn-primary', style: { marginLeft: '8px' } }, 'Отправить');
+
+  let pendingAttachment = null; // { filename, mime, data_base64 }
+
+  attachInput.addEventListener('change', async () => {
+    const f = attachInput.files?.[0]; if (!f) return;
+    if (f.size > 10 * 1024 * 1024) { toast('Файл больше 10 МБ', 'error'); attachInput.value = ''; return; }
+    const b64 = await new Promise((r, j) => { const rd = new FileReader(); rd.onload = () => r(rd.result); rd.onerror = j; rd.readAsDataURL(f); });
+    pendingAttachment = { filename: f.name, mime: f.type, data_base64: b64 };
+    attachedInfo.textContent = `📎 ${f.name} (${(f.size / 1024).toFixed(0)} КБ) — прикреплено. `;
+    // Ссылка «убрать».
+    const rmBtn = el('a', { href: '#', style: { color: '#ef4444' }, onClick: (e) => {
+      e.preventDefault(); pendingAttachment = null; attachInput.value = ''; attachedInfo.textContent = '';
+    } }, 'убрать');
+    attachedInfo.append(rmBtn);
+  });
 
   container.append(
     el('div', { style: { fontSize: '12px', fontWeight: '600', color: '#374151', marginTop: '10px', paddingTop: '10px', borderTop: '1px solid #e5e7eb' } }, '💬 Обсуждение'),
-    list, input, sendBtn,
+    list, input,
+    el('div', { style: { marginTop: '6px', display: 'flex', alignItems: 'center', flexWrap: 'wrap' } }, attachLabel, attachedInfo, sendBtn),
   );
 
   async function reload() {
@@ -638,7 +660,7 @@ async function renderChatSection(container, requestId) {
       if (!msgs.length) list.append(el('div', { style: { color: '#9ca3af', padding: '6px' } }, 'Пока нет сообщений'));
       for (const m of msgs) {
         const isSys = m.kind === 'system';
-        list.append(el('div', {
+        const box = el('div', {
           style: {
             padding: '4px 8px', margin: '3px 0', borderRadius: '4px',
             background: isSys ? '#eff6ff' : '#fff',
@@ -650,8 +672,32 @@ async function renderChatSection(container, requestId) {
           el('div', { style: { fontSize: '11px', color: '#6b7280', marginBottom: '2px' } },
             isSys ? '⚙ система' : `${m.user_name || '?'} · ${fmtDateTime(m.created_at)}`,
           ),
-          el('div', { style: { whiteSpace: 'pre-wrap' } }, m.text),
-        ));
+          m.text ? el('div', { style: { whiteSpace: 'pre-wrap' } }, m.text) : null,
+        );
+        // Вложение — если есть.
+        if (m.attachment_id) {
+          box.append(el('div', { style: { marginTop: '4px' } },
+            el('a', {
+              href: '#',
+              style: { color: '#3b82f6', textDecoration: 'underline', fontSize: '13px' },
+              onClick: async (e) => {
+                e.preventDefault();
+                try {
+                  const res = await fetch(`/api/production-requests/files/${m.attachment_id}`, { headers: { Authorization: 'Bearer ' + localStorage.getItem('crm_token') } });
+                  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                  const blob = await res.blob();
+                  const url = URL.createObjectURL(blob);
+                  const a = document.createElement('a');
+                  a.href = url; a.download = m.attachment_filename;
+                  document.body.appendChild(a); a.click(); a.remove();
+                  URL.revokeObjectURL(url);
+                } catch (err) { toast(err.message, 'error'); }
+              },
+            }, `📎 ${m.attachment_filename}`),
+            el('span', { style: { color: '#9ca3af', fontSize: '11px', marginLeft: '6px' } }, `(${(Number(m.attachment_size) / 1024).toFixed(0)} КБ)`),
+          ));
+        }
+        list.append(box);
       }
       list.scrollTop = list.scrollHeight;
     } catch (e) { list.textContent = 'Ошибка: ' + e.message; }
@@ -659,10 +705,11 @@ async function renderChatSection(container, requestId) {
 
   sendBtn.addEventListener('click', async () => {
     const text = input.value.trim();
-    if (!text) return;
+    if (!text && !pendingAttachment) { toast('Введите текст или прикрепите файл', 'error'); return; }
     try {
-      await api.prSendMessage(requestId, text);
+      await api.prSendMessage(requestId, { text, attachment: pendingAttachment });
       input.value = '';
+      pendingAttachment = null; attachInput.value = ''; attachedInfo.textContent = '';
       await reload();
     } catch (e) { toast(e.message, 'error'); }
   });

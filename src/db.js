@@ -494,7 +494,7 @@ export const db = {
 // БАМПАЙ ПРИ КАЖДОМ ДОБАВЛЕНИИ МИГРАЦИИ. Текущие миграции прогоняются
 // только если запись в app_settings.schema_version отличается. Это экономит
 // ~500-2000мс на каждом холодном старте serverless-лямбды.
-const SCHEMA_VERSION = 37;
+const SCHEMA_VERSION = 38;
 
 // Транзиентные ошибки коннекта — стоит ретраить (БД просыпается, сетевой сбой).
 // Явные не-транзиентные (auth, protocol) — ретрай не поможет, лучше сразу упасть.
@@ -1425,6 +1425,12 @@ export async function ensureInitialized() {
 
       // Дополнительный индекс на updated_at для быстрого сортированного списка.
       await pool.query(`CREATE INDEX IF NOT EXISTS idx_prod_requests_updated ON production_requests(updated_at DESC)`);
+
+      // ===== Файлы, прикреплённые к сообщениям чата (SCHEMA_VERSION 38) =====
+      // Обычные файлы заявки (visibility='all'), но связанные с конкретным
+      // сообщением чата. В общем списке файлов фильтруются (не дублируются).
+      await pool.query(`ALTER TABLE production_request_files ADD COLUMN IF NOT EXISTS chat_message_id INTEGER REFERENCES production_request_messages(id) ON DELETE SET NULL`);
+      await pool.query(`CREATE INDEX IF NOT EXISTS idx_prod_request_files_chat_msg ON production_request_files(chat_message_id) WHERE chat_message_id IS NOT NULL`);
 
       // Маркер успешно прогнанных миграций — следующие холодные старты пропустят DDL.
       await pool.query(

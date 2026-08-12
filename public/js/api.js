@@ -389,7 +389,7 @@ export const api = {
   prUploadFile: (id, body) => request('POST', `/api/production-requests/${id}/files`, { body }),
   prDeleteFile: (fid) => request('DELETE', `/api/production-requests/files/${fid}`),
   prMessages: (id) => request('GET', `/api/production-requests/${id}/messages`),
-  prSendMessage: (id, text) => request('POST', `/api/production-requests/${id}/messages`, { body: { text } }),
+  prSendMessage: (id, body) => request('POST', `/api/production-requests/${id}/messages`, { body }),
   prCalendar: (params = {}) => request('GET', '/api/production-requests/calendar/entries', { query: params }),
 
   // МАХ-бот
