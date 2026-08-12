@@ -678,18 +678,35 @@ router.post('/:id/messages', asyncHandler(async (req, res) => {
 
 // ============ КАЛЕНДАРЬ ============
 
-// GET /calendar?from=2026-08-01&to=2026-09-30 — заявки со сроком сдачи в диапазоне.
+// GET /calendar?from=...&to=... — заявки, чей период [start, end] пересекается
+// с [from, to]. Возвращаем достаточно полей, чтобы фронт мог сам вычислить
+// начало и конец полосы:
+//   start_date = COALESCE(payment_received_at, deadline_set_at, approved_at, created_at)
+//   end_date   = COALESCE(fulfilled_at, production_deadline)
 router.get('/calendar/entries', asyncHandler(async (req, res) => {
   const u = req.user;
   const from = req.query.from ? String(req.query.from) : null;
   const to = req.query.to ? String(req.query.to) : null;
-  const where = ['r.production_deadline IS NOT NULL', `r.status NOT IN ('cancelled','rejected','paid')`];
+  // Показываем всё активное + завершённое (без cancelled/rejected).
+  // Требуем production_deadline (иначе полосу не нарисовать).
+  const where = [
+    `r.status NOT IN ('cancelled','rejected')`,
+    'r.production_deadline IS NOT NULL',
+  ];
   const params = [];
   if (!isFullAccess(u)) { where.push('r.manager_id = ?'); params.push(u.id); }
-  if (from) { where.push('r.production_deadline >= ?'); params.push(from); }
-  if (to) { where.push('r.production_deadline <= ?'); params.push(to); }
+  if (from) {
+    // Пересечение периодов: end >= from AND start <= to.
+    where.push('COALESCE(r.fulfilled_at, r.production_deadline) >= ?');
+    params.push(from);
+  }
+  if (to) {
+    where.push('COALESCE(r.payment_received_at, r.deadline_set_at, r.approved_at, r.created_at) <= ?');
+    params.push(to);
+  }
   const rows = await db.all(
     `SELECT r.id, r.title, r.status, r.production_deadline, r.deadline_set_at,
+            r.approved_at, r.payment_received_at, r.fulfilled_at, r.paid_at, r.created_at,
             r.client_price, r.reward_computed,
             m.name AS manager_name,
             c.first_name AS contact_first, c.last_name AS contact_last,
@@ -700,7 +717,7 @@ router.get('/calendar/entries', asyncHandler(async (req, res) => {
      LEFT JOIN companies co ON co.id = r.company_id
      WHERE ${where.join(' AND ')}
      ORDER BY r.production_deadline ASC
-     LIMIT 300`,
+     LIMIT 500`,
     ...params,
   );
   res.json({ entries: rows.map((r) => sanitizeRequest(r, u)) });

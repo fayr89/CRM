@@ -790,11 +790,22 @@ export async function renderProductionCalendar(main) {
       entries = r.entries || [];
     } catch (e) { grid.textContent = 'Ошибка: ' + e.message; return; }
 
-    // Индексируем по дате YYYY-MM-DD.
+    // Индексируем по каждому дню периода [start, end], а не только дню сдачи.
+    // start = COALESCE(payment_received_at, deadline_set_at, approved_at, created_at)
+    // end   = COALESCE(fulfilled_at, production_deadline)
+    // Так в календаре видно ВСЁ время работы над заявкой.
     const byDate = {};
     for (const e of entries) {
-      const d = e.production_deadline.slice(0, 10);
-      (byDate[d] = byDate[d] || []).push(e);
+      const startISO = e.payment_received_at || e.deadline_set_at || e.approved_at || e.created_at;
+      const endISO = e.fulfilled_at || e.production_deadline;
+      if (!startISO || !endISO) continue;
+      const start = new Date(startISO.slice(0, 10));
+      const end = new Date(endISO.slice(0, 10));
+      const dlKey = e.production_deadline.slice(0, 10);
+      for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
+        const key = d.toISOString().slice(0, 10);
+        (byDate[key] = byDate[key] || []).push({ ...e, _isDeadlineDay: key === dlKey });
+      }
     }
 
     // Строим сетку 7 колонок. Понедельник — первый день (RU).
@@ -861,17 +872,20 @@ function renderCalendarCell(date, byDate, outOfMonth, onDone) {
   }, String(date.getDate())));
   for (const req of items) {
     const status = STATUSES.find((s) => s.key === req.status) || { color: '#6b7280' };
+    const isDeadline = req._isDeadlineDay;
+    // День сдачи — плитка ярче и с флажком, обычный день — заливка легче.
     cell.append(el('div', {
-      title: `${req.title} · ${clientText(req)}${req.client_price ? ' · ' + fmtMoney(Number(req.client_price), 'RUB') : ''}`,
+      title: `${req.title} · ${clientText(req)}${req.client_price ? ' · ' + fmtMoney(Number(req.client_price), 'RUB') : ''}${isDeadline ? ' · СДАЧА' : ''}`,
       style: {
         fontSize: '10px', padding: '2px 4px', marginBottom: '2px',
-        background: status.color + '22', color: status.color,
+        background: isDeadline ? status.color : status.color + '33',
+        color: isDeadline ? '#fff' : status.color,
         borderLeft: `3px solid ${status.color}`, borderRadius: '2px',
         overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-        cursor: 'pointer', lineHeight: '1.2',
+        cursor: 'pointer', lineHeight: '1.2', fontWeight: isDeadline ? '700' : '400',
       },
       onClick: (e) => { e.stopPropagation(); openViewModal(req.id, onDone); },
-    }, req.title));
+    }, isDeadline ? `⚑ ${req.title}` : req.title));
   }
   return cell;
 }
