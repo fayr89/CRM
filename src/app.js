@@ -46,7 +46,6 @@ import supplyDeliveryRoutes from './routes/supplyDelivery.js';
 import callingRoutes from './routes/calling.js';
 import bootstrapRoutes from './routes/bootstrap.js';
 import pushRoutes from './routes/push.js';
-import diagDailyRoutes from './routes/diagDaily.js';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = path.resolve(__dirname, '..', 'public');
 
@@ -136,7 +135,6 @@ export function createApp({ serveStatic = true } = {}) {
     });
   });
 
-  app.use('/api/diag/daily-v979', diagDailyRoutes);
   app.use('/api/auth', authRoutes);
   app.use('/api/users', usersRoutes);
   app.use('/api/companies', companiesRoutes);
