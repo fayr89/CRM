@@ -45,87 +45,82 @@ const SALES_ROLES = ['admin', 'rop', 'manager', 'sales'];
 // Меню разбито на блоки. item.roles — кто видит, item.block — требуется блок
 // доступа ('sales'/'direct') для менеджера/продажника (admin/rop видят без блока).
 const NAV_GROUPS = [
-  { items: [{ hash: '#/dashboard', label: 'Дашборд' }] },
+  { items: [{ hash: '#/dashboard', label: '🏠 Дашборд' }] },
   {
-    title: 'B2B (менеджеры по продажам)',
+    title: '💼 Продажи',
     items: [
-      // Раздел для sales-менеджеров: воронка, сделки, лиды, контакты, B2B-заказы.
-      // Видимость: пользователь с access_blocks включающим 'sales'.
-      { hash: '#/pipeline', label: 'Воронка', roles: SALES_ROLES, block: 'sales' },
-      { hash: '#/deals', label: 'Сделки', roles: SALES_ROLES, block: 'sales' },
-      { hash: '#/direct-orders', label: 'B2B заказы', roles: SALES_ROLES, block: 'sales' },
-      { hash: '#/leads', label: 'Лиды', roles: SALES_ROLES, block: 'sales' },
-      { hash: '#/contacts', label: 'Контакты', roles: SALES_ROLES, block: 'sales' },
-      { hash: '#/companies', label: 'Компании', roles: SALES_ROLES, block: 'sales' },
-      { hash: '#/activities', label: 'Задачи', roles: SALES_ROLES, block: 'sales' },
+      // Всё для менеджера продаж в одном месте: CRM-воронка, обзвон, заявки
+      // на изделие. Видимость: SALES_ROLES + block='sales' (для manager/sales
+      // с access_blocks). Обзвон и заявки на изделие имеют доп. условие
+      // (callerOnly для обзвона, роль для заявок).
+      { hash: '#/pipeline', label: '📊 Воронка', roles: SALES_ROLES, block: 'sales' },
+      { hash: '#/deals', label: '🤝 Сделки', roles: SALES_ROLES, block: 'sales' },
+      { hash: '#/direct-orders', label: '🧾 B2B заказы', roles: SALES_ROLES, block: 'sales' },
+      { hash: '#/leads', label: '🌱 Лиды', roles: SALES_ROLES, block: 'sales' },
+      { hash: '#/contacts', label: '👤 Контакты', roles: SALES_ROLES, block: 'sales' },
+      { hash: '#/companies', label: '🏢 Компании', roles: SALES_ROLES, block: 'sales' },
+      { hash: '#/activities', label: '✅ Задачи', roles: SALES_ROLES, block: 'sales' },
+      { hash: '#/calling', label: '📞 Обзвон', roles: SALES_ROLES, callerOnly: true },
+      { hash: '#/production-requests', label: '💰 Заявки на изделие', roles: ['admin', 'rop', 'manager', 'sales'] },
     ],
   },
   {
-    title: '📞 Обзвон',
+    title: '🛒 Маркетплейсы',
     items: [
-      // Раздел «Обзвон»: базы холодных лидов, распределение, звонки менеджеров.
-      // Видимость: admin/rop всегда; остальные роли — только с флагом
-      // is_active_caller (см. navItemVisible → callerOnly).
-      { hash: '#/calling', label: 'Обзвон', roles: [...SALES_ROLES, 'admin', 'rop', 'manager', 'sales'], callerOnly: true },
+      // Продажи с площадок + касса менеджера. Видимость: SALES_ROLES с
+      // access_blocks 'direct'.
+      { hash: '#/orders', label: '📦 Продажи с площадок', roles: SALES_ROLES, block: 'direct' },
+      { hash: '#/cashbox', label: '💵 Касса', roles: [...SALES_ROLES, 'finance'], block: 'direct' },
     ],
   },
   {
-    title: 'Авито (менеджеры площадок)',
-    items: [
-      // Раздел для Avito/marketplace-менеджеров: только заказы с площадок + касса.
-      // Видимость: пользователь с access_blocks включающим 'direct'.
-      { hash: '#/orders', label: 'Продажи с площадок', roles: SALES_ROLES, block: 'direct' },
-      { hash: '#/cashbox', label: 'Касса', roles: [...SALES_ROLES, 'finance'], block: 'direct' },
-    ],
-  },
-  {
-    title: 'Каталог',
+    title: '📚 Каталог',
     items: [
       // Каталог нужен обоим блокам продаж + складу/АУС — без блок-ограничения.
-      { hash: '#/products', label: 'Каталог', roles: ['admin', 'rop', 'manager', 'sales', 'aus', 'warehouse'] },
+      { hash: '#/products', label: '📚 Каталог', roles: ['admin', 'rop', 'manager', 'sales', 'aus', 'warehouse'] },
     ],
   },
   {
-    title: 'Склад',
+    title: '🚚 Склад',
     items: [
-      { hash: '#/shipping', label: 'Отгрузки', roles: ['admin', 'warehouse'] },
-      { hash: '#/returns', label: 'Возвраты', roles: ['admin', 'warehouse', 'aus'] },
-      { hash: '#/lost-goods', label: 'Потерянные товары', roles: ['admin', 'warehouse', 'aus'] },
+      { hash: '#/shipping', label: '🚚 Отгрузки', roles: ['admin', 'warehouse'] },
+      { hash: '#/returns', label: '↩️ Возвраты', roles: ['admin', 'warehouse', 'aus'] },
+      { hash: '#/lost-goods', label: '⚠️ Потерянные товары', roles: ['admin', 'warehouse', 'aus'] },
+      { hash: '#/inventory-analytics', label: '📊 Остатки/Оборачиваемость', roles: ['admin', 'rop', 'warehouse', 'aus'] },
     ],
   },
   {
     title: '🏭 Производство',
     items: [
-      // Видимость пунктов отличается по ролям: материалы могут править админ/
-      // снабжение, техкарты — админ/начальник цеха, план — все производственные,
-      // подряды — все производственные.
-      { hash: '#/materials', label: 'Материалы', roles: ['admin', 'director_prod', 'supply', 'foreman'] },
-      { hash: '#/processing-plans', label: 'Техкарты', roles: ['admin', 'director_prod', 'foreman', 'supply'] },
-      { hash: '#/production-orders', label: 'План производства', roles: ['admin', 'director_prod', 'foreman', 'master'] },
-      { hash: '#/contracts', label: 'Подряды', roles: ['admin', 'director_prod', 'foreman', 'master'] },
+      // Материалы, техкарты, план, подряды. Плюс просчёт заявок от продаж:
+      // тот же /production-requests, но для производственных ролей.
+      { hash: '#/materials', label: '🧱 Материалы', roles: ['admin', 'director_prod', 'supply', 'foreman'] },
+      { hash: '#/processing-plans', label: '📋 Техкарты', roles: ['admin', 'director_prod', 'foreman', 'supply'] },
+      { hash: '#/production-orders', label: '📅 План производства', roles: ['admin', 'director_prod', 'foreman', 'master'] },
+      { hash: '#/contracts', label: '📄 Подряды', roles: ['admin', 'director_prod', 'foreman', 'master'] },
+      { hash: '#/production-requests', label: '🧮 Просчёт заявок', roles: ['admin', 'rop', 'director_prod', 'foreman'] },
       { hash: '#/production-pl', label: '💰 Доходность', roles: ['admin', 'director_prod'] },
     ],
   },
   {
-    title: '🛠 Просчёты производства',
+    title: '📈 Аналитика',
     items: [
-      // Заявки менеджеров на просчёт: собственный флоу с разграничением
-      // видимости себестоимости (менеджер видит только клиентскую цену и
-      // своё вознаграждение). Видят: admin, rop, менеджеры продаж (создают)
-      // и производственные роли (просчитывают).
-      { hash: '#/production-requests', label: 'Заявки на просчёт', roles: ['admin', 'rop', 'manager', 'sales', 'director_prod', 'foreman'] },
+      { hash: '#/analytics', label: '📈 Общая аналитика', roles: ['admin', 'rop'] },
     ],
   },
   {
-    title: 'Управление',
+    title: '⚙️ Управление',
     items: [
-      { hash: '#/analytics', label: 'Аналитика', roles: ['admin', 'rop'] },
-      { hash: '#/inventory-analytics', label: '📊 Остатки/Оборачиваемость', roles: ['admin', 'rop', 'warehouse', 'aus'] },
-      { hash: '#/users', label: 'Пользователи', roles: ['admin', 'rop'] },
-      { hash: '#/invitations', label: 'Приглашения', roles: ['admin', 'rop'] },
-      { hash: '#/integrations', label: 'Настройки', roles: ['admin', 'aus'] },
-      { hash: '#/feedback', label: 'Обращения', roles: ['admin'] },
-      { hash: '#/audit', label: 'История действий', roles: ['admin'] },
+      { hash: '#/users', label: '👥 Пользователи', roles: ['admin', 'rop'] },
+      { hash: '#/invitations', label: '✉️ Приглашения', roles: ['admin', 'rop'] },
+      { hash: '#/integrations', label: '⚙️ Настройки', roles: ['admin', 'aus'] },
+    ],
+  },
+  {
+    title: '🔧 Служебное',
+    items: [
+      { hash: '#/feedback', label: '💬 Обращения', roles: ['admin'] },
+      { hash: '#/audit', label: '📜 История действий', roles: ['admin'] },
       { hash: '#/ai-inbox', label: '🤖 AI-предложения', roles: ['admin'] },
     ],
   },
