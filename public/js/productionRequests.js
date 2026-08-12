@@ -1,0 +1,528 @@
+// Раздел «🛠 Просчёты производства».
+// Канбан + модалки. Отдельный файл от views.js.
+
+import { api, getStoredUser } from './api.js';
+import { clear, el, fmtDateTime, fmtDate, fmtMoney, toast, openModal } from './ui.js';
+
+const STATUSES = [
+  { key: 'draft', label: '📝 Черновик', color: '#94a3b8' },
+  { key: 'awaiting_cost', label: '🧮 На просчёте', color: '#3b82f6' },
+  { key: 'priced', label: '💰 Просчитано', color: '#8b5cf6' },
+  { key: 'negotiating', label: '🔁 Торг', color: '#f59e0b' },
+  { key: 'approved', label: '✅ Согласовано', color: '#22c55e' },
+  { key: 'in_progress', label: '🛠 В работе', color: '#06b6d4' },
+  { key: 'fulfilled', label: '📦 Выполнено', color: '#059669' },
+  { key: 'paid', label: '💵 Выплачено', color: '#166534' },
+];
+const TERMINAL_HIDDEN = ['cancelled', 'rejected']; // отдельная вкладка «Отменённые»
+
+const PROD_ROLES = ['director_prod', 'foreman'];
+const isProd = (u) => PROD_ROLES.includes(u.role);
+const isAdmin = (u) => u.role === 'admin' || u.role === 'rop';
+const isFullAccess = (u) => isAdmin(u) || isProd(u);
+
+export async function renderProductionRequests(main) {
+  const user = getStoredUser() || {};
+  main.append(
+    el('div', { class: 'page-header' },
+      el('div', {},
+        el('h1', { class: 'page-title' }, '🛠 Просчёты производства'),
+        el('div', { class: 'page-subtitle' },
+          isProd(user)
+            ? 'Заявки менеджеров на просчёт. Заполните себестоимость, конечную цену и вознаграждение менеджера.'
+            : isAdmin(user)
+              ? 'Заявки менеджеров на просчёт. Полный доступ к финансам и выплатам.'
+              : 'Ваши заявки на просчёт производству. После просчёта — согласование с клиентом.',
+        ),
+      ),
+      // Кнопка «Новая заявка» только для менеджера/admin.
+      (user.role === 'admin' || ['manager', 'sales', 'rop'].includes(user.role))
+        ? el('button', { class: 'btn btn-primary', onClick: () => openCreateModal(() => reload()) }, '+ Новая заявка')
+        : null,
+    ),
+  );
+
+  const showCancelledToggle = el('label', { style: { fontSize: '13px', color: '#6b7280', marginBottom: '8px', display: 'inline-block' } },
+    el('input', { type: 'checkbox' }), ' показать отменённые/отклонённые',
+  );
+  const kanban = el('div', {});
+  main.append(showCancelledToggle, kanban);
+
+  let allRequests = [];
+  let showCancelled = false;
+
+  async function reload() {
+    try {
+      const r = await api.prList();
+      allRequests = r.requests || [];
+      renderKanban();
+    } catch (e) { kanban.textContent = 'Ошибка: ' + e.message; }
+  }
+  function renderKanban() {
+    clear(kanban);
+    const cols = showCancelled
+      ? [...STATUSES, { key: 'cancelled', label: '❌ Отменено', color: '#f87171' }, { key: 'rejected', label: '🚫 Отклонено', color: '#dc2626' }]
+      : STATUSES;
+    const board = el('div', {
+      style: { display: 'grid', gridTemplateColumns: `repeat(${cols.length}, minmax(220px, 1fr))`, gap: '8px', overflowX: 'auto' },
+    });
+    for (const s of cols) {
+      const items = allRequests.filter((r) => r.status === s.key);
+      const col = el('div', {
+        style: { background: '#f9fafb', borderRadius: '6px', padding: '8px', minHeight: '200px' },
+      },
+        el('div', { style: { fontWeight: '600', fontSize: '13px', color: s.color, marginBottom: '6px' } }, `${s.label} (${items.length})`),
+      );
+      for (const req of items) col.append(renderKanbanCard(req, () => reload()));
+      board.append(col);
+    }
+    kanban.append(board);
+  }
+
+  showCancelledToggle.querySelector('input').addEventListener('change', (e) => {
+    showCancelled = e.target.checked;
+    renderKanban();
+  });
+
+  await reload();
+}
+
+function clientText(req) {
+  if (req.company_name) return req.company_name;
+  const p = [req.contact_first, req.contact_last].filter(Boolean).join(' ');
+  return p || '—';
+}
+
+function renderKanbanCard(req, onDone) {
+  const user = getStoredUser() || {};
+  const card = el('div', {
+    style: {
+      background: '#fff', border: '1px solid #e5e7eb', borderRadius: '6px',
+      padding: '8px', marginBottom: '6px', cursor: 'pointer',
+      boxShadow: '0 1px 2px rgba(0,0,0,.04)',
+    },
+    onClick: () => openViewModal(req.id, onDone),
+  });
+  card.append(
+    el('div', { style: { fontWeight: '600', fontSize: '13px' } }, req.title),
+    el('div', { style: { fontSize: '11px', color: '#6b7280', marginTop: '2px' } }, '👤 ' + clientText(req)),
+  );
+  // Финансовая строка — что показывать зависит от роли.
+  if (req.client_price != null) {
+    const price = Number(req.client_price);
+    card.append(el('div', { style: { fontSize: '12px', marginTop: '4px', color: '#059669', fontWeight: '600' } },
+      `Клиенту: ${fmtMoney(price, 'RUB')}`,
+    ));
+    if (req.reward_computed != null) {
+      card.append(el('div', { style: { fontSize: '11px', color: '#3b82f6' } },
+        `Ваше: ${fmtMoney(Number(req.reward_computed), 'RUB')}`,
+      ));
+    }
+    // Cost видит только производство/admin.
+    if (isFullAccess(user) && req.cost_price != null) {
+      const cost = Number(req.cost_price);
+      const margin = price - cost;
+      card.append(el('div', { style: { fontSize: '11px', color: '#9ca3af' } },
+        `Себест: ${fmtMoney(cost, 'RUB')} · маржа ${fmtMoney(margin, 'RUB')}`,
+      ));
+    }
+  }
+  const foot = [];
+  if (req.manager_name) foot.push('👤 ' + req.manager_name);
+  if (req.files_count) foot.push(`📎 ${req.files_count}`);
+  if (req.deadline) foot.push('⏰ ' + fmtDate(req.deadline));
+  if (foot.length) card.append(el('div', { style: { fontSize: '11px', color: '#9ca3af', marginTop: '4px' } }, foot.join(' • ')));
+  return card;
+}
+
+// ============================================================
+// МОДАЛКА: создание заявки
+// ============================================================
+function openCreateModal(onDone) {
+  const titleI = el('input', { type: 'text', style: { width: '100%', padding: '8px' }, placeholder: 'Например: «Кухонный гарнитур на дачу 4×2 м»' });
+  const descI = el('textarea', { rows: 5, style: { width: '100%', padding: '8px' }, placeholder: 'Что нужно сделать. Материалы, размеры, особенности. Всё что знаете от клиента.' });
+  const dlI = el('input', { type: 'date', style: { padding: '8px' } });
+
+  // Клиент — поиск по contacts/companies.
+  const clientSearch = el('input', { type: 'text', style: { width: '100%', padding: '8px' }, placeholder: 'Начните вводить: имя контакта или название компании…' });
+  const clientHint = el('div', { style: { fontSize: '12px', color: '#6b7280', marginTop: '4px' } }, 'Клиент обязателен. Если ещё нет в базе — сначала добавьте в «Контакты» или «Компании».');
+  const clientMatches = el('div', { style: { maxHeight: '150px', overflowY: 'auto', border: '1px solid #e5e7eb', borderRadius: '4px', marginTop: '4px', display: 'none' } });
+  const clientSelected = el('div', { style: { padding: '6px', background: '#dcfce7', borderRadius: '4px', marginTop: '4px', display: 'none' } });
+  let chosen = { contact_id: null, company_id: null };
+
+  let searchTimer = null;
+  clientSearch.addEventListener('input', () => {
+    clearTimeout(searchTimer);
+    const q = clientSearch.value.trim();
+    if (q.length < 2) { clientMatches.style.display = 'none'; return; }
+    searchTimer = setTimeout(async () => {
+      try {
+        // Ищем и в контактах, и в компаниях.
+        const [contacts, companies] = await Promise.all([
+          api.list ? api.list('contacts', { search: q, limit: 10 }) : fetch(`/api/contacts?search=${encodeURIComponent(q)}&limit=10`, { headers: { Authorization: 'Bearer ' + localStorage.getItem('crm_token') } }).then(r => r.json()),
+          api.list ? api.list('companies', { search: q, limit: 10 }) : fetch(`/api/companies?search=${encodeURIComponent(q)}&limit=10`, { headers: { Authorization: 'Bearer ' + localStorage.getItem('crm_token') } }).then(r => r.json()),
+        ]);
+        clear(clientMatches);
+        clientMatches.style.display = 'block';
+        const contactsList = contacts.data || contacts.items || [];
+        const companiesList = companies.data || companies.items || [];
+        if (!contactsList.length && !companiesList.length) {
+          clientMatches.append(el('div', { style: { padding: '6px', color: '#9ca3af', fontSize: '13px' } }, 'Не найдено. Добавьте клиента в «Контакты» или «Компании» и вернитесь сюда.'));
+          return;
+        }
+        for (const c of contactsList) {
+          const label = `👤 ${c.first_name || ''} ${c.last_name || ''}`.trim() + (c.phone ? ' · ' + c.phone : '');
+          clientMatches.append(el('div', {
+            style: { padding: '6px', cursor: 'pointer', borderBottom: '1px solid #f3f4f6' },
+            onClick: () => {
+              chosen = { contact_id: c.id, company_id: null };
+              clientSelected.textContent = '✓ Выбран: ' + label;
+              clientSelected.style.display = 'block';
+              clientMatches.style.display = 'none';
+              clientSearch.value = label;
+            },
+          }, label));
+        }
+        for (const c of companiesList) {
+          const label = `🏢 ${c.name}`;
+          clientMatches.append(el('div', {
+            style: { padding: '6px', cursor: 'pointer', borderBottom: '1px solid #f3f4f6' },
+            onClick: () => {
+              chosen = { contact_id: null, company_id: c.id };
+              clientSelected.textContent = '✓ Выбрана: ' + label;
+              clientSelected.style.display = 'block';
+              clientMatches.style.display = 'none';
+              clientSearch.value = label;
+            },
+          }, label));
+        }
+      } catch (e) { /* ignore */ }
+    }, 250);
+  });
+
+  // Файлы.
+  const filesInput = el('input', { type: 'file', multiple: true });
+  const filesList = el('div', { style: { fontSize: '12px', marginTop: '4px' } });
+  let filesData = []; // {filename, mime, data_base64}
+
+  filesInput.addEventListener('change', async () => {
+    const files = Array.from(filesInput.files || []);
+    for (const f of files) {
+      if (filesData.length >= 10) { toast('Максимум 10 файлов', 'error'); break; }
+      if (f.size > 10 * 1024 * 1024) { toast(`${f.name}: больше 10 МБ`, 'error'); continue; }
+      const b64 = await new Promise((resolve, reject) => {
+        const r = new FileReader();
+        r.onload = () => resolve(r.result);
+        r.onerror = reject;
+        r.readAsDataURL(f);
+      });
+      filesData.push({ filename: f.name, mime: f.type, data_base64: b64 });
+    }
+    renderFilesList();
+    filesInput.value = '';
+  });
+  function renderFilesList() {
+    clear(filesList);
+    for (let i = 0; i < filesData.length; i++) {
+      const f = filesData[i];
+      filesList.append(el('div', { style: { padding: '3px 0' } },
+        `📎 ${f.filename}`,
+        el('button', {
+          style: { marginLeft: '8px', color: '#ef4444', background: 'none', border: 'none', cursor: 'pointer' },
+          onClick: () => { filesData.splice(i, 1); renderFilesList(); },
+        }, '✕'),
+      ));
+    }
+  }
+
+  const body = el('div', {},
+    el('label', { style: { fontSize: '12px', fontWeight: '600' } }, 'Клиент (обязательно):'),
+    clientSearch, clientHint, clientMatches, clientSelected,
+    el('label', { style: { fontSize: '12px', fontWeight: '600', marginTop: '12px', display: 'block' } }, 'Название заявки:'),
+    titleI,
+    el('label', { style: { fontSize: '12px', fontWeight: '600', marginTop: '8px', display: 'block' } }, 'Описание изделия:'),
+    descI,
+    el('label', { style: { fontSize: '12px', fontWeight: '600', marginTop: '8px', display: 'block' } }, 'Срок клиента (опционально):'),
+    dlI,
+    el('label', { style: { fontSize: '12px', fontWeight: '600', marginTop: '8px', display: 'block' } }, 'Файлы (до 10 шт., до 10 МБ каждый — фото/чертежи/ТЗ):'),
+    filesInput, filesList,
+  );
+
+  openModal('Новая заявка на просчёт', body, {
+    primaryLabel: 'Создать',
+    size: 'lg',
+    onSubmit: async () => {
+      if (!titleI.value.trim()) { toast('Укажите название', 'error'); return false; }
+      if (!chosen.contact_id && !chosen.company_id) { toast('Выберите клиента', 'error'); return false; }
+      try {
+        // Создаём заявку БЕЗ файлов — маленький payload.
+        const req = await api.prCreate({
+          title: titleI.value.trim(),
+          description: descI.value.trim() || null,
+          deadline: dlI.value ? new Date(dlI.value).toISOString() : null,
+          contact_id: chosen.contact_id,
+          company_id: chosen.company_id,
+          files: [],
+        });
+        // Затем грузим файлы по одному — устойчивее к большому размеру.
+        let uploaded = 0;
+        for (const f of filesData) {
+          try { await api.prUploadFile(req.id, f); uploaded++; }
+          catch (e) { toast(`Файл ${f.filename}: ${e.message}`, 'error'); }
+        }
+        toast(`Заявка создана${uploaded ? ` (файлов: ${uploaded})` : ''}. Не забудь отправить на просчёт.`, 'success');
+        if (onDone) await onDone();
+        setTimeout(() => openViewModal(req.id, onDone), 300);
+        return true;
+      } catch (e) { toast(e.message, 'error'); return false; }
+    },
+  });
+}
+
+// ============================================================
+// МОДАЛКА: просмотр заявки + действия
+// ============================================================
+async function openViewModal(id, onDone) {
+  openModal('Заявка', el('div', {}, '⏳'), { primaryLabel: 'Закрыть', onSubmit: () => true, size: 'lg' });
+  try {
+    const { request: req, files, history } = await api.prGet(id);
+    const user = getStoredUser() || {};
+    const status = STATUSES.find((s) => s.key === req.status) || { key: req.status, label: req.status, color: '#6b7280' };
+    const body = el('div', {});
+
+    // Шапка.
+    body.append(el('div', { style: { display: 'flex', justifyContent: 'space-between', gap: '8px', flexWrap: 'wrap', marginBottom: '8px' } },
+      el('div', {},
+        el('div', { style: { fontWeight: '600', fontSize: '16px' } }, req.title),
+        el('div', { style: { fontSize: '12px', color: '#6b7280', marginTop: '2px' } }, '👤 ' + clientText(req), req.contact_phone ? ' · ' + req.contact_phone : ''),
+      ),
+      el('span', { style: { padding: '4px 10px', borderRadius: '12px', fontSize: '12px', fontWeight: '600', background: status.color + '22', color: status.color } }, status.label),
+    ));
+
+    if (req.description) {
+      body.append(el('div', { style: { padding: '8px', background: '#f9fafb', borderRadius: '6px', marginBottom: '10px', fontSize: '13px', whiteSpace: 'pre-wrap' } }, req.description));
+    }
+
+    // Файлы.
+    if (files.length) {
+      const filesBox = el('div', { style: { marginBottom: '10px' } },
+        el('div', { style: { fontSize: '11px', fontWeight: '600', color: '#374151' } }, `📎 Файлы (${files.length}):`),
+      );
+      for (const f of files) {
+        filesBox.append(el('div', { style: { padding: '4px 0' } },
+          el('a', {
+            href: `/api/production-requests/files/${f.id}`,
+            onClick: async (e) => {
+              e.preventDefault();
+              // Скачиваем с Bearer-заголовком.
+              try {
+                const res = await fetch(`/api/production-requests/files/${f.id}`, { headers: { Authorization: 'Bearer ' + localStorage.getItem('crm_token') } });
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                const blob = await res.blob();
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url; a.download = f.filename;
+                document.body.appendChild(a); a.click(); a.remove();
+                URL.revokeObjectURL(url);
+              } catch (err) { toast(err.message, 'error'); }
+            },
+            style: { color: '#3b82f6', textDecoration: 'underline' },
+          }, `📎 ${f.filename}`),
+          el('span', { style: { color: '#9ca3af', fontSize: '11px', marginLeft: '8px' } }, `(${(f.size_bytes / 1024).toFixed(0)} КБ)`),
+        ));
+      }
+      body.append(filesBox);
+    }
+
+    // Финансы. Что видит зависит от роли.
+    if (req.client_price != null) {
+      const finBox = el('div', { style: { padding: '10px', background: '#f0fdf4', border: '1px solid #86efac', borderRadius: '6px', marginBottom: '10px' } });
+      finBox.append(el('div', { style: { fontSize: '11px', color: '#166534', fontWeight: '600' } }, '💰 Финансы'));
+      finBox.append(el('div', { style: { fontSize: '16px', fontWeight: '700', marginTop: '4px' } }, `Клиенту: ${fmtMoney(Number(req.client_price), 'RUB')}`));
+      if (req.reward_computed != null) {
+        const rewardText = req.reward_type === 'percent'
+          ? `${fmtMoney(Number(req.reward_computed), 'RUB')} (${req.reward_value}%)`
+          : `${fmtMoney(Number(req.reward_computed), 'RUB')} (фикс)`;
+        finBox.append(el('div', { style: { fontSize: '13px', color: '#3b82f6', marginTop: '2px', fontWeight: '600' } }, `Ваше вознаграждение: ${rewardText}`));
+      }
+      if (isFullAccess(user) && req.cost_price != null) {
+        const margin = Number(req.client_price) - Number(req.cost_price);
+        finBox.append(el('div', { style: { fontSize: '12px', color: '#6b7280', marginTop: '4px' } },
+          `Себестоимость: ${fmtMoney(Number(req.cost_price), 'RUB')} · Маржа: ${fmtMoney(margin, 'RUB')} · Просчитал: ${req.priced_by_name || '—'} ${req.priced_at ? '(' + fmtDateTime(req.priced_at) + ')' : ''}`,
+        ));
+      }
+      body.append(finBox);
+    }
+
+    // История цен.
+    if (history.length) {
+      const histBox = el('details', { style: { marginBottom: '10px' } },
+        el('summary', { style: { cursor: 'pointer', fontSize: '12px', color: '#6b7280', fontWeight: '600' } }, `История событий (${history.length})`),
+      );
+      const eventLabels = { initial_price: 'Первый просчёт', manager_counter: 'Торг от менеджера', production_reprice: 'Пересчёт', rejected: 'Отклонено', cancelled: 'Отменено', approved: 'Одобрено клиентом', fulfilled: 'Выполнено', paid: 'Выплачено' };
+      for (const h of history) {
+        histBox.append(el('div', { style: { padding: '6px', borderTop: '1px solid #f3f4f6', fontSize: '12px' } },
+          el('b', {}, eventLabels[h.event] || h.event),
+          ' — ', fmtDateTime(h.at), ' · ', h.actor_name || '—',
+          h.client_price ? el('div', {}, `Цена: ${fmtMoney(Number(h.client_price), 'RUB')}`) : null,
+          h.note ? el('div', { style: { color: '#374151' } }, h.note) : null,
+        ));
+      }
+      body.append(histBox);
+    }
+
+    // Действия — зависят от статуса и роли.
+    const actions = el('div', { style: { display: 'flex', gap: '6px', flexWrap: 'wrap', marginTop: '10px', paddingTop: '10px', borderTop: '1px solid #e5e7eb' } });
+    const isMine = req.manager_id === user.id;
+    const canAsAdmin = isAdmin(user);
+
+    // Менеджер (владелец):
+    if (req.status === 'draft' && (isMine || canAsAdmin)) {
+      actions.append(el('button', { class: 'btn btn-primary', onClick: async () => {
+        try { await api.prSubmit(id); toast('Отправлено на просчёт', 'success'); if (onDone) await onDone(); closeModal(); } catch (e) { toast(e.message, 'error'); }
+      } }, '📤 Отправить на просчёт'));
+    }
+    if (req.status === 'priced' && (isMine || canAsAdmin)) {
+      actions.append(el('button', { class: 'btn btn-primary', onClick: async () => {
+        try { await api.prApprove(id); toast('Заявка согласована с клиентом', 'success'); if (onDone) await onDone(); closeModal(); } catch (e) { toast(e.message, 'error'); }
+      } }, '✅ Клиент согласился'));
+      actions.append(el('button', { class: 'btn', onClick: () => openCounterModal(req, onDone) }, '🔁 Клиент просит другую цену'));
+    }
+    // Отмена — почти всегда (кроме терминальных).
+    if (!['paid', 'cancelled', 'rejected'].includes(req.status) && (isMine || canAsAdmin)) {
+      actions.append(el('button', { class: 'btn', style: { color: '#ef4444' }, onClick: async () => {
+        const note = prompt('Причина отмены (можно пусто):') ?? '';
+        try { await api.prCancel(id, note); toast('Отменено', 'success'); if (onDone) await onDone(); closeModal(); } catch (e) { toast(e.message, 'error'); }
+      } }, '❌ Отменить'));
+    }
+
+    // Производство:
+    if ((req.status === 'awaiting_cost' || req.status === 'negotiating') && (isProd(user) || canAsAdmin)) {
+      actions.append(el('button', { class: 'btn btn-primary', onClick: () => openPriceModal(req, onDone) }, req.status === 'negotiating' ? '💰 Пересчитать' : '💰 Задать цену и вознаграждение'));
+      actions.append(el('button', { class: 'btn', style: { color: '#ef4444' }, onClick: async () => {
+        const note = prompt('Причина отказа (обязательно):') || '';
+        if (!note) return;
+        try { await api.prReject(id, note); toast('Отклонено', 'success'); if (onDone) await onDone(); closeModal(); } catch (e) { toast(e.message, 'error'); }
+      } }, '🚫 Не берём в работу'));
+    }
+    if (req.status === 'approved' && (isProd(user) || canAsAdmin)) {
+      actions.append(el('button', { class: 'btn btn-primary', onClick: async () => {
+        try { await api.prStart(id); toast('Взято в работу', 'success'); if (onDone) await onDone(); closeModal(); } catch (e) { toast(e.message, 'error'); }
+      } }, '🛠 Взять в работу'));
+    }
+    if (req.status === 'in_progress' && (isProd(user) || canAsAdmin)) {
+      actions.append(el('button', { class: 'btn btn-primary', onClick: async () => {
+        try { await api.prFulfill(id); toast('Отмечено выполненным', 'success'); if (onDone) await onDone(); closeModal(); } catch (e) { toast(e.message, 'error'); }
+      } }, '📦 Готово'));
+    }
+    // Админ: выплата.
+    if (req.status === 'fulfilled' && canAsAdmin) {
+      actions.append(el('button', { class: 'btn btn-primary', onClick: async () => {
+        if (!confirm(`Подтвердить выплату менеджеру ${fmtMoney(Number(req.reward_computed || 0), 'RUB')}?`)) return;
+        try { await api.prPay(id); toast('Выплата зафиксирована', 'success'); if (onDone) await onDone(); closeModal(); } catch (e) { toast(e.message, 'error'); }
+      } }, '💵 Выплатить менеджеру'));
+    }
+
+    body.append(actions);
+
+    // Заменяем содержимое модалки.
+    const modalBody = document.querySelector('.modal-backdrop:last-child .modal-body');
+    if (modalBody) { clear(modalBody); modalBody.append(body); }
+  } catch (e) { toast(e.message, 'error'); }
+}
+
+function closeModal() {
+  const b = document.querySelectorAll('.modal-backdrop');
+  if (b.length) b[b.length - 1].remove();
+}
+
+// ============================================================
+// МОДАЛКА: просчёт (производство)
+// ============================================================
+function openPriceModal(req, onDone) {
+  const costI = el('input', { type: 'number', step: '0.01', min: '0', style: { width: '100%', padding: '8px' }, value: req.cost_price || '' });
+  const priceI = el('input', { type: 'number', step: '0.01', min: '0', style: { width: '100%', padding: '8px' }, value: req.client_price || '' });
+  const rewardTypeSel = el('select', { style: { padding: '8px' } },
+    el('option', { value: 'percent', selected: req.reward_type !== 'fixed' }, '% от цены'),
+    el('option', { value: 'fixed', selected: req.reward_type === 'fixed' }, 'Фикс сумма ₽'),
+  );
+  const rewardValI = el('input', { type: 'number', step: '0.01', min: '0', style: { width: '100%', padding: '8px' }, value: req.reward_value || 10 });
+  const noteI = el('textarea', { rows: 2, style: { width: '100%', padding: '8px' }, placeholder: 'Комментарий (для истории)' });
+  const preview = el('div', { style: { padding: '8px', background: '#f0f9ff', borderRadius: '4px', marginTop: '6px', fontSize: '13px' } });
+
+  function updatePreview() {
+    const price = Number(priceI.value) || 0;
+    const cost = Number(costI.value) || 0;
+    const rv = Number(rewardValI.value) || 0;
+    const rt = rewardTypeSel.value;
+    const reward = rt === 'percent' ? price * rv / 100 : rv;
+    const margin = price - cost - reward;
+    preview.textContent = `Клиенту: ${fmtMoney(price, 'RUB')} · Себест: ${fmtMoney(cost, 'RUB')} · Менеджеру: ${fmtMoney(reward, 'RUB')} · Наша маржа: ${fmtMoney(margin, 'RUB')}`;
+  }
+  [costI, priceI, rewardTypeSel, rewardValI].forEach((i) => i.addEventListener('input', updatePreview));
+  [costI, priceI, rewardTypeSel, rewardValI].forEach((i) => i.addEventListener('change', updatePreview));
+  updatePreview();
+
+  const body = el('div', {},
+    el('label', { style: { fontSize: '12px', fontWeight: '600' } }, 'Себестоимость (материалы + работа + накладные) ₽:'), costI,
+    el('label', { style: { fontSize: '12px', fontWeight: '600', marginTop: '8px', display: 'block' } }, 'Конечная цена клиенту ₽ (менеджер увидит только её):'), priceI,
+    el('label', { style: { fontSize: '12px', fontWeight: '600', marginTop: '8px', display: 'block' } }, 'Вознаграждение менеджера:'),
+    el('div', { style: { display: 'flex', gap: '6px' } }, rewardTypeSel, rewardValI),
+    preview,
+    el('label', { style: { fontSize: '12px', fontWeight: '600', marginTop: '8px', display: 'block' } }, 'Комментарий (опционально):'), noteI,
+  );
+
+  openModal(req.status === 'negotiating' ? 'Пересчёт (торг)' : 'Просчёт заявки', body, {
+    primaryLabel: 'Сохранить просчёт',
+    onSubmit: async () => {
+      const cost = Number(costI.value);
+      const price = Number(priceI.value);
+      const rewardVal = Number(rewardValI.value);
+      if (!(price > 0) || !(cost >= 0)) { toast('Введите положительные суммы', 'error'); return false; }
+      if (!(rewardVal >= 0)) { toast('Введите вознаграждение', 'error'); return false; }
+      try {
+        await api.prPrice(req.id, {
+          cost_price: cost, client_price: price,
+          reward_type: rewardTypeSel.value, reward_value: rewardVal,
+          note: noteI.value.trim() || null,
+        });
+        toast('Просчёт сохранён. Менеджер увидит цену и своё вознаграждение.', 'success');
+        if (onDone) await onDone();
+        closeModal(); // закрыть просчёт
+        closeModal(); // закрыть карточку заявки (потом рекомендую снова открыть)
+        return true;
+      } catch (e) { toast(e.message, 'error'); return false; }
+    },
+  });
+}
+
+// ============================================================
+// МОДАЛКА: торг (менеджер)
+// ============================================================
+function openCounterModal(req, onDone) {
+  const priceI = el('input', { type: 'number', step: '0.01', min: '0', style: { width: '100%', padding: '8px' }, value: req.client_price || '' });
+  const noteI = el('textarea', { rows: 3, style: { width: '100%', padding: '8px' }, placeholder: 'Что говорит клиент, почему просит другую цену' });
+  const body = el('div', {},
+    el('div', { style: { padding: '8px', background: '#fef3c7', borderRadius: '4px', marginBottom: '8px', fontSize: '12px' } },
+      `Текущая цена клиенту: ${fmtMoney(Number(req.client_price), 'RUB')}. Впишите ту, которую хочет клиент — производство пересчитает и вернёт новую цену/вознаграждение.`,
+    ),
+    el('label', { style: { fontSize: '12px', fontWeight: '600' } }, 'Желаемая цена клиента ₽:'), priceI,
+    el('label', { style: { fontSize: '12px', fontWeight: '600', marginTop: '8px', display: 'block' } }, 'Комментарий (обязательно):'), noteI,
+  );
+  openModal('Клиент просит другую цену', body, {
+    primaryLabel: 'Отправить производству',
+    onSubmit: async () => {
+      const price = Number(priceI.value);
+      const note = noteI.value.trim();
+      if (!(price > 0)) { toast('Укажите новую цену', 'error'); return false; }
+      if (!note) { toast('Укажите комментарий', 'error'); return false; }
+      try {
+        await api.prCounter(req.id, { requested_price: price, note });
+        toast('Отправлено производству на пересчёт', 'success');
+        if (onDone) await onDone();
+        closeModal(); closeModal();
+        return true;
+      } catch (e) { toast(e.message, 'error'); return false; }
+    },
+  });
+}

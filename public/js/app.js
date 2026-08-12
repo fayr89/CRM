@@ -35,6 +35,7 @@ import {
   renderSupplyDelivery,
 } from './views.js';
 import { renderCalling } from './calling.js';
+import { renderProductionRequests } from './productionRequests.js';
 
 const root = document.getElementById('app');
 
@@ -103,6 +104,16 @@ const NAV_GROUPS = [
       { hash: '#/production-orders', label: 'План производства', roles: ['admin', 'director_prod', 'foreman', 'master'] },
       { hash: '#/contracts', label: 'Подряды', roles: ['admin', 'director_prod', 'foreman', 'master'] },
       { hash: '#/production-pl', label: '💰 Доходность', roles: ['admin', 'director_prod'] },
+    ],
+  },
+  {
+    title: '🛠 Просчёты производства',
+    items: [
+      // Заявки менеджеров на просчёт: собственный флоу с разграничением
+      // видимости себестоимости (менеджер видит только клиентскую цену и
+      // своё вознаграждение). Видят: admin, rop, менеджеры продаж (создают)
+      // и производственные роли (просчитывают).
+      { hash: '#/production-requests', label: 'Заявки на просчёт', roles: ['admin', 'rop', 'manager', 'sales', 'director_prod', 'foreman'] },
     ],
   },
   {
@@ -969,6 +980,7 @@ const ROUTES = {
   '#/ai-inbox': renderAiInbox,
   '#/supply-delivery': renderSupplyDelivery,
   '#/calling': renderCalling,
+  '#/production-requests': renderProductionRequests,
 };
 
 // Видимость тест-зоны «Поставки → Доставки» — приходит с бэка (фиче-флаг).

@@ -370,6 +370,23 @@ export const api = {
   callingCampaignLeads: (id, params = {}) => request('GET', `/api/calling/campaigns/${id}/leads`, { query: params }),
   callingUpdateLead: (id, body) => request('PATCH', `/api/calling/leads/${id}`, { body }),
 
+  // ============ Просчёты производства ============
+  prList: (params = {}) => request('GET', '/api/production-requests', { query: params }),
+  prGet: (id) => request('GET', `/api/production-requests/${id}`),
+  prCreate: (body) => request('POST', '/api/production-requests', { body }),
+  prUpdate: (id, body) => request('PATCH', `/api/production-requests/${id}`, { body }),
+  prSubmit: (id) => request('POST', `/api/production-requests/${id}/submit`),
+  prPrice: (id, body) => request('POST', `/api/production-requests/${id}/price`, { body }),
+  prReject: (id, note) => request('POST', `/api/production-requests/${id}/reject`, { body: { note } }),
+  prApprove: (id) => request('POST', `/api/production-requests/${id}/approve`),
+  prCounter: (id, body) => request('POST', `/api/production-requests/${id}/counter`, { body }),
+  prCancel: (id, note) => request('POST', `/api/production-requests/${id}/cancel`, { body: { note } }),
+  prStart: (id) => request('POST', `/api/production-requests/${id}/start`),
+  prFulfill: (id) => request('POST', `/api/production-requests/${id}/fulfill`),
+  prPay: (id) => request('POST', `/api/production-requests/${id}/pay`),
+  prUploadFile: (id, body) => request('POST', `/api/production-requests/${id}/files`, { body }),
+  prDeleteFile: (fid) => request('DELETE', `/api/production-requests/files/${fid}`),
+
   // МАХ-бот
   maxMe: () => request('GET', '/api/max/me'),
   maxBindCode: () => request('POST', '/api/max/bind-code'),

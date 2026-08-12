@@ -494,7 +494,7 @@ export const db = {
 // БАМПАЙ ПРИ КАЖДОМ ДОБАВЛЕНИИ МИГРАЦИИ. Текущие миграции прогоняются
 // только если запись в app_settings.schema_version отличается. Это экономит
 // ~500-2000мс на каждом холодном старте serverless-лямбды.
-const SCHEMA_VERSION = 35;
+const SCHEMA_VERSION = 36;
 
 // Транзиентные ошибки коннекта — стоит ретраить (БД просыпается, сетевой сбой).
 // Явные не-транзиентные (auth, protocol) — ретрай не поможет, лучше сразу упасть.
@@ -1302,6 +1302,73 @@ export async function ensureInitialized() {
       await pool.query(`CREATE INDEX IF NOT EXISTS idx_leads_campaign ON leads(campaign_id) WHERE campaign_id IS NOT NULL`);
       await pool.query(`CREATE INDEX IF NOT EXISTS idx_call_attempts_lead ON call_attempts(lead_id, at DESC)`);
       await pool.query(`CREATE INDEX IF NOT EXISTS idx_call_attempts_user_at ON call_attempts(user_id, at DESC)`);
+
+      // ===== Модуль «Просчёты производства» (SCHEMA_VERSION 36) =====
+      // Заявка на просчёт: менеджер описывает изделие + прикладывает файлы,
+      // производство заполняет cost_price/client_price/reward. Менеджер НЕ
+      // видит cost_price — только client_price и вычисленное вознаграждение.
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS production_requests (
+          id SERIAL PRIMARY KEY,
+          title TEXT NOT NULL,
+          description TEXT,
+          deadline TIMESTAMPTZ,
+          manager_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+          contact_id INTEGER REFERENCES contacts(id) ON DELETE SET NULL,
+          company_id INTEGER REFERENCES companies(id) ON DELETE SET NULL,
+          status TEXT NOT NULL DEFAULT 'draft' CHECK(status IN (
+            'draft','awaiting_cost','priced','negotiating','approved',
+            'in_progress','fulfilled','paid','cancelled','rejected'
+          )),
+          cost_price NUMERIC(14,2),
+          client_price NUMERIC(14,2),
+          reward_type TEXT CHECK(reward_type IN ('percent','fixed') OR reward_type IS NULL),
+          reward_value NUMERIC(14,2),
+          reward_computed NUMERIC(14,2),
+          priced_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+          priced_at TIMESTAMPTZ,
+          approved_at TIMESTAMPTZ,
+          fulfilled_at TIMESTAMPTZ,
+          paid_at TIMESTAMPTZ,
+          cancel_reason TEXT,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+      `);
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS production_request_files (
+          id SERIAL PRIMARY KEY,
+          request_id INTEGER NOT NULL REFERENCES production_requests(id) ON DELETE CASCADE,
+          filename TEXT NOT NULL,
+          mime TEXT,
+          size_bytes INTEGER,
+          data_base64 TEXT NOT NULL,
+          uploaded_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+          uploaded_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+      `);
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS production_request_price_history (
+          id SERIAL PRIMARY KEY,
+          request_id INTEGER NOT NULL REFERENCES production_requests(id) ON DELETE CASCADE,
+          event TEXT NOT NULL CHECK(event IN (
+            'initial_price','manager_counter','production_reprice','rejected','cancelled','approved','fulfilled','paid'
+          )),
+          cost_price NUMERIC(14,2),
+          client_price NUMERIC(14,2),
+          reward_type TEXT,
+          reward_value NUMERIC(14,2),
+          reward_computed NUMERIC(14,2),
+          note TEXT,
+          actor_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+          at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+      `);
+      // Индексы: горячие запросы — по manager (мои заявки), по status (канбан).
+      await pool.query(`CREATE INDEX IF NOT EXISTS idx_prod_requests_manager ON production_requests(manager_id, status)`);
+      await pool.query(`CREATE INDEX IF NOT EXISTS idx_prod_requests_status ON production_requests(status, created_at DESC)`);
+      await pool.query(`CREATE INDEX IF NOT EXISTS idx_prod_request_files_request ON production_request_files(request_id)`);
+      await pool.query(`CREATE INDEX IF NOT EXISTS idx_prod_request_history_request ON production_request_price_history(request_id, at DESC)`);
 
       // Маркер успешно прогнанных миграций — следующие холодные старты пропустят DDL.
       await pool.query(
