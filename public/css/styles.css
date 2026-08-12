@@ -82,6 +82,16 @@ a:hover { text-decoration: underline; }
 }
 .sidebar-nav a:hover { background: #1f2937; text-decoration: none; color: #fff; }
 .sidebar-nav a.active { background: #1f2937; border-left-color: var(--primary); color: #fff; }
+/* Подпункты внутри группы: слева больше отступ, шрифт мельче — визуальная
+   иерархия «группа → пункт». Работает и для admin (collapsible), и для
+   плоских ролей (обёртка одинаковая). */
+.sidebar-group-items a {
+  padding-left: 36px; font-size: 13px;
+}
+.sidebar-group-items a.active {
+  /* активная — чуть светлее фон, чтобы отличать от обычного hover */
+  background: #111827;
+}
 /* Тонкий тёмный скроллбар для nav */
 .sidebar-nav::-webkit-scrollbar { width: 6px; }
 .sidebar-nav::-webkit-scrollbar-thumb { background: #374151; border-radius: 3px; }

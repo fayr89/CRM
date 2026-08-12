@@ -402,8 +402,16 @@ function renderShell() {
     if (group.title && isAdmin) {
       const activeInside = items.some((it) => path.startsWith(it.hash));
       navChildren.push(buildCollapsibleGroup(group.title, links, activeInside));
+    } else if (group.title) {
+      // Плоская группа (для non-admin) — тоже оборачиваем в .sidebar-group +
+      // .sidebar-group-items, чтобы CSS-отступы для подпунктов работали
+      // единообразно.
+      navChildren.push(el('div', { class: 'sidebar-group open' },
+        el('div', { class: 'sidebar-group-title' }, group.title),
+        el('div', { class: 'sidebar-group-items' }, ...links),
+      ));
     } else {
-      if (group.title) navChildren.push(el('div', { class: 'sidebar-group-title' }, group.title));
+      // Дашборд — без заголовка, идёт первым пунктом.
       navChildren.push(...links);
     }
   }

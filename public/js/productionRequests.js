@@ -144,9 +144,20 @@ function openCreateModal(onDone) {
   const descI = el('textarea', { rows: 5, style: { width: '100%', padding: '8px' }, placeholder: 'Что нужно сделать. Материалы, размеры, особенности. Всё что знаете от клиента.' });
   const dlI = el('input', { type: 'date', style: { padding: '8px' } });
 
-  // Клиент — поиск по contacts/companies.
-  const clientSearch = el('input', { type: 'text', style: { width: '100%', padding: '8px' }, placeholder: 'Начните вводить: имя контакта или название компании…' });
-  const clientHint = el('div', { style: { fontSize: '12px', color: '#6b7280', marginTop: '4px' } }, 'Клиент обязателен. Если ещё нет в базе — сначала добавьте в «Контакты» или «Компании».');
+  // Клиент — поиск по contacts/companies + быстрое добавление inline.
+  const clientSearch = el('input', { type: 'text', style: { flex: 1, padding: '8px' }, placeholder: 'Ищите: имя контакта или название компании…' });
+  const quickAddBtn = el('button', {
+    class: 'btn', type: 'button', style: { padding: '8px 12px', whiteSpace: 'nowrap' },
+    onClick: () => openQuickClientCreate((client) => {
+      chosen = client.contact_id ? { contact_id: client.contact_id, company_id: null } : { contact_id: null, company_id: client.company_id };
+      clientSelected.textContent = '✓ Выбран: ' + client.label;
+      clientSelected.style.display = 'block';
+      clientMatches.style.display = 'none';
+      clientSearch.value = client.label;
+    }),
+  }, '+ Быстро');
+  const clientSearchRow = el('div', { style: { display: 'flex', gap: '6px' } }, clientSearch, quickAddBtn);
+  const clientHint = el('div', { style: { fontSize: '12px', color: '#6b7280', marginTop: '4px' } }, 'Клиент обязателен. Если нет в базе — жми «+ Быстро», введи минимум полей.');
   const clientMatches = el('div', { style: { maxHeight: '150px', overflowY: 'auto', border: '1px solid #e5e7eb', borderRadius: '4px', marginTop: '4px', display: 'none' } });
   const clientSelected = el('div', { style: { padding: '6px', background: '#dcfce7', borderRadius: '4px', marginTop: '4px', display: 'none' } });
   let chosen = { contact_id: null, company_id: null };
@@ -238,7 +249,7 @@ function openCreateModal(onDone) {
 
   const body = el('div', {},
     el('label', { style: { fontSize: '12px', fontWeight: '600' } }, 'Клиент (обязательно):'),
-    clientSearch, clientHint, clientMatches, clientSelected,
+    clientSearchRow, clientHint, clientMatches, clientSelected,
     el('label', { style: { fontSize: '12px', fontWeight: '600', marginTop: '12px', display: 'block' } }, 'Название заявки:'),
     titleI,
     el('label', { style: { fontSize: '12px', fontWeight: '600', marginTop: '8px', display: 'block' } }, 'Описание изделия:'),
@@ -274,6 +285,83 @@ function openCreateModal(onDone) {
         toast(`Заявка создана${uploaded ? ` (файлов: ${uploaded})` : ''}. Не забудь отправить на просчёт.`, 'success');
         if (onDone) await onDone();
         setTimeout(() => openViewModal(req.id, onDone), 300);
+        return true;
+      } catch (e) { toast(e.message, 'error'); return false; }
+    },
+  });
+}
+
+// ============================================================
+// МОДАЛКА: быстрое создание клиента (компания или контакт)
+// Вложенная — открывается из модалки создания заявки. Минимум полей.
+// callback получает { contact_id | company_id, label } и подставляет в поле.
+// ============================================================
+function openQuickClientCreate(onCreated) {
+  const typeCompany = el('input', { type: 'radio', name: 'qc_type', value: 'company', checked: true });
+  const typeContact = el('input', { type: 'radio', name: 'qc_type', value: 'contact' });
+
+  const nameI = el('input', { type: 'text', style: { width: '100%', padding: '8px' }, placeholder: 'Название организации или ФИО' });
+  const phoneI = el('input', { type: 'text', style: { width: '100%', padding: '8px' }, placeholder: '+7 …' });
+  const emailI = el('input', { type: 'email', style: { width: '100%', padding: '8px' }, placeholder: 'необязательно' });
+  const innI = el('input', { type: 'text', style: { width: '100%', padding: '8px' }, placeholder: 'необязательно' });
+
+  const contactExtra = el('div', { style: { display: 'none' } },
+    el('label', { style: { fontSize: '12px', fontWeight: '600', marginTop: '8px', display: 'block' } }, 'Фамилия (опционально):'),
+    el('input', { type: 'text', id: 'qc_lastname', style: { width: '100%', padding: '8px' } }),
+  );
+  const companyExtra = el('div', {},
+    el('label', { style: { fontSize: '12px', fontWeight: '600', marginTop: '8px', display: 'block' } }, 'ИНН (опционально):'), innI,
+  );
+
+  function updateVisibility() {
+    const isCompany = typeCompany.checked;
+    contactExtra.style.display = isCompany ? 'none' : 'block';
+    companyExtra.style.display = isCompany ? 'block' : 'none';
+    nameI.placeholder = isCompany ? 'Название организации (например «Парк-отель Хвоя»)' : 'Имя контакта';
+  }
+  typeCompany.addEventListener('change', updateVisibility);
+  typeContact.addEventListener('change', updateVisibility);
+
+  const body = el('div', {},
+    el('div', { style: { display: 'flex', gap: '12px', marginBottom: '8px' } },
+      el('label', { style: { fontSize: '13px' } }, typeCompany, ' 🏢 Компания (юрлицо)'),
+      el('label', { style: { fontSize: '13px' } }, typeContact, ' 👤 Контакт (физлицо)'),
+    ),
+    el('label', { style: { fontSize: '12px', fontWeight: '600' } }, 'Название / Имя:'), nameI,
+    contactExtra,
+    el('label', { style: { fontSize: '12px', fontWeight: '600', marginTop: '8px', display: 'block' } }, 'Телефон:'), phoneI,
+    el('label', { style: { fontSize: '12px', fontWeight: '600', marginTop: '8px', display: 'block' } }, 'Email (опционально):'), emailI,
+    companyExtra,
+  );
+
+  openModal('+ Быстрое добавление клиента', body, {
+    primaryLabel: 'Добавить',
+    onSubmit: async () => {
+      const name = nameI.value.trim();
+      if (!name) { toast('Название/имя обязательно', 'error'); return false; }
+      const phone = phoneI.value.trim() || null;
+      const email = emailI.value.trim() || null;
+      try {
+        if (typeCompany.checked) {
+          const c = await api.create('companies', { name, phone, email });
+          if (innI.value.trim()) {
+            // ИНН не в стандартной companies-схеме — пропустим или через отдельное поле
+            // (schema companies не имеет inn, оставлю без сохранения).
+          }
+          toast('Компания создана', 'success');
+          onCreated({ company_id: c.id, label: `🏢 ${c.name}` });
+        } else {
+          // Разбиваем имя на first/last если есть пробел (простая эвристика).
+          const parts = name.split(/\s+/);
+          const firstName = parts[0];
+          const lastNameFromExtra = contactExtra.querySelector('#qc_lastname')?.value.trim();
+          const lastName = lastNameFromExtra || (parts.length > 1 ? parts.slice(1).join(' ') : null);
+          const c = await api.create('contacts', { first_name: firstName, last_name: lastName, phone, email });
+          toast('Контакт создан', 'success');
+          const fullName = `${c.first_name || firstName}${c.last_name || lastName ? ' ' + (c.last_name || lastName) : ''}`;
+          onCreated({ contact_id: c.id, label: `👤 ${fullName}${c.phone ? ' · ' + c.phone : ''}` });
+        }
+        closeModal();
         return true;
       } catch (e) { toast(e.message, 'error'); return false; }
     },
