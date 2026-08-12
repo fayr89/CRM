@@ -1,6 +1,7 @@
 // Регистр типов уведомлений. Используется и бэком (для notify-чека prefs),
 // и фронтом (отображение списка и шаблонов в Настройках).
 // roles — кому это уведомление реально приходит (исходя из вызывающего кода).
+// group — раздел для группировки в UI настроек (Продажи / Обзвон / Заявки / Общее).
 export const NOTIFICATION_TYPES = [
   {
     key: 'order.created',
@@ -78,8 +79,37 @@ export const NOTIFICATION_TYPES = [
     description: 'Автор обращения не принял выполнение, нужно посмотреть причину.',
     template: 'Обращение #{{id}} возвращено в работу',
     roles: ['admin'],
+    group: 'Обращения',
+  },
+
+  // ============ Заявки на производство ============
+  {
+    key: 'production_request',
+    label: 'События по заявке на просчёт',
+    description: 'Изменения статуса ваших заявок: просчёт готов, срок утверждён, оплата, готово.',
+    template: 'Заявка #{{id}}: {{event}}',
+    roles: ['manager', 'sales', 'rop', 'admin', 'director_prod', 'foreman'],
+    group: 'Заявки на производство',
+  },
+  {
+    key: 'production_request_chat',
+    label: 'Сообщение в чате заявки',
+    description: 'Кто-то написал в обсуждении вашей заявки.',
+    template: '💬 Заявка #{{id}}: {{author}}',
+    roles: ['manager', 'sales', 'rop', 'admin', 'director_prod', 'foreman'],
+    group: 'Заявки на производство',
   },
 ];
+
+// Дописываем group для существующих типов (обратная совместимость).
+for (const t of NOTIFICATION_TYPES) {
+  if (!t.group) {
+    if (t.key.startsWith('order.') || t.key.startsWith('payment.') || t.key === 'product.markdown') t.group = 'Продажи и склад';
+    else if (t.key === 'lead.created') t.group = 'Продажи и склад';
+    else if (t.key.startsWith('feedback.')) t.group = 'Обращения';
+    else t.group = 'Общее';
+  }
+}
 
 // Видит ли пользователь с такой ролью этот тип уведомления.
 export function notificationTypeRelevantForRole(typeKey, role) {

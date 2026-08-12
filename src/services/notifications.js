@@ -36,7 +36,9 @@ export async function buildOrderNotificationBody(orderId) {
 }
 
 // База: сохраняем в notifications для бейджа-колокольчика, и параллельно дублируем
-// в МАХ-бота, если пользователь привязал чат. Сбой пуша не валит запись в БД.
+// в МАХ-бота и в PWA Web Push. Оба канала уважают один и тот же пользовательский
+// тумблер (user_notification_prefs.enabled). Колокольчик срабатывает всегда —
+// пользователь сможет вернуться и посмотреть пропущенное.
 export async function notify(userId, type, title, body, link) {
   if (!userId) return;
   await db.run(
@@ -48,26 +50,24 @@ export async function notify(userId, type, title, body, link) {
     body ?? null,
     link ?? null,
   );
+
+  // Общий чек: хочет ли пользователь пуш-каналы для этого типа.
+  // Отсутствие записи = включено (default-on). Одно значение и для MAX, и для Push.
+  const pref = await db.get(
+    `SELECT enabled FROM user_notification_prefs
+     WHERE user_id = ? AND notification_type = ?`,
+    userId, type,
+  ).catch(() => null);
+  const wantsPushChannels = pref ? pref.enabled : true;
+  if (!wantsPushChannels) return; // ни MAX, ни PWA — но колокольчик записан.
+
+  // MAX (если пользователь привязал бота).
   try {
     const u = await db.get(`SELECT max_chat_id FROM users WHERE id = ?`, userId);
     if (u?.max_chat_id) {
-      // Проверяем настройку пользователя: хочет ли он получать этот тип уведомлений в МАХ.
-      // Отсутствие записи в user_notification_prefs = включено (default-on).
-      const pref = await db.get(
-        `SELECT enabled FROM user_notification_prefs
-         WHERE user_id = ? AND notification_type = ?`,
-        userId, type,
-      ).catch(() => null);
-      const wantsMaxPush = pref ? pref.enabled : true;
-      if (wantsMaxPush) {
-        // Хеш-ссылку оборачиваем в полный URL — без этого МАХ не сделает её кликабельной.
-        // Используем crm.iitit.ru — это домен через VPS-прокси (доступен из РФ без VPN
-        // и совпадает с тем, откуда юзеры ставят PWA: тап на ссылку с MAX-сообщения
-        // должен открыть установленное приложение, а не Safari).
-        const base = process.env.PUBLIC_URL || 'https://crm.iitit.ru';
-        const fullLink = link && link.startsWith('#') ? `${base}/${link}` : link;
-        await sendMaxMessage(u.max_chat_id, `${title}${body ? '\n\n' + body : ''}`, fullLink);
-      }
+      const base = process.env.PUBLIC_URL || 'https://crm.iitit.ru';
+      const fullLink = link && link.startsWith('#') ? `${base}/${link}` : link;
+      await sendMaxMessage(u.max_chat_id, `${title}${body ? '\n\n' + body : ''}`, fullLink);
     }
   } catch (e) {
     // eslint-disable-next-line no-console

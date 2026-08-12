@@ -36,6 +36,7 @@ router.get(
         label: t.label,
         description: t.description,
         template: t.template,
+        group: t.group || 'Общее',
         // Default = true (если записи нет — включено).
         enabled: stored.has(t.key) ? stored.get(t.key) : true,
       }));

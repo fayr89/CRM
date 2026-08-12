@@ -11122,7 +11122,7 @@ export async function renderMyProfile(main) {
   main.append(
     el('h1', { class: 'page-title' }, '👤 Мой профиль'),
     el('div', { class: 'page-subtitle' },
-      'Какие уведомления вы хотите получать в МАХ. По умолчанию — все. Снимите галочку чтобы перестать получать тип уведомления (в колокольчике всё равно появится).'),
+      'Настройки уведомлений действуют для PWA (push на устройство) и МАХ-бота одновременно. В колокольчике внутри CRM события появятся в любом случае.'),
   );
 
   const meBlock = el('div', { class: 'card', style: { marginBottom: '12px' } },
@@ -11238,29 +11238,58 @@ export async function renderMyProfile(main) {
     maxStatus.append(el('div', { class: 'error' }, e.message || 'Ошибка'));
   }
 
-  // Настройки prefs.
+  // Настройки prefs — типы уведомлений, применяются к PWA push И к MAX.
   try {
     const r = await api.myNotificationPrefs();
     clear(prefsArea);
-    prefsArea.append(el('h3', { style: { marginTop: 0 } }, '⚙️ Что получать в МАХ'));
+    prefsArea.append(el('h3', { style: { marginTop: 0 } }, '🔔 Типы уведомлений (для PWA и МАХ)'));
+    prefsArea.append(el('div', {
+      style: { padding: '8px 10px', background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: '4px', fontSize: '12px', color: '#1e40af', marginBottom: '10px' },
+    },
+      '💡 Один тумблер на каждый тип — управляет и push в PWA, и сообщением в МАХ-боте. ',
+      'Отключённые типы всё равно попадают в 🔔 колокольчик внутри CRM — вы ничего не пропустите. ',
+      'Чтобы полностью отключить push на устройстве, снимите разрешение в настройках браузера или через кнопку в карточке «PWA push» выше.',
+    ));
     if (!r.data?.length) {
       prefsArea.append(el('p', { class: 'muted' }, 'Для вашей роли нет настраиваемых уведомлений.'));
       return;
     }
+    // Группируем по t.group.
+    const byGroup = {};
+    for (const t of r.data) (byGroup[t.group || 'Общее'] = byGroup[t.group || 'Общее'] || []).push(t);
     const checkboxes = [];
-    for (const t of r.data) {
-      const cb = el('input', { type: 'checkbox', checked: t.enabled !== false });
-      checkboxes.push({ key: t.key, input: cb });
-      prefsArea.append(el('label', {
-        style: { display: 'flex', gap: '12px', padding: '10px 0', borderBottom: '1px solid var(--border)', cursor: 'pointer', alignItems: 'flex-start' },
-      },
-        cb,
-        el('div', {},
-          el('div', { style: { fontWeight: 600 } }, t.label),
-          el('div', { style: { fontSize: '12px', color: 'var(--text-muted)', marginTop: '2px' } }, t.description),
-          el('div', { style: { fontSize: '11px', color: '#0369a1', marginTop: '4px', fontFamily: 'monospace' } }, 'Шаблон: ' + t.template),
-        ),
-      ));
+    // Порядок групп — фиксированный.
+    const order = ['Заявки на производство', 'Продажи и склад', 'Обращения', 'Общее'];
+    const groups = Object.keys(byGroup).sort((a, b) => (order.indexOf(a) + 100) - (order.indexOf(b) + 100));
+    for (const g of groups) {
+      prefsArea.append(el('div', {
+        style: { fontSize: '11px', fontWeight: '700', color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.5px', marginTop: '12px', paddingBottom: '4px', borderBottom: '2px solid #e5e7eb' },
+      }, g));
+      // Groups «toggle all» — быстрая кнопка вкл/выкл всех типов группы.
+      const allBtn = el('button', {
+        class: 'btn btn-sm', type: 'button', style: { float: 'right', marginTop: '-24px', fontSize: '11px', padding: '2px 8px' },
+      }, 'вкл/выкл группу');
+      prefsArea.append(allBtn);
+      const groupCbs = [];
+      for (const t of byGroup[g]) {
+        const cb = el('input', { type: 'checkbox', checked: t.enabled !== false });
+        checkboxes.push({ key: t.key, input: cb });
+        groupCbs.push(cb);
+        prefsArea.append(el('label', {
+          style: { display: 'flex', gap: '12px', padding: '10px 0', borderBottom: '1px solid var(--border)', cursor: 'pointer', alignItems: 'flex-start' },
+        },
+          cb,
+          el('div', {},
+            el('div', { style: { fontWeight: 600 } }, t.label),
+            el('div', { style: { fontSize: '12px', color: 'var(--text-muted)', marginTop: '2px' } }, t.description),
+            el('div', { style: { fontSize: '11px', color: '#0369a1', marginTop: '4px', fontFamily: 'monospace' } }, 'Пример: ' + t.template),
+          ),
+        ));
+      }
+      allBtn.addEventListener('click', () => {
+        const anyChecked = groupCbs.some((c) => c.checked);
+        for (const c of groupCbs) c.checked = !anyChecked;
+      });
     }
     const saveStatus = el('span', { class: 'save-status', style: { marginLeft: '12px' } });
     prefsArea.append(el('div', { style: { marginTop: '12px' } },
