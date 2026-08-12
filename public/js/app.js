@@ -344,6 +344,12 @@ function buildRoleSwitcher(user) {
 }
 
 function renderShell() {
+  // Сохраняем позицию скролла sidebar до пересборки. Без этого клик по
+  // пункту навигации сбрасывал scrollTop меню в 0 (renderShell полностью
+  // перестраивает DOM). Восстанавливаем после rebuild — юзер не «телепортируется»
+  // к верху меню при каждом переходе.
+  const prevNavScroll = document.querySelector('.sidebar-nav')?.scrollTop ?? 0;
+
   clear(root);
   const main = el('main', { class: 'main' });
 
@@ -596,6 +602,11 @@ function renderShell() {
   loadIosInstallBanner(noticeBar);
 
   root.append(el('div', { class: 'shell' }, sidebar, overlay, main), menuBtn, userBadge);
+
+  // Восстанавливаем scroll меню — сохранён до clear(root) выше.
+  // Иначе при каждом переходе меню прыгает к «Дашборд» и юзер теряет контекст.
+  const navEl = document.querySelector('.sidebar-nav');
+  if (navEl && prevNavScroll) navEl.scrollTop = prevNavScroll;
 
   // Единый /api/bootstrap: параллельно на бэке тянет всё нужное для первого
   // paint. 1 cold-start вместо 5-7 (раньше banners + priceAck + notifications +
