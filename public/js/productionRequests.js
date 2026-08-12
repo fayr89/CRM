@@ -222,7 +222,7 @@ function openCreateModal(onDone) {
   filesInput.addEventListener('change', async () => {
     const files = Array.from(filesInput.files || []);
     for (const f of files) {
-      if (filesData.length >= 10) { toast('Максимум 10 файлов', 'error'); break; }
+      if (filesData.length >= 20) { toast('Максимум 20 файлов на заявку', 'error'); break; }
       if (f.size > 10 * 1024 * 1024) { toast(`${f.name}: больше 10 МБ`, 'error'); continue; }
       const b64 = await new Promise((resolve, reject) => {
         const r = new FileReader();
@@ -267,7 +267,7 @@ function openCreateModal(onDone) {
     descI,
     el('label', { style: { fontSize: '12px', fontWeight: '600', marginTop: '8px', display: 'block' } }, 'Срок клиента (опционально):'),
     dlI,
-    el('label', { style: { fontSize: '12px', fontWeight: '600', marginTop: '8px', display: 'block' } }, 'Файлы (до 10 шт., до 10 МБ каждый — фото/чертежи/ТЗ):'),
+    el('label', { style: { fontSize: '12px', fontWeight: '600', marginTop: '8px', display: 'block' } }, 'Файлы (до 20 шт., до 10 МБ каждый — фото/чертежи/ТЗ):'),
     filesInput, filesList,
   );
 

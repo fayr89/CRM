@@ -147,7 +147,7 @@ const createSchema = z.object({
     filename: z.string().max(300),
     mime: z.string().max(100).optional().nullable(),
     data_base64: z.string(), // может быть с data:...;base64, префиксом
-  })).max(10).optional().default([]),
+  })).max(20).optional().default([]),
 });
 
 const MAX_FILE_BYTES = 10 * 1024 * 1024; // 10 MB
