@@ -143,6 +143,7 @@ const createSchema = z.object({
   deadline: z.string().datetime().optional().nullable(),
   contact_id: z.number().int().positive().optional().nullable(),
   company_id: z.number().int().positive().optional().nullable(),
+  estimated_work_days: z.number().int().min(1).max(365).optional().nullable(),
   files: z.array(z.object({
     filename: z.string().max(300),
     mime: z.string().max(100).optional().nullable(),
@@ -171,11 +172,12 @@ router.post(
     const request = await db.withTransaction(async (tx) => {
       const r = await tx.get(
         `INSERT INTO production_requests
-          (title, description, deadline, manager_id, contact_id, company_id, status)
-         VALUES (?, ?, ?, ?, ?, ?, 'draft')
+          (title, description, deadline, manager_id, contact_id, company_id, estimated_work_days, status)
+         VALUES (?, ?, ?, ?, ?, ?, ?, 'draft')
          RETURNING *`,
         data.title, data.description || null, data.deadline || null,
         u.id, data.contact_id || null, data.company_id || null,
+        data.estimated_work_days || null,
       );
       // Файлы.
       for (const f of data.files) {
@@ -220,6 +222,7 @@ router.patch(
       deadline: z.string().datetime().optional().nullable(),
       contact_id: z.number().int().positive().optional().nullable(),
       company_id: z.number().int().positive().optional().nullable(),
+      estimated_work_days: z.number().int().min(1).max(365).optional().nullable(),
     }).parse(req.body || {});
     const sets = [];
     const params = [];
@@ -747,7 +750,7 @@ router.get('/calendar/entries', asyncHandler(async (req, res) => {
   }
   const rows = await db.all(
     `SELECT r.id, r.title, r.status, r.production_deadline, r.deadline_set_at,
-            r.work_start_date, r.work_end_date,
+            r.work_start_date, r.work_end_date, r.estimated_work_days,
             r.approved_at, r.payment_received_at, r.fulfilled_at, r.paid_at, r.created_at,
             r.client_price, r.reward_computed,
             m.name AS manager_name,

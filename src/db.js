@@ -494,7 +494,7 @@ export const db = {
 // БАМПАЙ ПРИ КАЖДОМ ДОБАВЛЕНИИ МИГРАЦИИ. Текущие миграции прогоняются
 // только если запись в app_settings.schema_version отличается. Это экономит
 // ~500-2000мс на каждом холодном старте serverless-лямбды.
-const SCHEMA_VERSION = 39;
+const SCHEMA_VERSION = 40;
 
 // Транзиентные ошибки коннекта — стоит ретраить (БД просыпается, сетевой сбой).
 // Явные не-транзиентные (auth, protocol) — ретрай не поможет, лучше сразу упасть.
@@ -1439,6 +1439,9 @@ export async function ensureInitialized() {
       // Календарь рисует полосу по работе (не по всему периоду ожидания клиента).
       await pool.query(`ALTER TABLE production_requests ADD COLUMN IF NOT EXISTS work_start_date DATE`);
       await pool.query(`ALTER TABLE production_requests ADD COLUMN IF NOT EXISTS work_end_date DATE`);
+      // Оценка от менеджера: сколько дней ориентировочно нужно на изготовление.
+      // Показывается начальнику производства при распределении в календаре.
+      await pool.query(`ALTER TABLE production_requests ADD COLUMN IF NOT EXISTS estimated_work_days INTEGER`);
 
       // Маркер успешно прогнанных миграций — следующие холодные старты пропустят DDL.
       await pool.query(

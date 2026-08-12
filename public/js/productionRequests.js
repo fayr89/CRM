@@ -96,6 +96,7 @@ function clientText(req) {
   return p || '—';
 }
 
+// В канбан-карточке заявки показываем оценку менеджера, если производство ещё не распределило.
 function renderKanbanCard(req, onDone) {
   const user = getStoredUser() || {};
   const card = el('div', {
@@ -134,6 +135,10 @@ function renderKanbanCard(req, onDone) {
   if (req.manager_name) foot.push('👤 ' + req.manager_name);
   if (req.files_count) foot.push(`📎 ${req.files_count}`);
   if (req.deadline) foot.push('⏰ ' + fmtDate(req.deadline));
+  if (req.estimated_work_days && !req.work_start_date) foot.push(`~${req.estimated_work_days} дн.`);
+  if (req.work_start_date && req.work_end_date) {
+    foot.push(`🛠 ${fmtDate(req.work_start_date)}–${fmtDate(req.work_end_date)}`);
+  }
   if (foot.length) card.append(el('div', { style: { fontSize: '11px', color: '#9ca3af', marginTop: '4px' } }, foot.join(' • ')));
   return card;
 }
@@ -267,6 +272,11 @@ function openCreateModal(onDone) {
     descI,
     el('label', { style: { fontSize: '12px', fontWeight: '600', marginTop: '8px', display: 'block' } }, 'Срок клиента (опционально):'),
     dlI,
+    el('label', { style: { fontSize: '12px', fontWeight: '600', marginTop: '8px', display: 'block' } }, 'Примерный срок изготовления, дней (по вашей оценке):'),
+    el('input', { type: 'number', id: 'estimated_days_input', min: '1', max: '365', style: { padding: '8px', width: '120px' }, placeholder: 'напр. 3' }),
+    el('div', { style: { fontSize: '11px', color: '#6b7280', marginTop: '2px' } },
+      'Ориентир для производства. Финальный срок утвердит начальник цеха.',
+    ),
     el('label', { style: { fontSize: '12px', fontWeight: '600', marginTop: '8px', display: 'block' } }, 'Файлы (до 20 шт., до 10 МБ каждый — фото/чертежи/ТЗ):'),
     filesInput, filesList,
   );
@@ -279,12 +289,14 @@ function openCreateModal(onDone) {
       if (!chosen.contact_id && !chosen.company_id) { toast('Выберите клиента', 'error'); return false; }
       try {
         // Создаём заявку БЕЗ файлов — маленький payload.
+        const estimatedDays = Number(document.getElementById('estimated_days_input')?.value) || null;
         const req = await api.prCreate({
           title: titleI.value.trim(),
           description: descI.value.trim() || null,
           deadline: dlI.value ? new Date(dlI.value).toISOString() : null,
           contact_id: chosen.contact_id,
           company_id: chosen.company_id,
+          estimated_work_days: estimatedDays,
           files: [],
         });
         // Затем грузим файлы по одному — устойчивее к большому размеру.
@@ -667,7 +679,11 @@ function openDeadlineModal(req, onDone) {
   const today = new Date().toISOString().slice(0, 10);
   const toDate = (s) => (s ? String(s).slice(0, 10) : '');
   const deadlineI = el('input', { type: 'date', style: { padding: '8px' }, min: today, value: toDate(req.production_deadline) });
-  const durationI = el('input', { type: 'number', min: '1', max: '365', style: { padding: '8px', width: '90px' }, placeholder: 'дней' });
+  // Подставляем длительность из оценки менеджера (если задал), иначе пусто.
+  const durationI = el('input', {
+    type: 'number', min: '1', max: '365', style: { padding: '8px', width: '90px' },
+    placeholder: 'дней', value: req.estimated_work_days ? String(req.estimated_work_days) : '',
+  });
   const startI = el('input', { type: 'date', style: { padding: '8px' }, min: today, value: toDate(req.work_start_date) });
   const endI = el('input', { type: 'date', style: { padding: '8px' }, min: today, value: toDate(req.work_end_date) });
   const info = el('div', { style: { fontSize: '12px', color: '#374151', marginTop: '4px' } });
@@ -715,6 +731,10 @@ function openDeadlineModal(req, onDone) {
       el('b', {}, 'Работа'),
       ' — реальный период производства (например 2 дня из 30-дневного окна). Между работой и сдачей — запас на форс-мажоры/логистику. В календаре плитка показывает только период РАБОТЫ — цех видит реальную нагрузку.',
     ),
+    req.estimated_work_days
+      ? el('div', { style: { padding: '6px 10px', background: '#f0fdf4', borderRadius: '4px', marginBottom: '8px', fontSize: '12px', color: '#166534' } },
+          `📏 Менеджер оценил работу в ${req.estimated_work_days} дн. — длительность внизу уже подставлена. Можешь изменить.`)
+      : null,
     el('label', { style: { fontSize: '12px', fontWeight: '600' } }, '📅 Сдача клиенту:'),
     deadlineI,
     el('label', { style: { fontSize: '12px', fontWeight: '600', marginTop: '10px', display: 'block' } }, '🛠 Период работы производства:'),
@@ -898,23 +918,40 @@ export async function renderProductionCalendar(main) {
       el('div', { class: 'page-subtitle' }, 'Сроки сдачи заявок. Клик по заявке — карточка. Секция сверху — заявки без утверждённого срока.'),
     ));
 
-    // Секция «Ждут утверждения срока».
+    // Секция «Нужно распределить». Заявки, где сроки работы ЕЩЁ НЕ утверждены:
+    //   approved без production_deadline, ИЛИ awaiting_payment/in_progress без work_start/end.
+    // У чипа показываем оценку менеджера в днях — начальник сразу видит какое
+    // окно надо забронировать в календаре.
     clear(awaitBox);
     try {
-      const r = await api.prList({ status: 'approved' });
-      const need = (r.requests || []).filter((x) => !x.production_deadline);
+      const [ra, rap, rip] = await Promise.all([
+        api.prList({ status: 'approved' }),
+        api.prList({ status: 'awaiting_payment' }),
+        api.prList({ status: 'in_progress' }),
+      ]);
+      const need = [];
+      for (const list of [ra.requests || [], rap.requests || [], rip.requests || []]) {
+        for (const x of list) {
+          if (!x.work_start_date || !x.work_end_date) need.push(x);
+        }
+      }
       if (need.length) {
         const box = el('div', {
           style: { padding: '10px', background: '#fef3c7', border: '1px solid #fde68a', borderRadius: '6px' },
         });
         box.append(el('div', { style: { fontWeight: '600', fontSize: '13px', color: '#78350f', marginBottom: '4px' } },
-          `⚠️ Ждут утверждения срока сдачи (${need.length}):`,
+          `⚠️ Нужно распределить в календаре (${need.length}) — клик на заявку → «Утвердить сроки»:`,
         ));
         for (const req of need) {
+          const daysHint = req.estimated_work_days ? ` · ~${req.estimated_work_days} дн.` : '';
           const chip = el('span', {
             style: { display: 'inline-block', padding: '4px 10px', margin: '2px', background: '#fff', border: '1px solid #fbbf24', borderRadius: '4px', cursor: 'pointer', fontSize: '13px' },
             onClick: () => openViewModal(req.id, () => renderProductionCalendar(main)),
-          }, req.title, ' — ', el('b', { style: { color: '#059669' } }, req.client_price ? fmtMoney(Number(req.client_price), 'RUB') : ''));
+          },
+            req.title,
+            req.client_price ? el('span', { style: { color: '#6b7280', marginLeft: '4px' } }, ` — ${fmtMoney(Number(req.client_price), 'RUB')}`) : null,
+            daysHint ? el('span', { style: { color: '#059669', fontWeight: '600', marginLeft: '4px' } }, daysHint) : null,
+          );
           box.append(chip);
         }
         awaitBox.append(box);
