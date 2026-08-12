@@ -549,6 +549,33 @@ async function openViewModal(id, onDone) {
       } }, '💵 Выплатить менеджеру'));
     }
 
+    // Админ: удалить навсегда (для тестовых записей). Доступно в любом статусе.
+    // Скрыта в отдельном details, чтобы случайно не нажать.
+    if (canAsAdmin) {
+      const dangerDetails = el('details', { style: { marginTop: '12px', padding: '6px', background: '#fef2f2', border: '1px solid #fecaca', borderRadius: '4px' } },
+        el('summary', { style: { cursor: 'pointer', fontSize: '11px', color: '#991b1b', fontWeight: '600' } }, '⚠️ Опасная зона'),
+        el('div', { style: { marginTop: '8px' } },
+          el('div', { style: { fontSize: '12px', color: '#7f1d1d', marginBottom: '6px' } },
+            'Удалить заявку и всю её историю (файлы, чат, цены) БЕЗ ВОЗМОЖНОСТИ ВОССТАНОВЛЕНИЯ. Только для тестовых/мусорных.',
+          ),
+          el('button', {
+            class: 'btn', style: { background: '#dc2626', color: '#fff' },
+            onClick: async () => {
+              const phrase = prompt(`Введите слово УДАЛИТЬ (заглавными), чтобы удалить заявку #${id} «${req.title}»:`);
+              if (!phrase || phrase.trim() !== 'УДАЛИТЬ') { if (phrase) toast('Не подтверждено', 'error'); return; }
+              try {
+                await api.prDelete(id);
+                toast('Заявка удалена', 'success');
+                if (onDone) await onDone();
+                closeModal();
+              } catch (e) { toast(e.message, 'error'); }
+            },
+          }, '🗑 Удалить навсегда'),
+        ),
+      );
+      actions.append(dangerDetails);
+    }
+
     body.append(actions);
 
     // Чат в самом низу карточки.

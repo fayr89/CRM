@@ -523,6 +523,23 @@ router.post('/:id/pay', asyncHandler(async (req, res) => {
   res.json(sanitizeRequest(upd, u));
 }));
 
+// DELETE /:id — навсегда снести заявку (только admin/rop). Используется для
+// тестовых записей и мусора. Каскадно удалит файлы, сообщения, историю цен.
+router.delete('/:id', asyncHandler(async (req, res) => {
+  const id = Number(req.params.id);
+  const u = req.user;
+  if (!isAdmin(u)) throw Forbidden('Удалять заявки может только admin/rop');
+  const row = await db.get(`SELECT id, title FROM production_requests WHERE id = ?`, id);
+  if (!row) throw NotFound('Заявка не найдена');
+  await db.run(`DELETE FROM production_requests WHERE id = ?`, id);
+  await logAction(req, {
+    action: 'production_request.deleted',
+    entity_type: 'production_request', entity_id: id,
+    details: { title: row.title },
+  });
+  res.status(204).end();
+}));
+
 // ============ FILES ============
 
 // Скачать файл. Возвращаем как binary (декодируем base64).

@@ -391,6 +391,7 @@ export const api = {
   prMessages: (id) => request('GET', `/api/production-requests/${id}/messages`),
   prSendMessage: (id, body) => request('POST', `/api/production-requests/${id}/messages`, { body }),
   prCalendar: (params = {}) => request('GET', '/api/production-requests/calendar/entries', { query: params }),
+  prDelete: (id) => request('DELETE', `/api/production-requests/${id}`),
 
   // МАХ-бот
   maxMe: () => request('GET', '/api/max/me'),
