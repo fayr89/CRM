@@ -38,8 +38,9 @@ export async function renderProductionRequests(main) {
               : 'Ваши заявки на просчёт производству. После просчёта — согласование с клиентом.',
         ),
       ),
-      // Кнопка «Новая заявка» только для менеджера/admin.
-      (user.role === 'admin' || ['manager', 'sales', 'rop'].includes(user.role))
+      // Кнопка «Новая заявка» — менеджеры продаж, admin/rop и производство
+      // (director_prod, foreman создают внутренние заявки на изготовление).
+      ['admin', 'rop', 'manager', 'sales', 'director_prod', 'foreman'].includes(user.role)
         ? el('button', { class: 'btn btn-primary', onClick: () => openCreateModal(() => reload()) }, '+ Новая заявка')
         : null,
     ),

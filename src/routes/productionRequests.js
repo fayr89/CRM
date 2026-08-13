@@ -173,8 +173,13 @@ router.post(
   '/',
   asyncHandler(async (req, res) => {
     const u = req.user;
-    if (!MANAGER_ROLES.includes(u.role) && u.role !== 'admin') {
-      throw Forbidden('Создавать заявки могут менеджеры и админ');
+    // Создавать заявку могут: менеджеры продаж (manager/sales/rop), admin,
+    // а также сотрудники производства (director_prod, foreman) — им бывает
+    // нужно оформить внутреннюю заявку самим себе (например, изготовить
+    // прототип, инструмент, восполнить брак).
+    const ALLOWED_CREATE_ROLES = ['manager', 'sales', 'rop', 'admin', 'director_prod', 'foreman'];
+    if (!ALLOWED_CREATE_ROLES.includes(u.role)) {
+      throw Forbidden('У вашей роли нет права создавать заявки на просчёт');
     }
     const data = createSchema.parse(req.body || {});
     if (!data.contact_id && !data.company_id) throw BadRequest('Обязательно укажите клиента (контакт или организацию)');
