@@ -31,7 +31,6 @@ import adminRoutes from './routes/admin.js';
 import feedbackRoutes from './routes/feedback.js';
 import cronRoutes from './routes/cron.js';
 import maxRoutes from './routes/max.js';
-import diagDailyRoutes from './routes/diagDaily.js';
 import aiProposalsRoutes from './routes/aiProposals.js';
 import noticeBannersRoutes from './routes/noticeBanners.js';
 import notificationPrefsRoutes from './routes/notificationPrefs.js';
@@ -181,7 +180,6 @@ export function createApp({ serveStatic = true } = {}) {
   app.use('/api/production-requests', productionRequestsRoutes);
   app.use('/api/bootstrap', bootstrapRoutes);
   app.use('/api/push', pushRoutes);
-  app.use('/api/diag', diagDailyRoutes);
   app.use((req, res) => {
     res.status(404).json({ error: `Route not found: ${req.method} ${req.path}` });
   });
