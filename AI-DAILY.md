@@ -16448,3 +16448,62 @@ ai_proposals, 0 уточнений. Push не отправлен — обе ак
 Коммиты: восстановление dev-ветки, diag-роут v1029 (`0cf817b` на dev,
 ff-merge в prod `0cf817b`), снос diag-v1029 (`104054b` на dev, ff-merge в
 прод следующим коммитом) + этот журнал (следующий коммит).
+
+## 2026-08-14 (v1030): meta без изменений — 92-й обход подряд, `ai_proposal #65` всё ещё pending
+
+Designated dev-ветка (`claude/inspiring-cannon-j9xt8c`) отсутствовала на
+origin на старте обхода (`git fetch origin claude/inspiring-cannon-j9xt8c`
+— `couldn't find remote ref`), тот же паттерн, что и v169/v264/v1017–v1029.
+Локальный чекаут уже стоял на ней с чистым рабочим деревом; `git fetch
+--unshallow origin` + `git fetch origin claude/build-crm-system-JzCP9`
+отдельным вызовом (урок v1020/v1023 — не фетчить dev и prod одной
+командой) подтвердил prod HEAD (`4a4bbb6`) байт-в-байт равным локальному
+HEAD (0/0 расхождений, cherry-pick не потребовался) — восстановлено по
+правилу «PR уже смержен»: `git push -u origin claude/inspiring-cannon-j9xt8c`
+с текущего HEAD.
+
+Diag `daily-v1030` задеплоен (тот же шаблон, что v1029, секрет — свежий
+`openssl rand -hex 10`). Push dev, `git checkout` прод-ветки, `git fetch`
++ `git reset --hard origin/claude/build-crm-system-JzCP9`, `git merge
+--ff-only` dev→prod (`4a4bbb6..18d20ce`) прошёл чисто с первой попытки,
+push обеих веток. Первые четыре запроса к diag-эндпоинту — 404 (обычная
+propagation-задержка); `mcp__Vercel__list_deployments` подтвердил деплой
+`READY`/`target: production` на нужном коммите; пятый запрос вернул 200.
+
+`op=meta`: `proposals_by_status={"done":63,"pending":1,"rejected":1}`
+(pending=#65, rejected=#64 — оба мои собственные артефакты обхода v1028,
+не решения админа), `feedback_by_status={"open":5,"awaiting_approval":16,
+"closed":44}`, `feedback_last_msg="2026-08-10T04:21:45.452Z"` — байт-в-байт
+как в v935–v1029, `proposals_last_update="2026-08-14T03:24:24.731Z"` —
+совпадает с моментом моих же правок в v1028 (создание/patch `#64`/`#65`),
+не сигнал изменения от админа. `list-proposals` подтвердил: `#65` (утечка
+пароля foreman) по-прежнему `status=pending`, `admin_decision_by`/
+`admin_decision_at` оба `null` — админ решения не принял.
+
+Стадия 1 (approved/revision/rejected `ai_proposals` **от админа**) —
+по-прежнему пусто, действовать не по чему. Полный обход тредов feedback
+не требовался по правилу v592: `feedback_last_msg` не сдвинулся. Тред #65
+(**обращение** `feedback`, не путать с `ai_proposal #65`) не перечитывался
+повторно — автор молчит, по правилу «не дёргать повторно» ничего не
+написано.
+
+Push-уведомление: не отправлено. `ai_proposal #65` (утечка пароля
+foreman, risk=high) уже эскалирован push'ем в v1028, второй обход подряд
+без решения администратора — по правилу v268/v592 не дублирую повторным
+push без нового сигнала (не третий обход подряд, порог для повторной
+эскалации, как в v247→v263, ещё не достигнут). Известные находки (v815,
+частота обходов, размер журнала) без нового сигнала.
+
+Diag-эндпоинт снесён на dev-ветке отдельным коммитом сразу после
+использования (`git rm` и правка `app.js` застейджены раздельно,
+граблина v210 учтена: `git add src/app.js` отдельной командой после
+`git rm`, `git status` перед коммитом подтвердил оба файла в staged;
+`grep -n diag src/app.js` подтверждён пустым до коммита). ff-merge
+dev→prod прошёл чисто с первой попытки. `/health` — 200 после деплоя.
+
+Ai-proposals (Этап 1): 0 обработано от админа (approved/revision пусты).
+Этап 2: 0 новых обращений (feedback_last_msg не сдвинулся), 0 закрыто, 0
+новых ai_proposals, 0 уточнений. Коммиты: восстановление dev-ветки,
+diag-роут v1030 (`18d20ce` на dev, ff-merge в prod `18d20ce`), снос
+diag-v1030 (`e953d73` на dev, ff-merge в prod `e953d73`) + этот журнал
+(следующий коммит).
