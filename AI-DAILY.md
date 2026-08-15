@@ -17933,3 +17933,57 @@ Ai-proposals (Этап 1): 0 обработано от админа (approved/re
 новых ai_proposals, 0 уточнений. Коммиты: diag-роут v1056 (`08bd0ea` на
 dev, ff-merge в prod), снос diag-v1056 (`045cd7d` на prod, ff-merge
 обратно в dev) + этот журнал (следующий коммит).
+
+## 2026-08-15 (v1057): meta без изменений — 27-й обход подряд, `#65` пока без решения (~5ч с повторного push v1052)
+
+Designated dev-ветка (`claude/inspiring-cannon-x8d736`) на старте обхода
+отсутствовала на origin (`git ls-remote` не находил) — тот же паттерн
+«смержили, GitHub удалил ветку», что и v169/v264/v268/v1023 и др. Перед
+выводом об unrelated-histories сделал `git fetch --unshallow origin`
+(репозиторий был shallow, ~50 коммитов глубины) — после этого
+подтвердилось: локальный `HEAD` уже совпадал байт-в-байт с
+`origin/claude/build-crm-system-JzCP9` (обе на `cfeac868`, v1056
+журнал). Восстановил ветку по правилу «PR уже смержен»: `git push -u
+origin claude/inspiring-cannon-x8d736` от текущего `HEAD` — прошло
+чисто, реальных коммитов терять не пришлось.
+
+Diag `daily-v1057` (шаблон на основе v1056, секрет `openssl rand -hex
+10`) задеплоен: коммит на dev (`bb13631f`), ff-merge dev→prod чисто с
+первой попытки, push обеих веток. Дождался `READY` через
+`mcp__Vercel__list_deployments` (production target,
+`dpl_44ARrEy7jWcAu7U4MVk5S5F61eDR`), затем diag ответил 200 с первого
+запроса после READY.
+
+`op=meta`: `proposals_by_status={"done":63,"pending":1,"rejected":1}`,
+`feedback_by_status={"open":5,"awaiting_approval":16,"closed":44}`,
+`proposals_last_update="2026-08-14T03:24:24.731Z"`, `feedback_last_msg=
+"2026-08-10T04:21:45.452Z"` — байт-в-байт как в v1029–v1056, без сдвига.
+`list-proposals` подтвердил по всем интересующим статусам:
+approved/revision — пусто; rejected — только `#64` (дубль с побитой
+кодировкой длинного URL, `admin_notes` уже объясняет причину закрытия);
+pending — только `#65` (утечка пароля foreman, `admin_decision_by`/
+`admin_decision_at` оба всё ещё `null`).
+
+Стадия 1 (approved/revision/rejected от админа) — пусто, действовать не
+по чему. Полный обход тредов feedback не требовался по правилу v592
+(`feedback_last_msg` не сдвинулся с прошлого полного прохода).
+
+Push-уведомление: не отправлено. Повторный push (v1052) ушёл в
+`04:18:26Z`, `server_now` этого обхода — `09:17:33Z`, то есть прошло
+~5ч — порог 24ч на следующий повтор не пройден, содержательно новых
+фактов нет (`admin_decision_at` всё ещё `null`, meta не сдвинулась).
+Повтор раньше срока был бы спамом по собственному правилу этого
+журнала (см. v1052/v1056).
+
+Diag-эндпоинт снесён на прод-ветке отдельным коммитом сразу после
+использования (`git rm` и правка `app.js` застейджены раздельно —
+граблина v210 учтена явно: `git add src/app.js` отдельной командой
+после `git rm -f`, `git status`/`grep -n diag src/app.js` перед
+коммитом подтвердили чистоту), синхронизирован обратно на dev (`git
+merge --ff-only`).
+
+Ai-proposals (Этап 1): 0 обработано от админа (approved/revision пусты).
+Этап 2: 0 новых обращений (feedback_last_msg не сдвинулся), 0 закрыто, 0
+новых ai_proposals, 0 уточнений. Коммиты: diag-роут v1057 (`bb13631f` на
+dev, ff-merge в prod), снос diag-v1057 (`26e144bd` на prod, ff-merge
+обратно в dev) + этот журнал (следующий коммит).
