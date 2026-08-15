@@ -17543,3 +17543,54 @@ Ai-proposals (Этап 1): 0 обработано от админа (approved/re
 diag-роут v1049 (`4dfb23b9` на dev, ff-merge в prod), снос diag-v1049
 (`78d66a23` на prod, ff-merge обратно в dev) + этот журнал (следующий
 коммит).
+
+## 2026-08-15 (v1050): meta без изменений — 21-й обход подряд, `#65` пока без решения (~23ч)
+
+Сессия стартовала с shallow-клоном на designated dev-ветке
+`claude/inspiring-cannon-c6hgp0`, которая отсутствовала на origin
+(`git fetch` → `couldn't find remote ref`) — тот же паттерн «смержили и
+GitHub удалил ветку». Выполнил `git fetch --unshallow origin` прежде
+чем делать вывод: локальный HEAD (`844d673b`) оказался равен
+прод-tip'у, т.е. работа предыдущего обхода реально доехала до прода.
+Восстановлена designated dev-ветка по правилу «PR уже смержен»:
+`git checkout -B claude/inspiring-cannon-c6hgp0
+origin/claude/build-crm-system-JzCP9` → push.
+
+Diag `daily-v1050` (стандартный шаблон, секрет `openssl rand -hex 10`)
+задеплоен: коммит на dev (`645f1337`), `git fetch` + `git reset --hard
+origin/claude/build-crm-system-JzCP9`, `git merge --ff-only` dev→prod
+прошёл чисто с первой попытки, push обеих веток. Первый запрос — 404
+(propagation lag ~15-20с, как обычно), повтор через 15с — 200.
+
+`op=meta`: `proposals_by_status={"done":63,"pending":1,"rejected":1}`,
+`feedback_by_status={"open":5,"awaiting_approval":16,"closed":44}`,
+`proposals_last_update="2026-08-14T03:24:24.731Z"`, `feedback_last_msg=
+"2026-08-10T04:21:45.452Z"` — байт-в-байт как в v1029–v1049, без
+сдвига. `list-proposals` подтвердил: `#64` (дубль) по-прежнему
+`rejected` (уже закрыт заметкой прошлой сессии, feedback_id=null,
+действий не требует), `#65` (утечка пароля foreman) по-прежнему
+`pending`, тред `/messages` пуст — админ решения не принял.
+
+Стадия 1 (approved/revision/rejected) — по-прежнему пусто, действовать
+не по чему. Полный обход тредов feedback не требовался по правилу v592
+(`feedback_last_msg` не сдвинулся с прошлого полного прохода).
+
+Push-уведомление: не отправлено. `server_now=02:16` 2026-08-15 — порог
+повторной эскалации по `#65` (после `2026-08-15T03:24`, установлен в
+v1047) ещё не пройден, содержательно новых фактов нет. **Если следующий
+обход застанет `#65` всё ещё pending и `server_now` пройдёт отметку
+2026-08-15T03:24 — эскалировать повторным push'ем.**
+
+Diag-эндпоинт снесён на прод-ветке отдельным коммитом сразу после
+использования (`git rm` и правка `app.js` застейджены раздельно,
+`git status` перед коммитом подтвердил оба файла в staged; `grep -n
+diag src/app.js` пуст до коммита), синхронизирован обратно на dev
+(`git merge --ff-only`). `/health` — 200 подтверждён после снесения;
+diag-v1050 сразу после снесения — 404 подтверждён с первого запроса.
+
+Ai-proposals (Этап 1): 0 обработано от админа (approved/revision пусты).
+Этап 2: 0 новых обращений (feedback_last_msg не сдвинулся), 0 закрыто, 0
+новых ai_proposals, 0 уточнений. Коммиты: восстановление dev-ветки,
+diag-роут v1050 (`645f1337` на dev, ff-merge в prod), снос diag-v1050
+(`9a9f15c3` на prod, ff-merge обратно в dev) + этот журнал (следующий
+коммит).
