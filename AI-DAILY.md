@@ -17712,3 +17712,65 @@ Ai-proposals (Этап 1): 0 обработано от админа (approved/re
 diag-роут v1052 (`e7f10b02` на dev, ff-merge в prod), снос diag-v1052
 (`0e10f03c` на prod, ff-merge обратно в dev) + этот журнал (следующий
 коммит).
+
+## 2026-08-15 (v1053): meta без изменений — 23-й обход подряд, `#65` пока без решения (~1ч с повторного push v1052)
+
+Designated dev-ветка (`claude/inspiring-cannon-hc1mqz`) отсутствовала на
+origin на старте обхода (`git ls-remote` — пусто), тот же паттерн, что и
+во всех обходах с v169. Сессия стартовала с shallow-клоном
+(`git rev-parse --is-shallow-repository` = true); выполнил `git fetch
+--unshallow origin` (урок v1037) прежде чем делать вывод — репозиторий
+содержит ~1250+ висящих `claude/inspiring-cannon-*` веток (та же
+находка, что и v718, не трогал — вне мандата). Локальный HEAD совпадал
+байт-в-байт с прод-tip'ом (`4564d1c4`) — восстановлена по правилу «PR
+уже смержен»: `git push -u origin HEAD:claude/inspiring-cannon-hc1mqz`.
+
+Diag `daily-v1053` (стандартный шаблон, секрет `openssl rand -hex 10`)
+задеплоен: коммит на dev (`5c4e9c74`), `git fetch` + `git reset --hard
+origin/claude/build-crm-system-JzCP9`, `git merge --ff-only` dev→prod
+прошёл чисто с первой попытки, push обеих веток. Первые три запроса к
+diag-эндпоинту — 404 (propagation lag, ~20с суммарно; подтверждено
+`mcp__Vercel__list_deployments` — нужный деплой `dpl_ESZpAARgAnP2wyQ6PVp8Thfa8ENb`
+уже `READY` на production), четвёртый — 200.
+
+`op=meta`: `proposals_by_status={"done":63,"pending":1,"rejected":1}`,
+`feedback_by_status={"open":5,"awaiting_approval":16,"closed":44}`,
+`proposals_last_update="2026-08-14T03:24:24.731Z"`, `feedback_last_msg=
+"2026-08-10T04:21:45.452Z"` — байт-в-байт как в v1029–v1052, без сдвига.
+`list-proposals` (первый запрос упал с «Unable to create shareable URL»,
+известная перемежающаяся проблема тула — повтор с переставленными
+query-параметрами прошёл штатно) подтвердил: `#64` (дубль, побитая
+кодировка) по-прежнему `rejected`, `#65` (утечка пароля foreman)
+по-прежнему `pending`, `admin_decision_by`/`admin_decision_at` оба
+`null`. `check-user` для `foreman@iitit.ru`: `active=true`,
+`updated_at="2026-08-14T02:46:16.098Z"` — не менялся, пароль
+`Foreman!2026` по-прежнему не ротирован, аккаунт не деактивирован.
+
+Стадия 1 (approved/revision/rejected от админа) — по-прежнему пусто,
+действовать не по чему. Полный обход тредов feedback не требовался по
+правилу v592 (`feedback_last_msg` не сдвинулся с прошлого полного
+прохода).
+
+Push-уведомление: не отправлено. Предыдущий обход (v1052) уже отправил
+повторный push по `#65` ~1ч назад (порог 24ч исчерпан там же);
+содержательно новых фактов с тех пор нет (`admin_decision_at` всё ещё
+`null`, meta не сдвинулась) — повтор был бы спамом. Известные находки
+(частота обходов, размер журнала — уже 17714+ строк, приближается к
+порогу архивации v738/#63) без нового сигнала, не дублирую.
+
+Diag-эндпоинт снесён на прод-ветке отдельным коммитом сразу после
+использования (`git rm` и правка `app.js` застейджены раздельно,
+граблина v210 учтена: `git add src/app.js` отдельной командой, `git
+status` перед коммитом подтвердил оба файла в staged; `grep -n diag
+src/app.js` пуст до коммита), синхронизирован обратно на dev (`git
+merge --ff-only`). `/health` — 200 подтверждён после снесения;
+diag-v1053 сразу после снесения — 404 подтверждён (деплой на снос
+проверен через `mcp__Vercel__list_deployments` — дошёл до `READY` на
+production).
+
+Ai-proposals (Этап 1): 0 обработано от админа (approved/revision пусты).
+Этап 2: 0 новых обращений (feedback_last_msg не сдвинулся), 0 закрыто, 0
+новых ai_proposals, 0 уточнений. Коммиты: восстановление dev-ветки,
+diag-роут v1053 (`5c4e9c74` на dev, ff-merge в prod), снос diag-v1053
+(`8f6e9b51` на prod, ff-merge обратно в dev) + этот журнал (следующий
+коммит).
