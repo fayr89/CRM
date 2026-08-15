@@ -18606,3 +18606,58 @@ Ai-proposals (Этап 1): 0 обработано от админа (approved/re
 новых ai_proposals, 0 уточнений. Коммиты: diag-роут v1069 (на dev,
 ff-merge в prod), снос diag-v1069 (на prod, ff-merge обратно в dev) +
 этот журнал (следующий коммит).
+
+## 2026-08-15 (v1070): meta без изменений — 39-й обход подряд, #65/#66 по-прежнему pending
+
+Designated dev-ветка (`claude/inspiring-cannon-ceyyol`) на старте была уже
+checked out локально, HEAD совпадал байт-в-байт с прод-tip (`6c3417e6`,
+финал журнала v1069) — тот же паттерн «смержили, GitHub удалил ветку».
+Восстановлена по правилу «PR уже смержен»: `git push -u origin
+claude/inspiring-cannon-ceyyol` с текущего HEAD, без потери коммитов.
+
+Diag `daily-v1070` задеплоен: коммит на dev (`a1fadbe4`), ff-merge
+dev→prod чисто с первой попытки, push обеих веток. `list_deployments`
+(project `prj_LPYnHsLG5N1QKqaLHN410uHkNOXX`) показал `BUILDING`, дождался
+`READY` через `mcp__Vercel__get_deployment`
+(`dpl_HXtKrZGNMRezSPRa6aUCJqN5SA2q`, ~20с).
+
+`op=meta`: `proposals_by_status={"done":63,"pending":2,"rejected":1}`,
+`feedback_by_status={"open":5,"awaiting_approval":16,"closed":44}`,
+`proposals_last_update="2026-08-15T11:21:41.790Z"` (timestamp создания
+`#66` в v1059, не решение админа), `feedback_last_msg=
+"2026-08-10T04:21:45.452Z"` — байт-в-байт как в предыдущих ~39 обходах,
+без сдвига. `list-proposals` подтвердил: `#64` (дубль, побитая
+кодировка) по-прежнему `rejected`, `#65` (утечка пароля foreman) и `#66`
+(журнал не читается целиком) оба по-прежнему `pending`,
+`admin_decision_by`/`admin_decision_at` у обоих `null`. `check-user` для
+`foreman@iitit.ru`: `active=true`, `updated_at="2026-08-14T02:46:16.098Z"`
+— не менялся, пароль `Foreman!2026` по-прежнему не ротирован, аккаунт не
+деактивирован (экспозиция ~43.6ч с момента создания аккаунта).
+
+Стадия 1 (approved/revision/rejected от админа) — по-прежнему пусто,
+действовать не по чему. Полный обход тредов feedback не требовался по
+правилу v592 (`feedback_last_msg` не сдвинулся с прошлого полного
+прохода).
+
+Push-уведомление: не отправлено. Последний push — v1052 в `04:18:26Z`
+2026-08-15, сейчас `server_now≈22:18:49Z` — прошло ~18ч, порог 24ч на
+следующую эскалацию по `#65` не пройден, содержательно новых фактов нет
+(admin_decision_at всё ещё null у обоих pending-предложений, meta не
+сдвинулась по существу). Повтор раньше срока был бы спамом по
+собственному правилу этого журнала.
+
+Diag-эндпоинт снесён на прод-ветке отдельным коммитом сразу после
+использования (`git rm -f` и правка `app.js` застейджены раздельно —
+граблина v210 учтена явно: `git add src/app.js` отдельной командой,
+`grep -n diag src/app.js` пуст до коммита), синхронизирован обратно на
+dev (`git merge --ff-only`). Прод-деплой снесения дождался `READY`
+(`dpl_GZLt8fmiaoGRfFDxRBkS3PZutDTB`), `/health` — 200 подтверждён (после
+одного транзиентного сбоя самого MCP-тула — `Failed to create shareable
+URL: 409 Conflict` на первой попытке, не связано с приложением, повтор
+сразу прошёл), diag-v1070 после снесения — 404 подтверждён.
+
+Ai-proposals (Этап 1): 0 обработано от админа (approved/revision пусты).
+Этап 2: 0 новых обращений (feedback_last_msg не сдвинулся), 0 закрыто, 0
+новых ai_proposals, 0 уточнений. Коммиты: diag-роут v1070 (`a1fadbe4` на
+dev, ff-merge в prod), снос diag-v1070 (`953e9cdd` на dev, ff-merge в
+prod) + этот журнал (следующий коммит).
