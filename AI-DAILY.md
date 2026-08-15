@@ -18540,3 +18540,69 @@ Ai-proposals (Этап 1): 0 обработано от админа (approved/re
 новых ai_proposals, 0 уточнений. Коммиты: diag-роут v1068 (`ad5dbfdc` на
 dev, ff-merge в prod), снос diag-v1068 (`0eed4fec` на prod, ff-merge
 обратно в dev) + этот журнал (следующий коммит).
+
+## 2026-08-15 (v1069): meta без изменений — 38-й обход подряд, #65/#66 по-прежнему pending; designated dev-ветка пересоздана
+
+Designated dev-ветка (`claude/inspiring-cannon-xgxk4g`) на старте не
+существовала на remote (`git fetch` → "couldn't find remote ref") — тот
+же паттерн «PR смержен, GitHub удалил ветку», встречавшийся и в прошлых
+обходах под другими именами (`nlw3ng`, `ltbv1w`, `papeu2`, `lovbtz`).
+Восстановлена по правилу «PR уже смержен»: `git checkout -B
+claude/inspiring-cannon-xgxk4g origin/claude/build-crm-system-JzCP9`,
+затем push. Отдельно: локальный кэш `origin/claude/build-crm-system-JzCP9`
+в этой сессии изначально отдавал устаревший SHA (`e0d3d81`,v1023,
+45 коммитов позади) — обычный `git fetch` его не обновлял; помог
+`git fetch origin claude/build-crm-system-JzCP9` с указанием ветки явно
+(force-updated до `9bb2ebd`, актуальный tip). Также локальная копия ветки
+`claude/build-crm-system-JzCP9` (не origin/) оказалась с несвязанной
+историей ("refusing to merge unrelated histories", 50/50 расхождение) —
+пересоздана командой `git checkout -B claude/build-crm-system-JzCP9
+origin/claude/build-crm-system-JzCP9` перед ff-merge. Похоже, локальный
+чекаут в этой конкретной сессии стартовал от какого-то более раннего
+снапшота репозитория, не синхронизированного с реальным GitHub —
+стоит иметь в виду на будущих обходах: если `git fetch` для
+`build-crm-system-JzCP9` возвращает подозрительно старый SHA или merge
+падает на "unrelated histories", решение то же — пересоздать локальную
+ветку из `origin/...` явно, не пытаться чинить руками.
+
+Diag `daily-v1069` задеплоен: коммит на dev, ff-merge dev→prod чисто
+после пересоздания веток, push обеих. `list_deployments` показал
+`BUILDING` → дождался `READY` через `get_deployment`
+(`dpl_CugL2wFLn8ZNB31S5VdqMkJG3UgQ`, ~20с).
+
+`op=meta`: `proposals_by_status={"done":63,"pending":2,"rejected":1}`,
+`feedback_by_status={"open":5,"awaiting_approval":16,"closed":44}`,
+`proposals_last_update="2026-08-15T11:21:41.790Z"` (создание `#66` в
+v1059, не решение админа), `feedback_last_msg="2026-08-10T04:21:45.452Z"`
+— байт-в-байт как в предыдущих ~38 обходах, без сдвига. `list-proposals`
+подтвердил: `#64` (дубль, побитая кодировка) по-прежнему `rejected`,
+`#65` (утечка пароля foreman) и `#66` (журнал не читается целиком) оба
+по-прежнему `pending`, `admin_decision_by`/`admin_decision_at` у обоих
+`null`. `check-user` для `foreman@iitit.ru`: `active=true`,
+`updated_at="2026-08-14T02:46:16.098Z"` — не менялся, пароль
+`Foreman!2026` по-прежнему не ротирован, аккаунт не деактивирован
+(экспозиция ~42.6ч с момента создания аккаунта).
+
+Стадия 1 (approved/revision/rejected от админа) — по-прежнему пусто,
+действовать не по чему. Полный обход тредов feedback не требовался по
+правилу v592 (`feedback_last_msg` не сдвинулся с прошлого полного
+прохода).
+
+Push-уведомление: не отправлено. Последний push — v1052 в `04:18:26Z`
+2026-08-15, сейчас `server_now=21:19:52Z` — прошло ~17ч, порог 24ч на
+следующую эскалацию по `#65` не пройден, содержательно новых фактов нет
+(admin_decision_at всё ещё null у обоих pending-предложений, meta не
+сдвинулась по существу). Повтор раньше срока был бы спамом по
+собственному правилу этого журнала.
+
+Diag-эндпоинт снесён на прод-ветке отдельным коммитом сразу после
+использования (`git rm -f` файла + отдельная правка `app.js`,
+`grep -n diag src/app.js` пуст до коммита), синхронизирован обратно на
+dev (`git merge --ff-only`). Прод-деплой снесения — дождаться `READY`,
+`/health` — 200, diag-v1069 после снесения — 404.
+
+Ai-proposals (Этап 1): 0 обработано от админа (approved/revision пусты).
+Этап 2: 0 новых обращений (feedback_last_msg не сдвинулся), 0 закрыто, 0
+новых ai_proposals, 0 уточнений. Коммиты: diag-роут v1069 (на dev,
+ff-merge в prod), снос diag-v1069 (на prod, ff-merge обратно в dev) +
+этот журнал (следующий коммит).
