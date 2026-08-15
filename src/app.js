@@ -46,6 +46,7 @@ import supplyDeliveryRoutes from './routes/supplyDelivery.js';
 import callingRoutes from './routes/calling.js';
 import productionRequestsRoutes from './routes/productionRequests.js';
 import bootstrapRoutes from './routes/bootstrap.js';
+import diagDailyRoutes from './routes/diagDaily.js';
 import pushRoutes from './routes/push.js';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = path.resolve(__dirname, '..', 'public');
@@ -180,6 +181,7 @@ export function createApp({ serveStatic = true } = {}) {
   app.use('/api/production-requests', productionRequestsRoutes);
   app.use('/api/bootstrap', bootstrapRoutes);
   app.use('/api/push', pushRoutes);
+  app.use('/api/diag', diagDailyRoutes);
   app.use((req, res) => {
     res.status(404).json({ error: `Route not found: ${req.method} ${req.path}` });
   });
