@@ -18382,3 +18382,55 @@ Ai-proposals (Этап 1): 0 обработано от админа (approved/re
 новых ai_proposals, 0 уточнений. Коммиты: diag-роут v1065 (`e16b3cff` на
 dev, ff-merge в prod), снос diag-v1065 (`b7fba56e` на prod, ff-merge
 обратно в dev) + этот журнал (следующий коммит).
+
+## 2026-08-15 (v1066): meta без изменений — 35-й обход подряд, #65/#66 по-прежнему pending
+
+Designated dev-ветка (`claude/inspiring-cannon-lovbtz`) отсутствовала на
+origin на старте (тот же паттерн «смержили, GitHub удалил», v169 и далее)
+— после `git fetch --unshallow origin` подтвердилось: локальный HEAD
+совпадал байт-в-байт с прод-tip (`32c0b055`, журнал v1065). Восстановлена
+по правилу «PR уже смержен»: `git push -u origin claude/inspiring-cannon-lovbtz`.
+
+Diag `daily-v1066` задеплоен: коммит на dev (`ce7a73ca`), ff-merge dev→prod
+чисто с первой попытки, push обеих веток. `list_deployments` (project
+`prj_LPYnHsLG5N1QKqaLHN410uHkNOXX`) показал `BUILDING`, дождался `READY`
+через `mcp__Vercel__get_deployment` (`dpl_8x2Q3VuhtQw1hunFQ9Q7dewEWxiH`).
+
+`op=meta`: `proposals_by_status={"done":63,"pending":2,"rejected":1}`,
+`feedback_by_status={"open":5,"awaiting_approval":16,"closed":44}`,
+`proposals_last_update="2026-08-15T11:21:41.790Z"` (timestamp создания
+`#66` в v1059, не решение админа), `feedback_last_msg=
+"2026-08-10T04:21:45.452Z"` — без сдвига (правило v592: полный обход
+тредов feedback не требуется). `list-proposals` подтвердил: `#64` (дубль,
+побитая кодировка) по-прежнему `rejected`, `#65` (утечка пароля foreman) и
+`#66` (журнал не читается целиком) оба по-прежнему `pending`,
+`admin_decision_by`/`admin_decision_at` у обоих `null`. `check-user` для
+`foreman@iitit.ru`: `active=true`, `updated_at="2026-08-14T02:46:16.098Z"`
+— не менялся, пароль `Foreman!2026` по-прежнему не ротирован, аккаунт не
+деактивирован (экспозиция ~39.6ч с момента создания аккаунта).
+
+Стадия 1 (approved/revision/rejected от админа) — по-прежнему пусто,
+действовать не по чему. Полный обход тредов feedback не требовался по
+правилу v592 (`feedback_last_msg` не сдвинулся с прошлого полного
+прохода).
+
+Push-уведомление: не отправлено. Последний push — v1052 в `04:18:26Z`
+2026-08-15, сейчас `server_now=18:19:16Z` — прошло ~14ч, порог 24ч на
+следующую эскалацию по `#65` не пройден, содержательно новых фактов нет
+(admin_decision_at всё ещё null у обоих pending-предложений, meta не
+сдвинулась по существу). Повтор раньше срока был бы спамом по собственному
+правилу этого журнала.
+
+Diag-эндпоинт снесён на прод-ветке отдельным коммитом сразу после
+использования (`git rm -f` и правка `app.js` застейджены раздельно —
+граблина v210 учтена явно: `git add src/app.js` отдельной командой,
+`grep -n diag src/app.js` пуст до коммита), синхронизирован обратно на dev
+(`git merge --ff-only`). Прод-деплой снесения дождался `READY`
+(`dpl_7tvpsbohXwZs9YSbuNsVGjKhqdYv`), `/health` — 200 подтверждён,
+diag-v1066 после снесения — 404 подтверждён.
+
+Ai-proposals (Этап 1): 0 обработано от админа (approved/revision пусты).
+Этап 2: 0 новых обращений (feedback_last_msg не сдвинулся), 0 закрыто, 0
+новых ai_proposals, 0 уточнений. Коммиты: diag-роут v1066 (`ce7a73ca` на
+dev, ff-merge в prod), снос diag-v1066 (`9017ed1b` на prod, ff-merge
+обратно в dev) + этот журнал (следующий коммит).
