@@ -17468,3 +17468,61 @@ Ai-proposals (Этап 1): 0 обработано от админа (approved/re
 diag-роут v1047 (`c222a64` на dev, ff-merge в prod), снос diag-v1047
 (`d42e903` на prod, ff-merge обратно в dev) + этот журнал (следующий
 коммит).
+
+## 2026-08-15 (v1048): meta без изменений — 20-й обход подряд, `#65` пока без решения (~20.9ч, порог 24ч ещё не пройден)
+
+Designated dev-ветка (`claude/inspiring-cannon-3k0zhv`) отсутствовала на
+origin на старте обхода (`git ls-remote` — пусто), тот же паттерн, что и
+все предыдущие обходы с v169. Локальный HEAD (`4eec2c8`) байт-в-байт
+совпадал с прод-tip (свежий `git fetch origin
+claude/build-crm-system-JzCP9` подтвердил) — восстановлена по правилу
+«PR уже смержен»: `git push -u origin HEAD:claude/inspiring-cannon-3k0zhv`.
+
+Diag `daily-v1048` (стандартный шаблон, секрет `openssl rand -hex 10`)
+задеплоен: коммит на dev (`ecb203b`), `git checkout` прод-ветки, `git
+fetch` + `git reset --hard origin/claude/build-crm-system-JzCP9`, `git
+merge --ff-only` dev→prod (`4eec2c8..ecb203b`) прошёл чисто с первой
+попытки, push обеих веток. Первый запрос к diag-эндпоинту (после ~20 сек)
+— сразу 200, без обычной propagation-задержки.
+
+`op=meta`: `proposals_by_status={"done":63,"pending":1,"rejected":1}`,
+`feedback_by_status={"open":5,"awaiting_approval":16,"closed":44}`,
+`proposals_last_update="2026-08-14T03:24:24.731Z"`, `feedback_last_msg=
+"2026-08-10T04:21:45.452Z"` — байт-в-байт как в v1029–v1047, без сдвига.
+`list-proposals` подтвердил: `#64` (дубль, побитая кодировка) по-прежнему
+`rejected`, `#65` (утечка пароля foreman) по-прежнему `pending`,
+`admin_decision_by`/`admin_decision_at` оба `null`. `check-user` для
+`foreman@iitit.ru` (первый вызов `web_fetch_vercel_url` упал с «Unable to
+create shareable URL», повтор — 200): `active=true`,
+`updated_at="2026-08-14T02:46:16.098Z"` — не менялся, пароль
+`Foreman!2026` по-прежнему не ротирован, аккаунт не деактивирован.
+
+Стадия 1 (approved/revision/rejected от админа) — по-прежнему пусто.
+Полный обход тредов feedback не требовался по правилу v592
+(`feedback_last_msg` не сдвинулся).
+
+Push-уведомление: не отправлено. 20-й обход подряд без решения
+администратора по `#65`; с момента исходной эскалации (push в v1028,
+03:24 2026-08-14) прошло ~20.9ч (`server_now=2026-08-15T00:18:23`) —
+порог 24ч из v1031 (после ~2026-08-15T03:24) ещё не пройден. Содержательно
+новых фактов нет. Известные находки (частота обходов, размер журнала)
+без нового сигнала, не дублирую. **Если следующий обход застанет `#65`
+всё ещё pending и server_now окажется после 2026-08-15T03:24 — эскалировать
+повторным push'ем, порог будет исчерпан.**
+
+Diag-эндпоинт снесён на прод-ветке отдельным коммитом сразу после
+использования (`git rm` и правка `app.js` застейджены раздельно,
+граблина v210 учтена: `git add src/app.js` отдельной командой, `git
+status` перед коммитом подтвердил оба файла в staged; `grep -n diag
+src/app.js` пуст до коммита), синхронизирован обратно на dev (`git merge
+--ff-only`). `/health` — первый запрос упал с транзиентной ошибкой
+Vercel bypass-token (409 Conflict при создании shareable URL, не
+приложение), повтор — 200 подтверждён; diag-v1048 после снесения — 404
+подтверждён.
+
+Ai-proposals (Этап 1): 0 обработано от админа (approved/revision пусты).
+Этап 2: 0 новых обращений (feedback_last_msg не сдвинулся), 0 закрыто, 0
+новых ai_proposals, 0 уточнений. Коммиты: восстановление dev-ветки,
+diag-роут v1048 (`ecb203b` на dev, ff-merge в prod), снос diag-v1048
+(`bd2edfd` на prod, ff-merge обратно в dev) + этот журнал (следующий
+коммит).
