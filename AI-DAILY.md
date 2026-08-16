@@ -19671,3 +19671,56 @@ Ai-proposals (Этап 1): 0 обработано от админа (approved/re
 новых ai_proposals, 0 уточнений. Коммиты: diag-роут v1086 (`fff4856` на
 dev, push в prod), снос diag-v1086 (`c93d235` на dev, push в prod) + этот
 журнал (следующий коммит).
+
+## 2026-08-16 (v1087): meta без изменений — 57-й обход подряд, #65/#66 по-прежнему pending
+
+Designated dev-ветка (`claude/inspiring-cannon-nl9h9k`) отсутствовала на
+origin на старте обхода, тот же паттерн «смержили → GitHub снёс ветку».
+Контейнер стартовал shallow-клоном — `git fetch --unshallow origin`,
+затем `git fetch origin claude/build-crm-system-JzCP9` отдельной командой
+(граблина v1084). Локальный HEAD (`d8b287b6`, финал журнала v1086)
+оказался байт-в-байт с прод-tip — реальных cherry-pick'ов не потребовалось.
+Восстановлена обычным `git push -u origin claude/inspiring-cannon-nl9h9k`.
+
+Diag `daily-v1087` (стандартный шаблон, секрет `openssl rand -hex 10`)
+задеплоен: коммит на dev (`5e5dac04`), push `<dev>:<prod>` напрямую
+(fast-forward, по находке v1074). `get_deployment` (project
+`prj_LPYnHsLG5N1QKqaLHN410uHkNOXX`) подтвердил `READY`
+(`dpl_84oreMBo1GuyWamA6bih6Up81Spm`, ~18с), alias включает
+`crm-orcin-six.vercel.app` и `crm.iitit.ru`.
+
+`op=meta`: `proposals_by_status={"done":63,"pending":2,"rejected":1}`,
+`feedback_by_status={"open":5,"awaiting_approval":16,"closed":44}`,
+`proposals_last_update="2026-08-15T11:21:41.790Z"`, `feedback_last_msg=
+"2026-08-10T04:21:45.452Z"` — байт-в-байт как в предыдущих ~56 обходах,
+без сдвига (`server_now="2026-08-16T15:18:52.995Z"`, т.е. ~1ч после
+v1086). `list-proposals` подтвердил: `#64` по-прежнему `rejected`, `#65`
+(утечка пароля foreman) и `#66` (журнал не читается целиком) оба
+по-прежнему `pending`, `admin_decision_by`/`admin_decision_at` у обоих
+`null`. `check-user` для `foreman@iitit.ru`: `active=true`,
+`updated_at="2026-08-14T02:46:16.098Z"` — не менялся, пароль
+`Foreman!2026` по-прежнему не ротирован (экспозиция с создания аккаунта
+~60.6ч, с создания `#65` ~59.9ч — порог 72ч (ожидаемо к
+~2026-08-17T02:42Z) ещё не пройден, до него ~11ч).
+
+Стадия 1 (approved/revision/rejected от админа) — по-прежнему пусто,
+действовать не по чему. Полный обход тредов feedback не требовался по
+правилу v592 (`feedback_last_msg` не сдвинулся).
+
+Push-уведомление: не отправлено. Обе находки (частота обходов, экспозиция
+`#65`) уже эскалированы ранее и содержательно не изменились — новый push
+был бы спамом. Порог 72ч по `#65` ещё не пройден — следующий обход,
+где это подтвердится, должен эскалировать по находке v1074.
+
+Diag-эндпоинт снесён на dev-ветке отдельным коммитом (`git rm -f` и
+правка `app.js` застейджены раздельно — граблина v210 учтена, `grep -n
+diag src/app.js` подтверждён пустым до коммита), синхронизирован в prod
+тем же прямым push. Прод-деплой снесения дождался `READY`
+(`dpl_GhusGG81hkRyhAQkjW9S41zEFmEQ`), `/health` — 200 подтверждён,
+diag-v1087 после снесения — 404 подтверждён.
+
+Ai-proposals (Этап 1): 0 обработано от админа (approved/revision пусты).
+Этап 2: 0 новых обращений (feedback_last_msg не сдвинулся), 0 закрыто, 0
+новых ai_proposals, 0 уточнений. Коммиты: diag-роут v1087 (`5e5dac04` на
+dev, push в prod), снос diag-v1087 (`a408e8b3` на dev, push в prod) + этот
+журнал (следующий коммит).
