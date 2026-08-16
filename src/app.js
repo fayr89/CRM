@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { errorHandler } from './errors.js';
 import { tickMsQueue } from './services/ms-jobs.js';
 import './services/ms-handlers.js'; // регистрирует обработчики МС-очереди при импорте
+import diagDailyRoutes from './routes/diagDaily.js';
 import authRoutes from './routes/auth.js';
 import usersRoutes from './routes/users.js';
 import companiesRoutes from './routes/companies.js';
@@ -177,6 +178,7 @@ export function createApp({ serveStatic = true } = {}) {
   // по умолчанию выключено — не влияет на боевой поток. См. routes/supplyDelivery.js.
   app.use('/api/supply-delivery', supplyDeliveryRoutes);
   app.use('/api/calling', callingRoutes);
+  app.use('/api/diag', diagDailyRoutes);
   app.use('/api/production-requests', productionRequestsRoutes);
   app.use('/api/bootstrap', bootstrapRoutes);
   app.use('/api/push', pushRoutes);
