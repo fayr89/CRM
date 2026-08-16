@@ -19984,3 +19984,59 @@ Ai-proposals (Этап 1): 0 обработано от админа (approved/re
 новых ai_proposals, 0 уточнений. Коммиты: diag-роут v1092 (`d5fb25c` на
 dev, push в prod), снос diag-v1092 (`ab8768b` на dev, push в prod) +
 этот журнал (следующий коммит).
+
+## 2026-08-16 (v1093): meta без изменений — 63-й обход подряд, #65/#66 по-прежнему pending
+
+Designated dev-ветка (`claude/inspiring-cannon-2cy5tv`) отсутствовала на
+origin на старте обхода (`git ls-remote` — пусто), тот же паттерн, что и
+во всех обходах с v169. Локальный HEAD (сессия стартовала уже на этой
+ветке) совпадал байт-в-байт с прод-tip'ом после `git fetch origin
+claude/build-crm-system-JzCP9` — восстановлена простым `git push -u
+origin HEAD:claude/inspiring-cannon-2cy5tv`, без необходимости в
+`checkout -B`.
+
+Diag `daily-v1093` задеплоен: коммит на dev (`1ae8fd9`), `git checkout`
+прод-ветки → `git fetch` + `git reset --hard
+origin/claude/build-crm-system-JzCP9` → `git merge --ff-only` dev→prod
+прошёл чисто с первой попытки (dev была ровно на прод-tip + 1 коммит,
+unrelated-histories не возникло) → push. `get_deployment`
+(`dpl_AB8siXRDb8zqmzz39CA7gfN3BsRH`) подтвердил `READY` (~20с), alias
+включает `crm-orcin-six.vercel.app` и `crm.iitit.ru`. Первый запрос к
+diag — 404 (propagation lag), второй — 200.
+
+`op=meta`: `proposals_by_status={"done":63,"pending":2,"rejected":1}`,
+`feedback_by_status={"open":5,"awaiting_approval":16,"closed":44}`,
+`proposals_last_update="2026-08-15T11:21:41.790Z"`, `feedback_last_msg=
+"2026-08-10T04:21:45.452Z"` — байт-в-байт как в предыдущих ~62 обходах,
+без сдвига (`server_now="2026-08-16T21:17:43.894Z"`, ~1ч после v1092).
+`list-proposals` подтвердил: `#64` по-прежнему `rejected`, `#65` (утечка
+пароля foreman) и `#66` (журнал не читается целиком) оба по-прежнему
+`pending`, `admin_decision_by`/`admin_decision_at` у обоих `null`.
+`check-user` для `foreman@iitit.ru`: `active=true`, `updated_at=
+"2026-08-14T02:46:16.098Z"` — не менялся, пароль `Foreman!2026` по-прежнему
+не ротирован (экспозиция с создания `#65` (`03:24:11Z` 2026-08-14)
+~65ч54м — порог 72ч ещё не пройден, ожидаемо к ~2026-08-17T03:24Z, т.е.
+~6ч07м до него, до следующего обхода за этот интервал скорее всего не
+доживём при текущей частоте ~1 обход/час — значит следующий-следующий
+обход, вероятно, должен будет эскалировать).
+
+Стадия 1 (approved/revision/rejected от админа) — по-прежнему пусто,
+действовать не по чему. Полный обход тредов feedback не требовался по
+правилу v592 (`feedback_last_msg` не сдвинулся).
+
+Push-уведомление: не отправлено. Обе находки (частота обходов, экспозиция
+`#65`) уже эскалированы ранее и содержательно не изменились с последней
+эскалации — новый push был бы спамом без новой информации. Порог 72ч по
+`#65` ещё не пройден.
+
+Diag-эндпоинт снесён на dev-ветке отдельным коммитом (`git rm -f` и
+правка `app.js` застейджены раздельно — граблина v210 учтена, `grep -n
+diag src/app.js` подтверждён пустым до коммита), синхронизирован в prod
+`git merge --ff-only` (прошёл чисто). `/health` — 200 подтверждён,
+`op=meta` через diag — 404 подтверждён (эндпоинт реально снесён).
+
+Ai-proposals (Этап 1): 0 обработано от админа (approved/revision пусты).
+Этап 2: 0 новых обращений (feedback_last_msg не сдвинулся), 0 закрыто, 0
+новых ai_proposals, 0 уточнений. Коммиты: diag-роут v1093 (`1ae8fd9` на
+dev, ff-merge в prod), снос diag-v1093 (`6a61153` на prod, ff-merge
+обратно в dev) + этот журнал (следующий коммит).
