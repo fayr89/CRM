@@ -21126,3 +21126,69 @@ Ai-proposals (Этап 1): 0 обработано от админа (approved/re
 0 новых ai_proposals, 0 уточнений. Коммиты: снос diag-v1110 (`733ee192`
 на prod, ff-merge в dev) + этот журнал (следующий коммит на dev, затем
 ff-merge в prod).
+
+## 2026-08-17 (v1112): штатный обход, meta без изменений
+
+Designated dev-ветка (`claude/inspiring-cannon-smep35`) отсутствовала на
+origin на старте обхода (`git fetch` → `couldn't find remote ref`) — тот
+же паттерн «смержили → GitHub снёс ветку», что и v169/v264/v1111.
+**Поймал ложный «unrelated histories» на shallow-клоне** (граблина
+v169): до `git fetch --unshallow` локальный `merge-base --is-ancestor`
+между прод-веткой (казалась застрявшей на `e0d3d81`/v1023 от
+2026-08-13) и текущим деревом (`8bb9095`/v1111) показал «NOT
+ancestor / unrelated» — выглядело как серьёзная авария (прод отстал на
+~88 обходов). После `git fetch --unshallow origin` выяснилось: прод и
+текущее дерево на самом деле идентичны (`8bb9095` в обоих), расхождение
+было чисто артефактом обрезанной истории. Восстановил designated-ветку
+по правилу «PR уже смержен»: `git checkout -B
+claude/inspiring-cannon-smep35 origin/claude/build-crm-system-JzCP9` →
+push.
+
+Diag `daily-v1112` (стандартный шаблон) задеплоен на dev → ff-merge в
+prod прошёл чисто с первой попытки → `get_deployment` подтвердил
+`READY` (~18с), alias включает `crm-orcin-six.vercel.app` и
+`crm.iitit.ru`. Аварии деплоя (как v255/v1110) в этом обходе не было —
+оба build-объекта (dev-preview и prod) появились и дошли до `READY` в
+штатные сроки.
+
+`op=meta`: `proposals_by_status={"done":63,"pending":2,"rejected":1}`,
+`feedback_by_status={"open":5,"awaiting_approval":16,"closed":44}`,
+`proposals_last_update="2026-08-15T11:21:41.790Z"`,
+`feedback_last_msg="2026-08-10T04:21:45.452Z"` — байт-в-байт как в
+v1111, без сдвига (`server_now="2026-08-17T16:18:31.526Z"`).
+`list-proposals status=pending` подтвердил: `#65` (утечка пароля
+foreman) и `#66` (AI-DAILY.md превысил лимит чтения) оба по-прежнему
+`pending`, `admin_decision_by`/`admin_decision_at` у обоих `null`.
+`proposal-thread` для обоих проверен явно — оба пусты.
+
+Стадия 1 (approved/revision/rejected от админа) — по-прежнему пусто,
+действовать не по чему. Полный обход тредов feedback не требовался по
+правилу v592 (`feedback_last_msg` не сдвинулся с прошлого полного
+прохода).
+
+Экспозиция `#65` с момента создания (2026-08-14T03:24:11Z) — уже ~85ч.
+Порог 72ч уже был подтверждён и запушен в v1100, новой информации к
+тому push нет — повторный push не отправлялся (правило v1101 и далее:
+не спамить при отсутствии сдвига).
+
+Diag-эндпоинт `daily-v1112` снесён отдельным коммитом (`b601fdb2`,
+`git rm -f` и правка `app.js` застейджены раздельно — граблина v210
+учтена явно: `git status --short` подтвердил `M`+`D` без потери правки
+`app.js` до раздельного `git add src/app.js`, `git show --stat`
+подтвердил оба файла в одном коммите, `grep -n diag src/app.js`
+подтверждён пустым до пуша). Прод-деплой снесения
+(`dpl_BcMWbgHXCUamD6gJxKL1Xb5cbcLy`) подтвердил `READY` (~18с), `/health`
+— 200 подтверждён, `op=meta` через diag-v1112 после снесения — 404
+подтверждён (route removed). Синхронизировано в dev `git merge
+--ff-only` тем же HEAD.
+
+Push не отправлялся: ничего нового относительно v1111 — meta не
+сдвинулась, оба pending proposal без реакции админа, но обе находки
+(#65 и частотность обходов) уже эскалированы ранее без новой информации
+к ним.
+
+Ai-proposals (Этап 1): 0 обработано от админа (approved/revision пусты).
+Этап 2: 0 новых обращений (`feedback_last_msg` не сдвинулся), 0 закрыто,
+0 новых ai_proposals, 0 уточнений. Коммиты: diag-роут v1112 (`54e8ffde`
+на dev, ff-merge в prod), снос diag-v1112 (`b601fdb2` на prod, ff-merge
+обратно в dev) + этот журнал (следующий коммит).
