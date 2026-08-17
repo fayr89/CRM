@@ -20281,3 +20281,60 @@ Ai-proposals (Этап 1): 0 обработано от админа (approved/re
 новых ai_proposals, 0 уточнений. Коммиты: diag-роут v1097 (`59a1a9e` на
 dev, ff-merge в prod), снос diag-v1097 (`6ffb7c7` на prod, ff-merge
 обратно в dev) + этот журнал (следующий коммит).
+
+## 2026-08-17 (v1098): meta без изменений — 68-й обход подряд, #65/#66 всё ещё pending; порог 72ч по #65 ещё не пройден (~1ч06м остаётся)
+
+Designated dev-ветка (`claude/inspiring-cannon-mz4q5d`) уже существовала
+на origin ровно на прод-tip'е (`2bef9f2`, финал журнала v1097) — без
+восстановления, штатный старт.
+
+Diag `daily-v1098` задеплоен: коммит на dev (`45a3b39`), `git checkout`
+прод-ветки → `git fetch` + `git reset --hard
+origin/claude/build-crm-system-JzCP9` → `git merge --ff-only` dev→prod
+прошёл чисто с первой попытки → push. `get_deployment` (проект
+`prj_LPYnHsLG5N1QKqaLHN410uHkNOXX`, `dpl_9bZRhmX7XdQFWNkyTwzfsbwyXkvm`)
+подтвердил `READY` (~21с), alias включает `crm-orcin-six.vercel.app` и
+`crm.iitit.ru`.
+
+`op=meta`: `proposals_by_status={"done":63,"pending":2,"rejected":1}`,
+`feedback_by_status={"open":5,"awaiting_approval":16,"closed":44}`,
+`proposals_last_update="2026-08-15T11:21:41.790Z"`, `feedback_last_msg=
+"2026-08-10T04:21:45.452Z"` — байт-в-байт как в предыдущих ~67 обходах,
+без сдвига (`server_now="2026-08-17T02:17:47.112Z"`, ~1ч после v1097).
+`list-proposals` подтвердил: `#64` по-прежнему `rejected` (дубль,
+самозакрыт AI), `#65` (утечка пароля foreman) и `#66` (журнал не
+читается целиком) оба по-прежнему `pending`, `admin_decision_by`/
+`admin_decision_at` у обоих `null`. `proposal-thread` для `#65` и `#66`
+проверен явно — оба пусты. `check-user` для `foreman@iitit.ru`:
+`active=true`, `updated_at="2026-08-14T02:46:16.098Z"` — не менялся,
+пароль `Foreman!2026` по-прежнему не ротирован (экспозиция с создания
+`#65` (`03:24:11Z` 2026-08-14) ~70ч54м — порог 72ч ещё не пройден,
+ожидаемо к ~2026-08-17T03:24Z, т.е. ~1ч06м до него).
+
+Стадия 1 (approved/revision/rejected от админа) — по-прежнему пусто,
+действовать не по чему. Полный обход тредов feedback не требовался по
+правилу v592 (`feedback_last_msg` не сдвинулся).
+
+Push-уведомление: не отправлено. Обе находки (частота обходов, экспозиция
+`#65`) уже эскалированы ранее (последний внешний push по `#65` — v1074) и
+содержательно не изменились — новый push был бы спамом без новой
+информации. Порог 72ч по `#65` ещё не пройден (~1ч06м остаётся) —
+следующий обход, где это подтвердится (~03:24Z 2026-08-17), должен
+эскалировать по накопленной находке v1074/v1089–v1097.
+
+Diag-эндпоинт снесён на прод-ветке отдельным коммитом — на этот раз
+`git add src/app.js src/routes/diagDaily.js` воспроизвёл граблину v210
+(`git rm` уже убрал файл из рабочего дерева → `add` упал на
+несуществующем pathspec → ничего не застейджилось), поймано сразу через
+`git status --short` (только `D` без `M` у `app.js`), исправлено
+раздельным `git add src/app.js`, подтверждено `git show --stat` (оба
+файла в одном коммите) и `grep -n diag src/app.js` (пусто) до пуша.
+Прод-деплой снесения (`dpl_3Tw4fUebLyVqi93qWXLnBMULtX2J`) подтвердил
+`READY` (~17с), `/health` — 200 подтверждён, `op=meta` через diag-v1098
+после снесения — 404 подтверждён (route removed).
+
+Ai-proposals (Этап 1): 0 обработано от админа (approved/revision пусты).
+Этап 2: 0 новых обращений (feedback_last_msg не сдвинулся), 0 закрыто, 0
+новых ai_proposals, 0 уточнений. Коммиты: diag-роут v1098 (`45a3b39` на
+dev, ff-merge в prod), снос diag-v1098 (`361bbad` на prod, ff-merge
+обратно в dev) + этот журнал (следующий коммит).
