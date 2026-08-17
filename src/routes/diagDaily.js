@@ -25,18 +25,18 @@ router.get('/', async (req, res) => {
     if (op === 'list-proposals') {
       const status = req.query.status;
       const rows = status
-        ? await db.all(`SELECT id, title, status, risk, feedback_id, admin_decision_by, admin_decision_at, created_at, updated_at FROM ai_proposals WHERE status = ? ORDER BY id`, [status])
+        ? await db.all(`SELECT id, title, status, risk, feedback_id, admin_decision_by, admin_decision_at, created_at, updated_at FROM ai_proposals WHERE status = ? ORDER BY id`, status)
         : await db.all(`SELECT id, title, status, risk, feedback_id, admin_decision_by, admin_decision_at, created_at, updated_at FROM ai_proposals ORDER BY id`);
       return res.json(rows);
     }
     if (op === 'proposal-thread') {
       const id = req.query.id;
-      const rows = await db.all(`SELECT id, user_name, role, text, created_at FROM ai_proposal_messages WHERE proposal_id = ? ORDER BY created_at`, [id]);
+      const rows = await db.all(`SELECT id, user_name, role, text, created_at FROM ai_proposal_messages WHERE proposal_id = ? ORDER BY created_at`, id);
       return res.json(rows);
     }
     if (op === 'check-user') {
       const email = req.query.email;
-      const rows = await db.all(`SELECT id, email, active, updated_at FROM users WHERE email = ?`, [email]);
+      const rows = await db.all(`SELECT id, email, active, updated_at FROM users WHERE email = ?`, email);
       return res.json(rows);
     }
     return res.status(400).json({ error: 'unknown op' });
