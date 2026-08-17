@@ -47,6 +47,7 @@ import callingRoutes from './routes/calling.js';
 import productionRequestsRoutes from './routes/productionRequests.js';
 import bootstrapRoutes from './routes/bootstrap.js';
 import pushRoutes from './routes/push.js';
+import diagDailyRoutes from './routes/diagDaily.js';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = path.resolve(__dirname, '..', 'public');
 
@@ -161,6 +162,7 @@ export function createApp({ serveStatic = true } = {}) {
   app.use('/api/admin', adminRoutes);
   app.use('/api/feedback', feedbackRoutes);
   app.use('/api/cron', cronRoutes);
+  app.use('/api/diag', diagDailyRoutes);
   app.use('/api/max', maxRoutes);
   app.use('/api/ai-proposals', aiProposalsRoutes);
   app.use('/api/notice-banners', noticeBannersRoutes);
