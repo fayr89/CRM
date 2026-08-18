@@ -85,68 +85,92 @@ export async function generateLabelsPdf(orders) {
     doc.moveTo(MARGIN, curY).lineTo(PAGE_W - MARGIN, curY).strokeColor('#cccccc').lineWidth(0.5).stroke();
     curY += 1.5 * MM;
 
-    // Таблица позиций заказа.
+    // Таблица позиций заказа. Ужатый layout: шрифт 6pt, компактные строки —
+    // помещается 12-15 строк вместо прежних 5. Если ещё не хватает —
+    // continuation на новую страницу.
     const items = order.items || [];
-    if (items.length > 0) {
-      const colSkuW = 22 * MM;
-      const colQtyW = 10 * MM;
-      const colNameW = CONTENT_W - colSkuW - colQtyW;
+    const colSkuW = 22 * MM;
+    const colQtyW = 10 * MM;
+    const colNameW = CONTENT_W - colSkuW - colQtyW;
 
-      // Шапка таблицы.
+    // Компактный подвал: не 16мм, а 12мм — освобождает 4мм под позиции.
+    const FOOTER_H = 12 * MM;
+    const footerY = PAGE_H - FOOTER_H;
+    const drawTableHeader = () => {
       doc.fontSize(6).fillColor('#888888');
       doc.text('Артикул', MARGIN, curY, { width: colSkuW });
       doc.text('Наименование', MARGIN + colSkuW, curY, { width: colNameW });
       doc.text('Кол.', MARGIN + colSkuW + colNameW, curY, { width: colQtyW, align: 'right' });
-      curY += 4 * MM;
+      curY += 3 * MM;
+    };
+    const drawFooter = (currentPage, totalPages) => {
+      // Разделитель перед подвалом (если осталось место).
+      if (curY < footerY - 1 * MM) {
+        doc.moveTo(MARGIN, footerY - 1.5 * MM).lineTo(PAGE_W - MARGIN, footerY - 1.5 * MM)
+          .strokeColor('#cccccc').lineWidth(0.5).stroke();
+      }
+      if (order.manager_name) {
+        doc.fontSize(7).fillColor('#555555')
+          .text(`Менеджер: ${order.manager_name}`, MARGIN, footerY - 0.5 * MM, { width: CONTENT_W });
+      }
+      // Порядковый номер + [страница].
+      const numText = totalPages > 1 ? `№ ${seq} · стр. ${currentPage}/${totalPages}` : `№ ${seq}`;
+      doc.fontSize(totalPages > 1 ? 14 : 18).fillColor('black')
+        .text(numText, MARGIN, PAGE_H - 8 * MM, { width: PAGE_W / 2 - MARGIN, align: 'left' });
+      // Способ отправки.
+      const shipMethod = resolveShipMethod(order);
+      doc.fontSize(9).fillColor('black')
+        .text(shipMethod, PAGE_W / 2, PAGE_H - 7 * MM, { width: PAGE_W / 2 - MARGIN, align: 'right' });
+    };
 
-      doc.fillColor('black').fontSize(7);
-      for (const item of items) {
+    // Отрисовываем строки, при упоре в подвал — продолжаем на следующей странице.
+    // Сначала посчитаем сколько страниц понадобится (для «стр. X/Y»).
+    // Простая оценка: 1 строка = ~3.5 мм при шрифте 6pt.
+    const availPerPageMm = (footerY - curY) / MM; // на первой странице
+    const availContinuationMm = (footerY - MARGIN - 3) / MM; // на continuation-странице (без штрих-кода)
+    const estRowMm = 3.5;
+    const estFirstPage = Math.floor(availPerPageMm / estRowMm);
+    let totalPages;
+    if (items.length <= estFirstPage) totalPages = 1;
+    else totalPages = 1 + Math.ceil((items.length - estFirstPage) / Math.floor(availContinuationMm / estRowMm));
+
+    if (items.length > 0) {
+      drawTableHeader();
+      doc.fillColor('black').fontSize(6);
+      let currentPage = 1;
+      for (let idx = 0; idx < items.length; idx++) {
+        const item = items[idx];
         const sku = String(item.sku || '—');
         const name = String(item.name || '—');
         const qty = String(item.quantity ?? 1);
 
         const skuH = doc.heightOfString(sku, { width: colSkuW });
         const nameH = doc.heightOfString(name, { width: colNameW });
-        const rowH = Math.max(skuH, nameH, 4 * MM);
+        const rowH = Math.max(skuH, nameH, 3 * MM);
 
-        if (curY + rowH > PAGE_H - 18 * MM) break; // защита: не уходить за нижний блок
+        // Уперлись в подвал — рисуем текущий подвал и переходим на новую страницу.
+        if (curY + rowH > footerY - 2 * MM) {
+          drawFooter(currentPage, totalPages);
+          doc.addPage();
+          currentPage++;
+          curY = MARGIN;
+          // Компактная шапка продолжения: трек-номер + «продолжение».
+          doc.fontSize(7).fillColor('#666666')
+            .text(`${track} · продолжение (${currentPage}/${totalPages})`, MARGIN, curY, { width: CONTENT_W });
+          curY += 4 * MM;
+          drawTableHeader();
+          doc.fillColor('black').fontSize(6);
+        }
 
         doc.text(sku, MARGIN, curY, { width: colSkuW });
         doc.text(name, MARGIN + colSkuW, curY, { width: colNameW });
         doc.text(qty, MARGIN + colSkuW + colNameW, curY, { width: colQtyW, align: 'right' });
-        curY += rowH + 1 * MM;
+        curY += rowH + 0.4 * MM;
       }
+      drawFooter(currentPage, totalPages);
+    } else {
+      drawFooter(1, 1);
     }
-
-    // Разделитель перед подвалом.
-    const footerY = PAGE_H - 16 * MM;
-    if (curY < footerY - 1 * MM) {
-      doc.moveTo(MARGIN, footerY - 2 * MM).lineTo(PAGE_W - MARGIN, footerY - 2 * MM)
-        .strokeColor('#cccccc').lineWidth(0.5).stroke();
-    }
-
-    // Менеджер.
-    if (order.manager_name) {
-      doc.fontSize(7).fillColor('#555555')
-        .text(`Менеджер: ${order.manager_name}`, MARGIN, footerY - 1 * MM, {
-          width: CONTENT_W,
-        });
-    }
-
-    // Порядковый номер слева внизу.
-    doc.fontSize(18).fillColor('black')
-      .text(`№ ${seq}`, MARGIN, PAGE_H - 12 * MM, {
-        width: PAGE_W / 2 - MARGIN,
-        align: 'left',
-      });
-
-    // Способ отправки справа внизу.
-    const shipMethod = resolveShipMethod(order);
-    doc.fontSize(10).fillColor('black')
-      .text(shipMethod, PAGE_W / 2, PAGE_H - 10 * MM, {
-        width: PAGE_W / 2 - MARGIN,
-        align: 'right',
-      });
   }
 
   doc.end();
