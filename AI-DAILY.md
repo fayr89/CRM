@@ -21746,3 +21746,63 @@ Ai-proposals (Этап 1): 0 обработано от админа (approved/re
 0 новых ai_proposals, 0 уточнений. Коммиты: diag-роут v1121 (`d8228808`
 на dev, ff-merge в prod), снос diag-v1121 (`6a2924ea` на prod, ff-merge
 в dev) + этот журнал (следующий коммит).
+
+## 2026-08-18 (v1122): штатный обход, meta без изменений; #65 экспозиция ~95ч, повторный push не отправлялся
+
+Designated dev-ветка (`claude/inspiring-cannon-clky7m`) отсутствовала на
+origin на старте обхода (тот же паттерн «смержили → GitHub снёс ветку»,
+что и v169/v264/v1111–v1121). Локальный `HEAD` уже совпадал с прод-tip'ом
+(`acb5c24c`, финал журнала v1121), расхождений не найдено (репозиторий
+стартовал shallow — сделан явный `git fetch --unshallow` перед выводом,
+граблина v169). Восстановлена простым `git push -u origin
+HEAD:claude/inspiring-cannon-clky7m`.
+
+Diag `daily-v1122` задеплоен на dev (`ea332168`) → ff-merge в prod
+(`ea332168`) прошёл чисто с первой попытки → push подтверждён.
+`get_deployment` (проект `prj_LPYnHsLG5N1QKqaLHN410uHkNOXX`) подтвердил
+`READY` (~19с), alias включает `crm-orcin-six.vercel.app` и `crm.iitit.ru`.
+Аварии деплоя (как v255/v1110) и сбоя webhook (как v1120) не было — прод
+задеплоился сам с первой попытки без retry.
+
+`op=meta`: `proposals_by_status={"done":63,"pending":2,"rejected":1}`,
+`feedback_by_status={"awaiting_approval":16,"closed":44,"open":5}`,
+`proposals_last_update="2026-08-15T11:21:41.790Z"`,
+`feedback_last_msg="2026-08-10T04:21:45.452Z"` — байт-в-байт как в
+v1096–v1121, без сдвига (`server_now="2026-08-18T02:16:53.626Z"`).
+`list-proposals` (полный список) подтвердил: approved/revision — пусто;
+`#64` по-прежнему `rejected` (дубль `#65`, `feedback_id=null`, без
+`admin_decision_by` — действий не требует); `#65` (утечка пароля foreman)
+и `#66` (AI-DAILY.md превысил лимит чтения) оба по-прежнему `pending`,
+`admin_decision_by`/`admin_decision_at` у обоих `null`. `proposal-thread`
+для обоих проверен явно — оба пусты. `check-user` для `foreman@iitit.ru`:
+`active=true`, `updated_at="2026-08-14T02:46:16.098Z"` — не менялся,
+пароль `Foreman!2026` по-прежнему не ротирован; экспозиция с создания
+`#65` (2026-08-14T03:24:11.626Z) — уже ~95ч.
+
+Стадия 1 (approved/revision/rejected от админа) — по-прежнему пусто,
+действовать не по чему. Полный обход тредов feedback не требовался по
+правилу v592 (`feedback_last_msg` не сдвинулся с прошлого полного прохода,
+2026-08-10T04:21:45.452Z, последний полный проход — v1120, 21 обращение,
+у всех последнее сообщение от AI).
+
+Push-уведомление: не отправлено. Порог 72ч по `#65` уже подтверждён и
+эскалирован в v1100 (~24ч назад по `server_now`) — новой информации с тех
+пор нет (ни решения админа, ни сдвига meta, ни новых сообщений в тредах).
+Повторный push сейчас был бы чистым дублированием без новой информации
+(то же решение, что v1101–v1121).
+
+Diag-эндпоинт `daily-v1122` снесён отдельным коммитом (`3c62cf7e`,
+`git rm -f` и правка `app.js` застейджены раздельно — граблина v210
+учтена явно: `git add src/app.js` отдельной командой до `git rm`,
+`git status --short` подтвердил `M`+`D` в одном коммите, `git show --stat`
+подтвердил оба файла, `grep -n diag src/app.js` — пусто (exit code 1) до
+пуша). Прод-деплой снесения (`dpl_8iqwBYSEMJEyMx465P845iUuB6h1`)
+подтвердил `READY` (~17с), `/health` — 200 подтверждён, `op=meta` через
+diag-v1122 после снесения — 404 подтверждён (route removed).
+Синхронизировано в dev `git merge --ff-only` тем же HEAD, push подтверждён.
+
+Ai-proposals (Этап 1): 0 обработано от админа (approved/revision пусты).
+Этап 2: 0 новых обращений (`feedback_last_msg` не сдвинулся), 0 закрыто,
+0 новых ai_proposals, 0 уточнений. Коммиты: diag-роут v1122 (`ea332168`
+на dev, ff-merge в prod), снос diag-v1122 (`3c62cf7e` на prod, ff-merge
+в dev) + этот журнал (следующий коммит).
