@@ -22530,3 +22530,48 @@ Ai-proposals (Этап 1): 0 обработано от админа (approved/re
 0 новых ai_proposals, 0 уточнений. Коммиты: diag-роут v1134 (`be3ea4db`
 на dev, ff-merge в prod), снос diag-v1134 (`e2cc3fdd` на prod, ff-merge
 в dev) + этот журнал (следующий коммит).
+
+## 2026-08-18 (v1135): штатный обход, meta без изменений; #65 экспозиция ~108ч, push не отправлялся
+
+Designated dev-ветка (`claude/inspiring-cannon-ah0t9t`) отсутствовала на origin на
+старте (тот же паттерн, что и v169/v264/v1111–v1134). `git fetch --unshallow`
+выполнен до любых выводов о состоянии веток (граблина v169) — после него prod
+(`claude/build-crm-system-JzCP9`) и локальный HEAD совпали на `13a8d14a`
+(финал v1134), расхождений нет.
+
+Diag `daily-v1135` задеплоен на dev (`ede3818b`) → ff-merge в prod (`ede3818b`)
+→ push подтверждён. `/health` — 200 сразу; diag первая попытка — 404
+(edge-пропагация), вторая (~12с позже) — 200 с рабочим `op=meta`.
+
+`op=meta`: `proposals_by_status={"done":63,"pending":2,"rejected":1}`,
+`feedback_by_status={"awaiting_approval":16,"closed":44,"open":5}`,
+`proposals_last_update="2026-08-15T11:21:41.790Z"`,
+`feedback_last_msg="2026-08-10T04:21:45.452Z"` — байт-в-байт как в v1096–v1134,
+без сдвига (`server_now="2026-08-18T15:23:14.259Z"`). `list-proposals`:
+`approved`/`revision` — пусты (Этап 1: обрабатывать нечего); `pending`
+подтвердил `#65` (утечка пароля foreman) и `#66` (архивация AI-DAILY.md) —
+оба по-прежнему `pending`, `admin_decision_by`/`admin_decision_at` — `null`.
+`check-user` для `foreman@iitit.ru`: `active=true`, `updated_at` не менялся —
+пароль `Foreman!2026` по-прежнему не ротирован, экспозиция с создания `#65`
+(2026-08-14T03:24:11.626Z) — ~108ч.
+
+Полный обход тредов feedback не требовался по правилу v592 (`feedback_last_msg`
+не сдвинулся). #66 (архивация AI-DAILY.md, файл уже ~22530+ строк / ~1.75MB) —
+решение по-прежнему за админом, не принимается автономно.
+
+Push-уведомление: не отправлено. Следующая содержательная веха — 120ч/5 суток
+экспозиции `#65`, ожидается ~2026-08-19T03:24Z (через ~12ч от этого обхода);
+до неё либо решения администратора — новый повод сообщить, раньше — был бы
+дублирующим спамом (v247/v263/v592).
+
+Diag `daily-v1135` снесён отдельным коммитом (`7ffe71ba`, `git rm -f` +
+правка `app.js` застейджены раздельно — граблина v210 учтена: `git status
+--short` подтвердил `M`+`D` в одном коммите, `grep -n diag src/app.js` —
+пусто (exit 1) до пуша). `/health` после сноса — 200, `op=meta` через
+diag-v1135 — 404 подтверждён (route removed). Синхронизировано в dev
+`git merge --ff-only`, push подтверждён.
+
+Ai-proposals (Этап 1): 0 обработано (approved/revision пусты). Этап 2: 0
+новых обращений, 0 закрыто, 0 новых ai_proposals, 0 уточнений. Коммиты:
+diag-роут v1135 (`ede3818b` на dev, ff-merge в prod), снос diag-v1135
+(`7ffe71ba` на prod, ff-merge в dev) + этот журнал (следующий коммит).
