@@ -23184,3 +23184,56 @@ Ai-proposals (Этап 1): 0 обработано от админа (approved/re
 новых ai_proposals, 0 уточнений. Коммиты: diag-роут v1145 (`1b3cb7d` на dev,
 ff-merge в prod), снос diag-v1145 (`d225261` на prod, ff-merge в dev) + этот
 журнал (следующий коммит).
+
+## 2026-08-19 (v1146): штатный обход, meta без изменений; #65 экспозиция ~118.9ч, push не отправлялся
+
+Designated dev-ветка (`claude/inspiring-cannon-8f2i42`) отсутствовала на
+origin на старте обхода — тот же паттерн «смержили → GitHub снёс ветку»,
+что и во всех обходах с v169. Репозиторий стартовал shallow —
+`git fetch --unshallow` выполнен явно до любых выводов о состоянии веток
+(граблина v169). Локальный HEAD уже совпадал с прод-tip'ом (`e2e6505c`,
+финал журнала v1145), расхождений не найдено. Восстановлена простым
+`git push -u origin claude/inspiring-cannon-8f2i42` с текущего HEAD.
+
+Diag `daily-v1146` (тот же шаблон: `router.get('/daily-vNNN')` +
+`app.use('/api/diag', diagDailyRoutes)`) задеплоен: коммит на dev
+(`8d630095`), push `<dev>:<prod>` напрямую (fast-forward, без промежуточного
+`git merge --ff-only`). `get_deployment` подтвердил `READY`
+(`dpl_9GCQ6Dne1V2xH1FtY7Kt3vAidgwy`, ~24с), alias включает
+`crm-orcin-six.vercel.app` и `crm.iitit.ru`.
+
+`op=meta`: `proposals_by_status={"done":63,"pending":2,"rejected":1}`,
+`feedback_by_status={"open":5,"awaiting_approval":16,"closed":44}`,
+`proposals_last_update="2026-08-15T11:21:41.790Z"`,
+`feedback_last_msg="2026-08-10T04:21:45.452Z"` — байт-в-байт как в
+v1096–v1145, без сдвига (`server_now="2026-08-19T02:17:44.335Z"`).
+`list-proposals(status=approved|revision)` — оба пусты (Этап 1: обрабатывать
+нечего). `list-proposals(status=pending)` подтвердил: `#65` (утечка пароля
+foreman) и `#66` (AI-DAILY.md превысил лимит чтения) оба по-прежнему
+`pending`, `admin_decision_by`/`admin_decision_at` у обоих `null`.
+`check-user` для `foreman@iitit.ru`: `active=true`,
+`updated_at="2026-08-14T02:46:16.098Z"` не менялся — пароль `Foreman!2026`
+по-прежнему не ротирован, экспозиция с создания `#65`
+(2026-08-14T03:24:11.626Z) — уже ~118.9ч (около 5 суток).
+
+Полный обход тредов feedback не требовался по правилу v592
+(`feedback_last_msg` не сдвинулся с последнего полного прохода, v1130).
+
+Push-уведомление: не отправлено. Обе находки (#65/#66 pending без решения
+администратора, частота обходов) уже эскалированы ранее (v1074 и раньше);
+новых данных с прошлого обхода нет, экспозиция выросла на доли часа —
+не новый значимый порог (сутки/дни), дублировать нечего.
+
+Diag-эндпоинт снесён отдельным коммитом сразу после использования
+(`git rm -f` и правка `app.js` застейджены раздельно — граблина v210
+учтена явно: `git add src/app.js src/routes/diagDaily.js` одной командой
+после `git rm`, `grep -n diag src/app.js` подтверждён пустым до коммита),
+push `<dev>:<prod>` напрямую. Прод-деплой снесения дождался `READY`
+(`dpl_GndWn8mSJ6jABBqsPQu2ghDpDXtq`), `/health` — 200 подтверждён,
+diag-v1146 после снесения — 404 подтверждён.
+
+Ai-proposals (Этап 1): 0 обработано от админа (approved/revision пусты).
+Этап 2: 0 новых обращений (`feedback_last_msg` не сдвинулся), 0 закрыто, 0
+новых ai_proposals, 0 уточнений. Коммиты: diag-роут v1146 (`8d630095` на
+dev, push в prod), снос diag-v1146 (`9e38f9cd` на dev, push в prod) + этот
+журнал (следующий коммит).
