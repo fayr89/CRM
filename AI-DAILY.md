@@ -23421,3 +23421,58 @@ Ai-proposals (Этап 1): 0 обработано от админа (approved/re
 новых ai_proposals, 0 уточнений. Коммиты: diag-роут v1149 (`9acf884c` на
 dev+prod), снос diag-v1149 (`9f390ac6` на dev+prod) + этот журнал
 (следующий коммит).
+
+## 2026-08-19 (v1150): штатный обход, meta без изменений; #65 экспозиция ~122.9ч, push не отправлялся
+
+Сессия стартовала shallow (`git rev-parse --is-shallow-repository` = true) — `git fetch
+--unshallow` выполнен явно до любых выводов о состоянии веток (граблина v169).
+Designated dev-ветка (`claude/inspiring-cannon-rfjudm`) отсутствовала на origin на старте
+обхода (`git ls-remote` пусто) — тот же паттерн «смержили → GitHub снёс ветку», что и во
+всех обходах с v169. После unshallow подтверждено: локальный HEAD (`8988e1a6`, финал
+журнала v1149) байт-в-байт совпадает с прод-tip'ом (`origin/claude/build-crm-system-JzCP9`),
+расхождений нет. Восстановлена простым `git push -u origin HEAD:claude/inspiring-cannon-rfjudm`.
+
+Diag `daily-v1150` (тот же шаблон: `router.get('/daily-vNNN')` + `app.use('/api/diag',
+diagDailyRoutes)`) задеплоен: коммит на dev (`c563923c`), push напрямую и в dev, и в prod
+(fast-forward). Прод-деплой (`dpl_FS9qJfhmtF9XDDX9PTefuiNQS466`) дождался `READY` явным
+опросом (~20с через `mcp__Vercel__get_deployment`); alias включает `crm-orcin-six.vercel.app`
+и `crm.iitit.ru`. `op=meta` — 200 с первой попытки после подтверждения `READY`.
+
+`op=meta`: `proposals_by_status={"done":63,"pending":2,"rejected":1}`,
+`feedback_by_status={"awaiting_approval":16,"closed":44,"open":5}`,
+`proposals_last_update="2026-08-15T11:21:41.790Z"`, `feedback_last_msg="2026-08-10T04:21:45.452Z"`
+— байт-в-байт как в v1096–v1149, без сдвига (`server_now="2026-08-19T06:18:38.871Z"`).
+`list-proposals(status=approved|revision)` — оба пусты (Этап 1: обрабатывать нечего).
+`list-proposals(status=rejected)` подтвердил единственную запись `#64` (утечка пароля,
+старая, не пересекается с текущими #65/#66, не трогалась — уже обработана в прошлых
+обходах). `list-proposals(status=pending)` подтвердил: `#65` (утечка пароля foreman) и `#66`
+(архивация AI-DAILY.md) оба по-прежнему `pending`, `admin_decision_by`/`admin_decision_at`
+у обоих `null`. Треды `#65` и `#66` (`op=proposal-thread`) пусты — новых сообщений админа
+нет, отвечать не по чему. `check-user` для `foreman@iitit.ru`: `active=true`,
+`updated_at="2026-08-14T02:46:16.098Z"` не менялся — пароль `Foreman!2026` по-прежнему не
+ротирован, экспозиция с создания `#65` (2026-08-14T03:24:11.626Z) до `server_now` этого
+обхода — ~122.9ч (5.12 суток).
+
+Полный обход тредов feedback не требовался по правилу v592 (`feedback_last_msg` не сдвинулся
+с последнего полного прохода, v1130).
+
+По поводу `#66` (архивация AI-DAILY.md): файл уже 23420+ строк / ~1.88MB — выше лимита чтения
+инструмента (256KB), читался частями (offset/limit) в начале обхода. Решение по архивации не
+принимается автономно, остаётся за админом через `#66`.
+
+Push-уведомление: не отправлено. 120ч-веха по `#65` уже отправлена в v1148; следующая
+содержательная веха (144ч/6 суток) ожидается около 2026-08-20T03:24Z, этот обход её не
+застал — повтор без новой информации был бы дублирующим спамом (правило v247/v263/v592/v719).
+
+Diag-эндпоинт `daily-v1150` снесён отдельным коммитом (`72e79253`, `git rm -f
+src/routes/diagDaily.js` застейджен отдельно, затем `git add src/app.js` отдельной командой —
+граблина v210 учтена явно: `git status --short` подтвердил `M`+`D` в одном коммите, `grep -n
+diag src/app.js` — пусто (exit code 1) до коммита), push напрямую в dev и в prod. Прод-деплой
+снесения (`dpl_CHUY1wtH1aFh7sS1ewFGLFUFhFnG`) дождался `READY` явным опросом (~20с); `/health`
+— 200; `op=meta` через diag-v1150 после снесения — 404 подтверждён (route removed) на первой
+попытке после `READY`. Синхронизировано в dev (тот же HEAD на обеих ветках, push подтверждён).
+
+Ai-proposals (Этап 1): 0 обработано от админа (approved/revision пусты). Этап 2: 0 новых
+обращений (`feedback_last_msg` не сдвинулся), 0 закрыто, 0 новых ai_proposals, 0 уточнений.
+Коммиты: diag-роут v1150 (`c563923c` на dev+prod), снос diag-v1150 (`72e79253` на dev+prod)
++ этот журнал (следующий коммит).
