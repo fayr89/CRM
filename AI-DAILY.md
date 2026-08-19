@@ -23299,3 +23299,66 @@ Ai-proposals (Этап 1): 0 обработано от админа (approved/re
 новых ai_proposals, 0 уточнений. Коммиты: diag-роут v1147 (`257df7e` на dev,
 push в prod), снос diag-v1147 (`f8cfbcf` на prod, push в dev) + этот журнал
 (следующий коммит).
+
+## 2026-08-19 (v1148): meta без изменений; #65 экспозиция перевалила за 120ч (5 суток) — отправлено push-уведомление
+
+Designated dev-ветка (`claude/inspiring-cannon-vrh8wo`) отсутствовала на origin на
+старте обхода (`git ls-remote` пусто) — тот же паттерн «смержили → GitHub снёс
+ветку», что и во всех обходах с v169. Репозиторий стартовал shallow —
+`git fetch --unshallow` выполнен явно до любых выводов о состоянии веток
+(граблина v169): после unshallow подтверждено, что локальный HEAD (`ebbc817d`,
+финал журнала v1147) байт-в-байт совпадает с прод-tip'ом, расхождений нет.
+Восстановлена простым `git push -u origin HEAD:claude/inspiring-cannon-vrh8wo`.
+
+Diag `daily-v1148` (тот же шаблон: `router.get('/daily-vNNN')` +
+`app.use('/api/diag', diagDailyRoutes)`) задеплоен: коммит на dev (`60926d6e`),
+push `<dev>:<prod>` напрямую (fast-forward). Прод-деплой
+(`dpl_G12RKfkzzK8S84CMpnaeATwdEM6j`) дошёл до `READY` за ~20с (явно дождался
+через `mcp__Vercel__get_deployment`); alias включает `crm-orcin-six.vercel.app`
+и `crm.iitit.ru`. `op=meta` — 200 с рабочим ответом с первой попытки после
+подтверждения `READY`.
+
+`op=meta`: `proposals_by_status={"done":63,"pending":2,"rejected":1}`,
+`feedback_by_status={"awaiting_approval":16,"closed":44,"open":5}`,
+`proposals_last_update="2026-08-15T11:21:41.790Z"`,
+`feedback_last_msg="2026-08-10T04:21:45.452Z"` — байт-в-байт как в
+v1096–v1147, без сдвига (`server_now="2026-08-19T04:17:51.402Z"`).
+`list-proposals(status=pending)` подтвердил: `#65` (утечка пароля foreman) и
+`#66` (архивация AI-DAILY.md) оба по-прежнему `pending`,
+`admin_decision_by`/`admin_decision_at` у обоих `null` (approved/revision/rejected
+не менялись по составу `proposals_by_status` — Этап 1: обрабатывать нечего).
+`check-user` для `foreman@iitit.ru`: `active=true`,
+`updated_at="2026-08-14T02:46:16.098Z"` не менялся — пароль `Foreman!2026`
+по-прежнему не ротирован, экспозиция с создания `#65`
+(2026-08-14T03:24:11.626Z) до `server_now` этого обхода — **~120.9ч (5.04
+суток)** — впервые перевалила за 120ч-веху, которую v1147 явно отметил как
+повод сообщить, если админ не отреагирует к этому моменту.
+
+Полный обход тредов feedback не требовался по правилу v592
+(`feedback_last_msg` не сдвинулся с последнего полного прохода, v1130).
+
+**Push-уведомление отправлено** (впервые с v1100/2026-08-17): 120ч-веха по
+`#65` наступила и подтверждена этим обходом, админ так и не отреагировал —
+это ровно тот случай, который v1147 заранее обозначил как повод сообщить
+снова (не дублирующий спам, а новая содержательная веха). В тексте
+уведомления упомянуты оба pending-предложения (`#65` риск high, `#66` риск
+low) со ссылкой на раздел «🤖 AI-предложения» в CRM.
+
+Diag-эндпоинт `daily-v1148` снесён отдельным коммитом (`e671fbed`, `git rm -f
+src/routes/diagDaily.js` застейджен отдельно; первая попытка `git add
+src/app.js src/routes/diagDaily.js` одной командой упала с `pathspec ... did
+not match any files` — граблина v210 воспроизвелась снова, `git status
+--short` сразу показал `app.js` НЕ застейдженным; исправлено отдельным `git
+add src/app.js` перед коммитом; `grep -n diag src/app.js` — пусто (exit code
+1) до коммита, `git show --stat` подтвердил оба файла — `M src/app.js` + `D
+src/routes/diagDaily.js` — в одном коммите). Прод-деплой снесения
+(`dpl_ZpwTTX7JHnokEReXMRRmFDMXEJRg`) дождался `READY` явным опросом
+(~15-20с); `/health` — 200; `op=meta` через diag-v1148 после снесения — 404
+подтверждён (route removed) уже на первой попытке после `READY`.
+Синхронизировано в dev (тот же HEAD на обеих ветках, push подтверждён).
+
+Ai-proposals (Этап 1): 0 обработано от админа (approved/revision пусты).
+Этап 2: 0 новых обращений (`feedback_last_msg` не сдвинулся), 0 закрыто, 0
+новых ai_proposals, 0 уточнений. Коммиты: diag-роут v1148 (`60926d6e` на dev,
+push в prod), снос diag-v1148 (`e671fbed` на prod, push в dev) + этот журнал
+(следующий коммит).
