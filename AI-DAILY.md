@@ -23049,3 +23049,72 @@ Ai-proposals (Этап 1): 0 обработано от админа (approved/re
 новых ai_proposals, 0 уточнений. Коммиты: diag-роут v1143 (`ba18dd6` на dev,
 ff-merge в prod), снос diag-v1143 (`9ec365b` на prod, ff-merge в dev) + этот
 журнал (следующий коммит).
+
+## 2026-08-19 (v1144): штатный обход, meta без изменений; #65 экспозиция ~117ч (до 120ч-вехи ~3ч), push не отправлялся
+
+Designated dev-ветка (`claude/inspiring-cannon-zzfp0p`) отсутствовала на origin
+на старте обхода (`git ls-remote` пусто) — тот же паттерн «смержили → GitHub
+снёс ветку», что и v169/v264/v1111–v1143. `git fetch --unshallow origin`
+выполнен явно до любых выводов о состоянии веток (граблина v169) — клон
+действительно был shallow (~50 коммитов). После unshallow: `git fetch origin
+claude/build-crm-system-JzCP9` дал прод-tip `e5607e87` (финал журнала v1143),
+расхождений с локальным HEAD не было. Восстановлена простым `git checkout -B
+claude/inspiring-cannon-zzfp0p origin/claude/build-crm-system-JzCP9` + `git
+push -u origin HEAD:claude/inspiring-cannon-zzfp0p`.
+
+Diag `daily-v1144` (тот же шаблон: `router.get('/daily-vNNN')` +
+`app.use('/api/diag', diagDailyRoutes)`) задеплоен на dev (`1bc5a9df`) →
+ff-merge в prod (`1bc5a9df`) прошёл чисто с первой попытки → push подтверждён.
+`/health` — 200 сразу; diag `op=meta` первые две попытки (~7с друг за другом)
+вернули 404 (edge-пропагация нового деплоя) — подтверждено через
+`mcp__Vercel__list_deployments`: деплой `dpl_FygjDMrT4KbnuyhpyL1vccFVKZny`
+(commit `1bc5a9df`, target production) был `READY`; следующая попытка — 200 с
+рабочим `op=meta`.
+
+`op=meta`: `proposals_by_status={"done":63,"pending":2,"rejected":1}`,
+`feedback_by_status={"awaiting_approval":16,"closed":44,"open":5}`,
+`proposals_last_update="2026-08-15T11:21:41.790Z"`,
+`feedback_last_msg="2026-08-10T04:21:45.452Z"` — байт-в-байт как в
+v1096–v1143, без сдвига (`server_now="2026-08-19T00:17:50.016Z"`).
+`list-proposals(status=approved|revision)` — оба пусты (Этап 1: обрабатывать
+нечего). `list-proposals(status=pending)` подтвердил: `#65` (утечка пароля
+foreman) и `#66` (архивация AI-DAILY.md) оба по-прежнему `pending`,
+`admin_decision_by`/`admin_decision_at` у обоих `null`. `check-user` для
+`foreman@iitit.ru`: `active=true`, `updated_at="2026-08-14T02:46:16.098Z"` не
+менялся — пароль `Foreman!2026` по-прежнему не ротирован, экспозиция с
+создания `#65` (2026-08-14T03:24:11.626Z) — ~116.9ч (около 4.87 суток).
+
+Полный обход тредов feedback не требовался по правилу v592
+(`feedback_last_msg` не сдвинулся с последнего полного прохода, v1130).
+
+По поводу `#66` (архивация AI-DAILY.md): файл уже 23050+ строк / ~1.85MB —
+выше лимита чтения инструмента (256KB), читался частями (offset/limit) и
+через `tail`/`wc -l` в начале обхода. Журнал дописан обычным `Bash`/`cat >>`
+без полного чтения файла, как и предыдущие сессии — решение по архивации не
+принимается автономно, остаётся за админом через `#66`.
+
+Push-уведомление: не отправлено. `#65` эскалирован в v1100 (2026-08-17,
+«перевалил за 72ч»), с тех пор ни решения администратора, ни сдвига meta, ни
+новых сообщений не появилось — повторная эскалация без новой информации была
+бы дублирующим спамом (правило v247/v263/v592). Экспозиция выросла с ~116ч
+(v1143) до ~117ч — не новая веха (следующая содержательная отметка — 120ч/5
+суток, ожидается около 2026-08-19T03:24Z, т.е. ещё ~3ч — будет поводом
+сообщить снова, если админ так и не отреагирует к следующему обходу).
+
+Diag-эндпоинт `daily-v1144` снесён отдельным коммитом (`bc14978d`, `git add
+src/app.js` отдельной командой до `git rm -f src/routes/diagDaily.js` —
+граблина v210 учтена явно: `git status --short` подтвердил `M`+`D` в одном
+коммите, `grep -n diag src/app.js` — пусто (exit code 1) до пуша). Прод-деплой
+снесения (`dpl_829juTesrG7trfTMqMLc9o6u8xM1`) подтверждён `READY` через
+`mcp__Vercel__get_deployment` до повторной проверки; `/health` — 200 (первая
+попытка после подтверждения `READY` поймала транзиентную ошибку создания
+bypass-URL инструмента `web_fetch_vercel_url`, повтор сразу дал чистые 200);
+`op=meta` через diag-v1144 после снесения — 404 подтверждён (route removed)
+уже на первой попытке после `READY`. Синхронизировано в dev `git merge
+--ff-only` тем же HEAD, push подтверждён.
+
+Ai-proposals (Этап 1): 0 обработано от админа (approved/revision пусты).
+Этап 2: 0 новых обращений (`feedback_last_msg` не сдвинулся), 0 закрыто, 0
+новых ai_proposals, 0 уточнений. Коммиты: diag-роут v1144 (`1bc5a9df` на dev,
+ff-merge в prod), снос diag-v1144 (`bc14978d` на prod, ff-merge в dev) + этот
+журнал (следующий коммит).
