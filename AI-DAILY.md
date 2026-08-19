@@ -23803,3 +23803,48 @@ Ai-proposals (Этап 1): 0 обработано от админа (approved/re
 обращений (`feedback_last_msg` не сдвинулся), 0 закрыто, 0 новых ai_proposals, 0 уточнений.
 Коммиты: diag-роут v1157 (`4619176f` на dev+prod), снос diag-v1157 (`68a9ab6d` на dev+prod)
 + этот журнал (следующий коммит).
+
+## 2026-08-19 (v1158): meta байт-в-байт совпадает с v1157 — без изменений
+
+Designated dev-ветка (`claude/inspiring-cannon-q35top`) отсутствовала на origin на старте
+обхода (`git ls-remote` пусто) — тот же паттерн «смержили → GitHub снёс ветку», что и во
+всех обходах с v169. Локальный HEAD (`312c27c`, финал журнала v1157) совпадал с прод-tip'ом
+(`origin/claude/build-crm-system-JzCP9`) — расхождений нет. Восстановлена `git push -u origin
+HEAD:claude/inspiring-cannon-q35top`.
+
+Diag `daily-v1158` задеплоен: коммит на dev (`2a5a35b`), push напрямую и в dev, и в prod
+(fast-forward, чисто с первой попытки). `/health` — 200 сразу; `op=meta` — 404 на первой
+попытке (propagation-задержка, находка v296), 200 через ~15с.
+
+`op=meta`: `proposals_by_status={"done":63,"pending":2,"rejected":1}`,
+`feedback_by_status={"awaiting_approval":16,"closed":44,"open":5}`,
+`proposals_last_update="2026-08-15T11:21:41.790Z"`, `feedback_last_msg="2026-08-10T04:21:45.452Z"`
+— байт-в-байт как в v1096–v1157, без сдвига (`server_now="2026-08-19T14:20:45.474Z"`).
+`list-proposals(status=approved|revision)` — оба пусты (Этап 1: обрабатывать нечего).
+`list-proposals(status=pending)` подтвердил: `#65` (утечка пароля foreman) и `#66`
+(архивация AI-DAILY.md) оба по-прежнему `pending`, `admin_decision_by`/`admin_decision_at`
+у обоих `null`. Треды `#65` и `#66` (`op=proposal-thread`) пусты — новых сообщений админа
+нет, отвечать не по чему. `check-user` для `foreman@iitit.ru`: `active=true`,
+`updated_at="2026-08-14T02:46:16.098Z"` не менялся — пароль `Foreman!2026` по-прежнему не
+ротирован, экспозиция с создания `#65` (2026-08-14T03:24:11.626Z) до `server_now` этого
+обхода — ~131.0ч (5.46 суток).
+
+Полный обход тредов feedback не требовался по правилу v592 (`feedback_last_msg` не сдвинулся
+с последнего полного прохода, v1130).
+
+Push-уведомление: не отправлено. 120ч-веха по `#65` уже отправлена в v1148; следующая
+содержательная веха (144ч/6 суток) ожидается около 2026-08-20T03:24Z, этот обход её не
+застал (~131.0ч < 144ч) — повтор без новой информации был бы дублирующим спамом (правило
+v247/v263/v592/v719).
+
+Diag-эндпоинт `daily-v1158` снесён отдельным коммитом (`780eccf9`, `git rm -f
+src/routes/diagDaily.js` застейджен отдельно, затем `git add src/app.js` отдельной командой
+— граблина v210 учтена явно: `grep -n diag src/app.js` — пусто (exit code 1) до коммита,
+`git show --stat` подтвердил `M`+`D` в одном коммите), push напрямую в dev и в prod.
+`/health` — 200 после деплоя снесения; `op=meta` через diag-v1158 после снесения — 404
+подтверждён (route removed) после ~20с propagation-задержки.
+
+Ai-proposals (Этап 1): 0 обработано от админа (approved/revision пусты). Этап 2: 0 новых
+обращений (`feedback_last_msg` не сдвинулся), 0 закрыто, 0 новых ai_proposals, 0 уточнений.
+Коммиты: diag-роут v1158 (`2a5a35b` на dev+prod), снос diag-v1158 (`780eccf9` на dev+prod)
++ этот журнал (следующий коммит).
