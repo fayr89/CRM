@@ -25164,3 +25164,53 @@ Ai-proposals (Этап 1): 0 обработано от админа. Этап 2:
 0 новых ai_proposals, 0 уточнений.
 Коммиты: diag-роут v1183 (`6dc88ac` на dev+prod), снос diag-v1183 (на dev+prod)
 + этот журнал.
+
+## 2026-08-20 (v1184): штатный обход, meta без изменений; #65 экспозиция ~156.9ч
+
+Designated dev-ветка (`claude/inspiring-cannon-tb32ez`) на старте обхода отсутствовала на
+origin (`git ls-remote` пусто), хотя в `git branch -a` фигурировала как stale
+`remotes/origin/...`-ref из более раннего состояния клона — не доверять этому листингу,
+проверять `git ls-remote` напрямую. Локальный HEAD (`63c52e7`, финал журнала v1183)
+байт-в-байт совпал с прод-tip'ом `origin/claude/build-crm-system-JzCP9` — расхождений нет.
+Восстановлена `git push -u origin HEAD:claude/inspiring-cannon-tb32ez`.
+
+Diag `daily-v1184` задеплоен: коммит на dev (`4f0f2d7`), ff-merge и push в prod (`4f0f2d7`) —
+перед merge выполнены `git fetch origin claude/build-crm-system-JzCP9` +
+`git reset --hard origin/...` (правило v1182/v1183); в этот раз локальная прод-ветка уже
+была синхронна, reset ничего не откатил, ff-merge прошёл с первой попытки. `/health` — 200
+сразу; первый запрос к diag-роуту вернул 404 (обычная propagation-задержка,
+v1175/v1176/v1179/v1182/v1183), повторный ~13с спустя (после подтверждения деплоя READY
+через `list_deployments`) — 200.
+
+`op=meta`: `proposals_by_status={"done":63,"pending":2,"rejected":1}` (approved/revision пусты),
+`feedback_by_status={"awaiting_approval":16,"closed":44,"open":5}`,
+`proposals_last_update="2026-08-15T11:21:41.790Z"`, `feedback_last_msg="2026-08-10T04:21:45.452Z"`
+— байт-в-байт как в v1096–v1183, без сдвига (`server_now="2026-08-20T16:20:15.327Z"`).
+`list-proposals(status=pending)`: `#65` (утечка пароля foreman) и `#66` (архивация AI-DAILY.md)
+по-прежнему `pending`, `admin_decision_by`/`admin_decision_at` = null, `admin_notes` пусты.
+Треды `#65` и `#66` (`op=proposal-thread`) пусты — новых сообщений админа нет.
+`check-user` для `foreman@iitit.ru`: `active=true`, `updated_at="2026-08-14T02:46:16.098Z"`
+не менялся — пароль `Foreman!2026` по-прежнему не ротирован. Экспозиция `#65` с создания
+(2026-08-14T03:24:11.626Z) — **~156.9ч** (точно 156.93ч = 6д 12ч56м); 144ч-веха пройдена и
+отправлена в v1172, 168ч-веха (ожидается ~2026-08-21T03:24:11Z) ещё **не наступила**
+(~11.1ч до неё) — push не отправлялся.
+
+Этап 1 (approved/revision/rejected) — пусто, действовать не по чему. Этап 2 — полный обход
+тредов feedback пропущен по правилу v592/v1130 (`feedback_last_msg` не сдвинулся с последнего
+полного прохода).
+
+Diag-эндпоинт `daily-v1184` снесён отдельным коммитом (`5053fac`) на designated dev-ветке
+(`git branch --show-current` проверен до `git rm` — граблина v1163; `git rm -f` и
+`git add src/app.js` раздельными командами — граблина v210; `grep -n diag src/app.js` пусто
+(exit 1) до коммита, `git show --stat` подтвердил `M`+`D` в одном коммите). Ff-merge и push
+в prod прошли с первой попытки (`5053fac`), `/health` — 200, diag-роут — 404 сразу после
+подтверждения READY деплоя.
+
+Push-уведомление: **не отправлено**. Meta байт-в-байт совпадает с v1096–v1183, `#65`/`#66`
+без решения администратора, 168ч-веха по `#65` ещё не наступила (~11ч до неё) — ничего
+нового, требующего внимания админа прямо сейчас.
+
+Ai-proposals (Этап 1): 0 обработано от админа. Этап 2: 0 новых обращений, 0 закрыто,
+0 новых ai_proposals, 0 уточнений.
+Коммиты: diag-роут v1184 (`4f0f2d7` на dev+prod), снос diag-v1184 (`5053fac` на dev+prod)
++ этот журнал.
