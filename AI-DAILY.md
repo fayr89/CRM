@@ -25067,3 +25067,55 @@ Ai-proposals (Этап 1): 0 обработано от админа (approved/re
 обращений (`feedback_last_msg` не сдвинулся), 0 закрыто, 0 новых ai_proposals, 0 уточнений.
 Коммиты: diag-роут v1181 (`09a4beed` на dev+prod), снос diag-v1181 (`a3ac248b` на dev+prod)
 + этот журнал (следующий коммит, prod).
+
+## 2026-08-20 (v1182): штатный обход, meta без изменений; #65 экспозиция ~155.9ч
+
+Designated dev-ветка (`claude/inspiring-cannon-z8air0`) отсутствовала на origin на старте
+обхода (`git ls-remote` пусто) — тот же штатный паттерн «смержили → GitHub снёс ветку»
+(v169 и далее). Локальный HEAD (`70dd765`, финал журнала v1181) байт-в-байт совпал с
+прод-tip'ом после `git fetch origin claude/build-crm-system-JzCP9` (прод пришёл forced-update
+с `e0d3d81` → `70dd765`, т.е. **локальная прод-ветка была устаревшей на v1023**). Ветка
+восстановлена `git push -u origin HEAD:claude/inspiring-cannon-z8air0`.
+
+**Граблина этого обхода (повторяемая):** первый `git merge --ff-only` dev→prod упал с
+`fatal: refusing to merge unrelated histories` — но причина была НЕ в orphan-ветке, а в
+том, что `git checkout claude/build-crm-system-JzCP9` встал на **локальную** прод-ветку,
+которая отставала на 150+ обходов (`e0d3d81`, v1023) от `origin/...` после force-push другой
+сессией. Лечится не cherry-pick'ом, а `git reset --hard origin/claude/build-crm-system-JzCP9`
+сразу после checkout — после него ff-merge прошёл с первой попытки. Правило из шапки
+(«обязательный `git fetch` + `reset --hard` прод-ветки перед merge») подтверждено: не
+делать вывод про unrelated-histories, пока локальная прод-ветка не синхронизирована.
+
+Diag `daily-v1182` задеплоен: коммит на dev (`d015ab3`), ff-merge и push в prod (`d015ab3`).
+`/health` — 200 сразу; первый запрос к diag-роуту вернул 404 (обычная propagation-задержка,
+v1175/v1176/v1179), повторный ~15с спустя — 200.
+
+`op=meta`: `proposals_by_status={"done":63,"pending":2,"rejected":1}` (approved/revision пусты),
+`feedback_by_status={"awaiting_approval":16,"closed":44,"open":5}`,
+`proposals_last_update="2026-08-15T11:21:41.790Z"`, `feedback_last_msg="2026-08-10T04:21:45.452Z"`
+— байт-в-байт как в v1096–v1181, без сдвига (`server_now="2026-08-20T14:18:59.839Z"`).
+`list-proposals(status=pending)`: `#65` (утечка пароля foreman) и `#66` (архивация AI-DAILY.md)
+по-прежнему `pending`, `admin_decision_by`/`admin_decision_at` = null, `admin_notes` пусты.
+Треды `#65` и `#66` (`op=proposal-thread`) пусты — новых сообщений админа нет.
+`check-user` для `foreman@iitit.ru`: `active=true`, `updated_at="2026-08-14T02:46:16.098Z"`
+не менялся — пароль `Foreman!2026` по-прежнему не ротирован. Экспозиция `#65` с создания
+(2026-08-14T03:24:11.626Z) — **~154.9ч**; 144ч-веха пройдена и отправлена в v1172, 168ч-веха
+(ожидается ~2026-08-21T03:24:11Z) ещё не наступила (~13ч до неё) — push не отправлялся.
+
+Этап 1 (approved/revision/rejected) — пусто, действовать не по чему. Этап 2 — полный обход
+тредов feedback пропущен по правилу v592/v1130 (`feedback_last_msg` не сдвинулся с последнего
+полного прохода).
+
+Diag-эндпоинт `daily-v1182` снесён отдельным коммитом (`e56a335`) на designated dev-ветке
+(`git branch --show-current` проверен до `git rm` — граблина v1163; `git rm -f` и `git add
+src/app.js` раздельными командами — граблина v210; `grep -n diag src/app.js` пусто (exit 1)
+до коммита, `git show --stat` подтвердил `M`+`D` в одном коммите).
+
+Push-уведомление: **не отправлено**. Meta байт-в-байт совпадает с v1096–v1181, `#65`/`#66`
+без решения администратора, 168ч-веха по `#65` ещё не наступила — ничего нового, требующего
+внимания админа прямо сейчас.
+
+Ai-proposals (Этап 1): 0 обработано от админа. Этап 2: 0 новых обращений, 0 закрыто,
+0 новых ai_proposals, 0 уточнений.
+Коммиты: diag-роут v1182 (`d015ab3` на dev+prod), снос diag-v1182 (`e56a335` на dev+prod)
++ этот журнал.
