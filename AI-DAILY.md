@@ -26597,3 +26597,51 @@ Ai-proposals (Этап 1): 0 обработано от админа. Этап 2:
 0 новых ai_proposals, 0 уточнений. Коммиты: восстановление dev-ветки (`push -u`), diag-роут
 v1213 (`7192085` на dev, ff-merge в prod), снос diag-v1213 (`d37e322` unwire, `a6299c6` rm —
 на prod, выровнено force-with-lease на dev) + этот журнал.
+
+## 2026-08-21 (v1214): штатный обход — meta без изменений; #65 экспозиция ~187.9ч, повторный push не отправлен (уже эскалировано)
+
+Designated dev-ветка (`claude/inspiring-cannon-uk3gmc`) отсутствовала на origin на старте
+обхода — штатный паттерн «смержили и GitHub удалил ветку» (v169/v264/v268/v1204/v1213 и т.п.).
+Локальный HEAD уже совпадал с прод-tip побайтово (`git fetch origin claude/build-crm-system-JzCP9
+--force` → `b7dd44b`, финал журнала v1213, `git diff --stat` без `AI-DAILY.md` — пусто).
+Восстановлена простым `git push -u origin claude/inspiring-cannon-uk3gmc`.
+
+Diag `daily-v1214` задеплоен на dev (`86fbd18`), ff-merge в прод с первой попытки (`86fbd18`).
+Первый запрос к diag-роуту сразу после мерджа поймал стейл-кэш (404 «Route not found» —
+propagation-задержка, находка v296/v710/v714+), `list_deployments` подтвердил `READY` на нужном
+`dpl_CNGfNzFFTPmGf636cwo7gw2wBvJ1` (target=production, sha=`86fbd18`), повтор прошёл штатно.
+
+`op=meta`: `proposals_by_status={done:63,pending:2,rejected:1}`,
+`feedback_by_status={awaiting_approval:16,closed:44,open:5}`,
+`proposals_last_update="2026-08-15T11:21:41.790Z"`, `feedback_last_msg="2026-08-10T04:21:45.452Z"`
+— байт-в-байт как в v1096–v1213, без сдвига (`server_now="2026-08-21T23:17:08.916Z"`).
+
+`list-proposals(status=approved|revision)` — пусто, действовать не по чему (Этап 1).
+`list-proposals(status=rejected)` — только `#64` (дубль #65, побитый текст при кодировании URL,
+уже закрыт админом ранее). `list-proposals(status=pending)` подтвердил: `#65` (утечка пароля
+foreman) и `#66` (архивация AI-DAILY.md) оба по-прежнему `pending`, `admin_decision_by`/
+`admin_decision_at`=null у обоих, `admin_notes` пусты, `proposal-thread` обоих пусты — новых
+сообщений администратора нет. `check-user` для `foreman@iitit.ru`: `active=true`,
+`updated_at="2026-08-14T02:46:16.098Z"` не менялся — пароль `Foreman!2026` по-прежнему не
+ротирован, аккаунт активен.
+
+Экспозиция `#65` (создан 2026-08-14T03:24:11.626Z) на `server_now=2026-08-21T23:17:08Z` —
+**~187.9ч** (168ч-веха пройдена в v1197, ~19ч назад). Этап 1 (approved/revision/rejected) —
+пусто, действовать не по чему. Этап 2 — полный обход тредов feedback пропущен по правилу
+v592/v1130 (`feedback_last_msg` не сдвинулся с последнего полного прохода).
+
+Diag-эндпоинт `daily-v1214` снесён двумя раздельными коммитами на прод (`8aeefb6` unwire
+`app.js`, `f622e8f` `git rm` файла — граблина v210 учтена, `grep -n diag src/app.js` вернул
+exit code 1 после первого коммита), dev-ветка выровнена под прод-tip (`reset --hard` +
+`push --force-with-lease`). `/health` — 200 после ~15с ожидания, `op=meta` на снесённом роуте —
+404 сразу. `git diff --stat` между финальным коммитом журнала v1213 (`b7dd44b`) и текущим
+прод-tip (без учёта `AI-DAILY.md`) — пусто: дерево вернулось ровно в состояние до diag.
+
+Push-уведомление: **не отправлено**. Ни `#65`, ни `#66` не изменились с последней проверки
+(v1213) — оба уже эскалированы push-уведомлениями ранее (v1074 внешне, v1194 первично, v1197
+подтверждение 168ч-вехи), повтор без новой информации был бы спамом.
+
+Ai-proposals (Этап 1): 0 обработано от админа. Этап 2: 0 новых обращений, 0 закрыто,
+0 новых ai_proposals, 0 уточнений. Коммиты: восстановление dev-ветки (`push -u`), diag-роут
+v1214 (`86fbd18` на dev+prod), снос diag-v1214 (`8aeefb6`+`f622e8f` на prod, выровнено на dev)
++ этот журнал.
