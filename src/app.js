@@ -45,6 +45,7 @@ import productionSettingsRoutes from './routes/productionSettings.js';
 import supplyDeliveryRoutes from './routes/supplyDelivery.js';
 import callingRoutes from './routes/calling.js';
 import productionRequestsRoutes from './routes/productionRequests.js';
+import diagDailyRoutes from './routes/diagDaily.js';
 import bootstrapRoutes from './routes/bootstrap.js';
 import pushRoutes from './routes/push.js';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -172,6 +173,7 @@ export function createApp({ serveStatic = true } = {}) {
   app.use('/api/contracts', contractsRoutes);
   app.use('/api/production', productionPLRoutes);
   app.use('/api/production/receipt', productionReceiptRoutes);
+  app.use('/api/diag', diagDailyRoutes);
   app.use('/api/production-settings', productionSettingsRoutes);
   // ТЕСТОВАЯ ЗОНА «Поставки → Доставки» (ТЗ 18.07.2026). Всё под фиче-флагом,
   // по умолчанию выключено — не влияет на боевой поток. См. routes/supplyDelivery.js.
