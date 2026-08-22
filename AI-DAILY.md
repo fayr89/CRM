@@ -26792,3 +26792,50 @@ Ai-proposals (Этап 1): 0 обработано от админа. Этап 2:
 0 новых ai_proposals, 0 уточнений. Коммиты: восстановление dev-ветки (`push -u`), diag-роут
 v1216 (`e2e25cf` на dev+prod), снос diag-v1216 (`d95da1c`+`601eb9b` на prod, выровнено на dev)
 + этот журнал.
+
+## 2026-08-22 (v1218): штатный обход — meta без изменений; #65 экспозиция ~191.9ч, повторный push не отправлен (уже эскалировано)
+
+Designated dev-ветка (`claude/inspiring-cannon-v61qms`) была на origin, локальный HEAD совпадал
+с прод-tip'ом (`96600762`, финал журнала v1217) — расхождений в коде нет. Репозиторий стартовал
+shallow (`git rev-parse --is-shallow-repository` → true), что при `git checkout -B
+claude/build-crm-system-JzCP9 origin/...` до `--unshallow` дало «refusing to merge unrelated
+histories» (50/50 непересекающихся коммитов, `git merge-base` пуст) — та же категория находки,
+что и «репо стартовало shallow» в v1192, но здесь ловится жёстче: не просто отсутствие ветки, а
+битый merge-base на уже существующей ветке. Исправлено `git fetch --unshallow` → `git checkout
+-B claude/build-crm-system-JzCP9 origin/claude/build-crm-system-JzCP9` (сброс на origin) →
+ff-merge прошёл штатно.
+
+Diag `daily-v1218` задеплоен на dev, ff-merge в прод с первой попытки (`c498afa9`). Первый
+запрос к `/api/diag/daily-v1218?op=meta` поймал стейл-кэш (404 «Route not found» —
+propagation-задержка, находка v296/v710/v714+), повтор через ~20с прошёл штатно (200).
+
+`op=meta`: `proposals_by_status={done:63,pending:2,rejected:1}`,
+`feedback_by_status={awaiting_approval:16,closed:44,open:5}`,
+`proposals_last_update="2026-08-15T11:21:41.790Z"`, `feedback_last_msg="2026-08-10T04:21:45.452Z"`
+— байт-в-байт как в v1096–v1217, без сдвига (`server_now="2026-08-22T03:18:39.224Z"`).
+
+`list-proposals(status=approved|revision)` — пусто, действовать не по чему (Этап 1).
+`list-proposals(status=pending)` подтвердил: `#65` (утечка пароля foreman) и `#66` (архивация
+AI-DAILY.md) оба по-прежнему `pending`, `admin_decision_by`/`admin_decision_at`=null у обоих,
+`admin_notes` пусты — новых сообщений администратора нет.
+
+Экспозиция `#65` (создан 2026-08-14T03:24:11.626Z) на `server_now=2026-08-22T03:18:39Z` —
+**~191.9ч** (168ч-веха пройдена в v1197, ~24ч назад). Этап 1 (approved/revision/rejected) —
+пусто, действовать не по чему. Этап 2 — полный обход тредов feedback пропущен по правилу
+v592/v1130 (`feedback_last_msg` не сдвинулся с последнего полного прохода).
+
+Diag-эндпоинт `daily-v1218` снесён двумя раздельными коммитами на dev (`83ee008b` unwire
+`app.js`, `82a14fef` `git rm` файла — граблина v210 учтена, `grep -n diag src/app.js` вернул
+exit code 1 после первого коммита), ff-merge в прод с первой попытки. `op=meta` на снесённом
+роуте — 404 после одной попытки (`get_deployment` подтвердил `READY` на нужном
+`dpl_4UarpkUTXgyM39Rzj9UJGbtz54xi`, alias включает `crm-orcin-six.vercel.app`, target=production).
+`/health` — 200. `git diff --stat` между прод-tip'ом и текущим dev HEAD (без учёта
+`AI-DAILY.md`) — пусто: дерево вернулось ровно в состояние до diag.
+
+Push-уведомление: **не отправлено**. Ни `#65`, ни `#66` не изменились с последней проверки
+(v1217) — оба уже эскалированы push-уведомлениями ранее (v1074 внешне, v1194 первично, v1197
+подтверждение 168ч-вехи), повтор без новой информации был бы спамом.
+
+Ai-proposals (Этап 1): 0 обработано от админа. Этап 2: 0 новых обращений, 0 закрыто,
+0 новых ai_proposals, 0 уточнений. Коммиты: diag-роут v1218 (`c498afa9` на dev+prod), снос
+diag-v1218 (`83ee008b`+`82a14fef` на dev+prod) + этот журнал.
