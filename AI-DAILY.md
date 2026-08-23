@@ -28702,3 +28702,58 @@ Ai-proposals (Этап 1): 0 обработано от админа. Этап 2:
 0 новых ai_proposals, 0 уточнений. Коммиты: восстановление dev-ветки (`push -u`), diag-роут
 v1256 (`d05312d` на dev, ff-merge на prod), снос diag-v1256 (`0b9ea36` на prod, выровнено на
 dev) + этот журнал.
+
+## 2026-08-23 (v1257): meta без изменений; #65 экспозиция ~231.9ч, push не отправлен (уже эскалировано)
+
+Designated dev-ветка (`claude/inspiring-cannon-7lgfg4`) отсутствовала на origin на старте обхода
+(`git ls-remote` — пусто) — штатный паттерн «смержили и GitHub удалил ветку» (как v169/v1229–
+v1256). Локальный HEAD (после форс-фетча прод-рефа, обычный `git fetch <branch>` без `--force`
+сначала вернул стейл `3910e4f`/v1191, тот же паттерн что в v1252-1254) совпал байт-в-байт с
+реальным прод-tip (`3dcbd13`, финал журнала v1256). Восстановлена простым `git push -u origin
+claude/inspiring-cannon-7lgfg4` с текущего HEAD, без пересоздания.
+
+Diag `daily-v1257` задеплоен на dev (`dac2ff4`), ff-merge в прод с первой попытки (прод-ветка
+синхронизирована `fetch --force` + `reset --hard` перед merge). Первые два запроса `op=meta`
+поймали стейл 404 (пропагация, известный паттерн v296/v710/v714+), третий — 200.
+
+`op=meta`: `proposals_total=66`, `proposals_by_status={done:63,pending:2,rejected:1}`,
+`feedback_by_status={awaiting_approval:16,closed:44,open:5}`, `feedback_open_count=21`,
+`proposals_last_update="2026-08-15T11:21:41.790Z"`, `feedback_last_msg="2026-08-10T04:21:45.452Z"`
+— байт-в-байт как в v1096–v1256, без сдвига (`server_now="2026-08-23T19:16:56.004Z"`). Этап 1
+(approved/revision/rejected) пропущен — `proposals_last_update` не сдвинулся, заведомо пусто.
+Этап 2 (полный обход тредов feedback) пропущен по правилу v592/v1130 (`feedback_last_msg` не
+сдвинулся с последнего полного прохода).
+
+`list-proposals(status=pending)` подтвердил: `#65` (утечка пароля foreman) и `#66` (архивация
+AI-DAILY.md) оба по-прежнему `pending`, `admin_decision_by`/`admin_decision_at`=null у обоих,
+`admin_notes` пусты — новых сообщений администратора нет. `check-user` для `foreman@iitit.ru`:
+`active=true`, `updated_at="2026-08-14T02:46:16.098Z"` не менялся — пароль `Foreman!2026`
+по-прежнему не ротирован, аккаунт активен.
+
+Экспозиция `#65` (создан 2026-08-14T03:24:11.626Z) на `server_now=2026-08-23T19:16:56Z` —
+**~231.9ч** (168ч-веха пройдена в v1197; экспозиция перешагнула 9.7 суток).
+
+Diag-эндпоинт `daily-v1257` снесён одним коммитом на прод (`fd4a929`): Edit убрал импорт из
+`app.js` первым шагом, `grep -n diag src/app.js` вернул exit code 1 сразу после Edit, затем `rm`
+файла роута, `ls src/routes | grep -i diag` тоже exit code 1, `git add -A -- src/app.js
+src/routes/` одной командой, `git status --short`/`git diff --cached --stat` подтвердили оба
+файла (`M app.js`, `D diagDaily.js`) застейджены в одном коммите до `git commit` (граблина
+v210/v1225 учтена). Деплой сноса подтверждён READY на production через `mcp__Vercel__get_deployment`
+по `githubCommitSha` (`readyState=READY`, `target=production`), прямой запрос diag-роута после
+этого вернул 404 (первая попытка сразу после деплоя поймала транзиентный сбой самого
+MCP-прокси `web_fetch_vercel_url` — «Failed to create protection bypass: 409 Conflict», не связан
+с приложением; повторный запрос сразу отдал 404), `/health` — 200. Dev-ветка синхронизирована с
+прод-tip (`fetch --force` + `reset --hard`) **до** записи этого журнала (урок v1249, инцидент не
+повторился).
+
+Push-уведомление: **не отправлено**. Ни `#65`, ни `#66` не изменились с последней проверки
+(v1256) — оба уже эскалированы push-уведомлениями ранее (#65: v1074/v1194/v1197; #66 связано с
+уже эскалированным #63/ai_proposal о росте `AI-DAILY.md`), повтор без новой информации был бы
+спамом. Инцидентов в этом обходе не было (кроме разрешённых транзиентных находок: стейл
+remote-tracking ref прод-ветки при первом `git fetch` без `--force`, тот же паттерн что и
+v1252-1256, и 409 от MCP-прокси на первом запросе к снесённому diag-роуту).
+
+Ai-proposals (Этап 1): 0 обработано от админа. Этап 2: 0 новых обращений, 0 закрыто,
+0 новых ai_proposals, 0 уточнений. Коммиты: восстановление dev-ветки (`push -u`), diag-роут
+v1257 (`dac2ff4` на dev, ff-merge на prod), снос diag-v1257 (`fd4a929` на prod, выровнено на
+dev) + этот журнал.
