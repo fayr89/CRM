@@ -221,6 +221,60 @@ router.post(
 
 // ============ UPDATE (draft only, для менеджера) ============
 
+// PATCH /:id — обновление заявки.
+// Права:
+//   - Менеджер-владелец: только draft, только описание/клиент/дедлайн/estimated.
+//   - Директор производства / admin / rop: ЛЮБОЙ статус (кроме терминальных
+//     paid/cancelled/rejected), любые поля включая финансы (cost/price/reward)
+//     и производственные сроки (work_start/end/production_deadline).
+// Каждое изменение логируется в price_history + системное сообщение в чат
+// с diff-описанием (кто что поменял).
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+const managerPatchFields = ['title', 'description', 'deadline', 'contact_id', 'company_id', 'estimated_work_days'];
+const directorPatchFields = [
+  ...managerPatchFields,
+  'cost_price', 'client_price', 'reward_type', 'reward_value',
+  'production_deadline', 'work_start_date', 'work_end_date',
+];
+
+const managerPatchSchema = z.object({
+  title: z.string().min(1).max(300).optional(),
+  description: z.string().max(5000).optional().nullable(),
+  deadline: z.string().datetime().optional().nullable(),
+  contact_id: z.number().int().positive().optional().nullable(),
+  company_id: z.number().int().positive().optional().nullable(),
+  estimated_work_days: z.number().int().min(1).max(365).optional().nullable(),
+});
+const directorPatchSchema = managerPatchSchema.extend({
+  cost_price: z.number().nonnegative().optional().nullable(),
+  client_price: z.number().nonnegative().optional().nullable(),
+  reward_type: z.enum(['percent', 'fixed']).optional().nullable(),
+  reward_value: z.number().nonnegative().optional().nullable(),
+  production_deadline: z.string().regex(DATE_RE, 'YYYY-MM-DD').optional().nullable(),
+  work_start_date: z.string().regex(DATE_RE, 'YYYY-MM-DD').optional().nullable(),
+  work_end_date: z.string().regex(DATE_RE, 'YYYY-MM-DD').optional().nullable(),
+  edit_note: z.string().max(500).optional().nullable(),
+});
+
+// Форматтер значения для человекочитаемого лога.
+function fmtVal(k, v) {
+  if (v == null || v === '') return '—';
+  if (['cost_price', 'client_price', 'reward_value'].includes(k)) return `${Number(v).toLocaleString('ru-RU')} ₽`;
+  if (['production_deadline', 'work_start_date', 'work_end_date'].includes(k)) return String(v).slice(0, 10);
+  if (['deadline'].includes(k)) return String(v).slice(0, 10);
+  if (k === 'reward_type') return v === 'percent' ? '% от цены' : 'фикс ₽';
+  if (k === 'estimated_work_days') return `${v} дн.`;
+  return String(v).slice(0, 60);
+}
+const fieldLabels = {
+  title: 'Название', description: 'Описание', deadline: 'Срок клиента (заявки)',
+  contact_id: 'Контакт', company_id: 'Компания',
+  estimated_work_days: 'Оценка работы',
+  cost_price: 'Себестоимость', client_price: 'Цена клиенту',
+  reward_type: 'Тип вознаграждения', reward_value: 'Значение вознаграждения',
+  production_deadline: 'Сдача клиенту', work_start_date: 'Начало работ', work_end_date: 'Конец работ',
+};
+
 router.patch(
   '/:id',
   asyncHandler(async (req, res) => {
@@ -229,23 +283,104 @@ router.patch(
     const row = await db.get(`SELECT * FROM production_requests WHERE id = ?`, id);
     if (!row) throw NotFound('Заявка не найдена');
     if (!isFullAccess(u) && row.manager_id !== u.id) throw Forbidden('Не ваша');
-    if (row.status !== 'draft' && !isAdmin(u)) throw BadRequest('Править можно только в статусе «Черновик»');
 
-    const data = z.object({
-      title: z.string().min(1).max(300).optional(),
-      description: z.string().max(5000).optional().nullable(),
-      deadline: z.string().datetime().optional().nullable(),
-      contact_id: z.number().int().positive().optional().nullable(),
-      company_id: z.number().int().positive().optional().nullable(),
-      estimated_work_days: z.number().int().min(1).max(365).optional().nullable(),
-    }).parse(req.body || {});
+    const isDirector = u.role === 'admin' || u.role === 'rop' || u.role === 'director_prod';
+    // Ограничение статусов.
+    if (!isDirector) {
+      if (row.status !== 'draft') throw BadRequest('Править можно только в статусе «Черновик»');
+    } else {
+      if (['paid', 'cancelled', 'rejected'].includes(row.status)) {
+        throw BadRequest('Заявка в терминальном статусе — редактирование недоступно');
+      }
+    }
+
+    const schema = isDirector ? directorPatchSchema : managerPatchSchema;
+    const data = schema.parse(req.body || {});
+    // Foreman не должен править вознаграждение (уже отфильтровано ролью выше).
+    if (!canSeeReward(u)) { delete data.reward_type; delete data.reward_value; }
+
+    // Валидация сроков (если директор их меняет).
+    const finalDeadline = data.production_deadline ?? (row.production_deadline ? String(row.production_deadline).slice(0, 10) : null);
+    const finalStart = data.work_start_date ?? (row.work_start_date ? String(row.work_start_date).slice(0, 10) : null);
+    const finalEnd = data.work_end_date ?? (row.work_end_date ? String(row.work_end_date).slice(0, 10) : null);
+    if (finalStart && finalEnd && finalStart > finalEnd) throw BadRequest('Начало работ позже окончания');
+    if (finalEnd && finalDeadline && finalEnd > finalDeadline) throw BadRequest('Окончание работ позже срока сдачи клиенту');
+
+    // Собираем diff — что реально поменялось, для лога и чата.
+    const changed = [];
+    for (const [k, v] of Object.entries(data)) {
+      if (k === 'edit_note') continue;
+      const oldRaw = row[k];
+      // Нормализуем для сравнения (dates → YYYY-MM-DD).
+      let oldNorm = oldRaw;
+      if (['production_deadline', 'work_start_date', 'work_end_date'].includes(k) && oldRaw) oldNorm = String(oldRaw).slice(0, 10);
+      if (String(oldNorm ?? '') !== String(v ?? '')) changed.push({ field: k, from: oldNorm, to: v });
+    }
+
+    // Готовим SET.
     const sets = [];
     const params = [];
-    for (const [k, v] of Object.entries(data)) { sets.push(`${k} = ?`); params.push(v); }
+    for (const [k, v] of Object.entries(data)) {
+      if (k === 'edit_note') continue;
+      // Даты — приводим типа DATE.
+      if (['production_deadline', 'work_start_date', 'work_end_date'].includes(k) && v) {
+        sets.push(`${k} = ?::date`); params.push(v);
+      } else {
+        sets.push(`${k} = ?`); params.push(v);
+      }
+    }
+    // Пересчёт вознаграждения если менялся client_price или reward_*.
+    const finalClientPrice = data.client_price ?? row.client_price;
+    const finalRewardType = 'reward_type' in data ? data.reward_type : row.reward_type;
+    const finalRewardValue = 'reward_value' in data ? data.reward_value : row.reward_value;
+    if (finalClientPrice != null && finalRewardType && finalRewardValue != null) {
+      const rc = computeReward(finalClientPrice, finalRewardType, finalRewardValue);
+      sets.push('reward_computed = ?'); params.push(rc);
+    } else if ('reward_type' in data || 'reward_value' in data) {
+      // Обнуляем reward_computed если тип или значение стали null.
+      if (data.reward_type === null || data.reward_value === null) { sets.push('reward_computed = NULL'); }
+    }
+
     if (!sets.length) return res.json(sanitizeRequest(row, u));
     sets.push('updated_at = NOW()');
     params.push(id);
-    const upd = await db.get(`UPDATE production_requests SET ${sets.join(', ')} WHERE id = ? RETURNING *`, ...params);
+    const upd = await db.withTransaction(async (tx) => {
+      const r = await tx.get(`UPDATE production_requests SET ${sets.join(', ')} WHERE id = ? RETURNING *`, ...params);
+      if (changed.length) {
+        // Запись в price_history — вcё вместе как production_reprice.
+        const diffText = changed
+          .map((c) => `${fieldLabels[c.field] || c.field}: ${fmtVal(c.field, c.from)} → ${fmtVal(c.field, c.to)}`)
+          .join('; ');
+        await tx.run(
+          `INSERT INTO production_request_price_history
+            (request_id, event, cost_price, client_price, reward_type, reward_value, reward_computed, note, actor_id)
+           VALUES (?, 'production_reprice', ?, ?, ?, ?, ?, ?, ?)`,
+          id,
+          r.cost_price, r.client_price, r.reward_type, r.reward_value, r.reward_computed,
+          `Правка ${u.name || u.email}: ${diffText}${data.edit_note ? '. ' + data.edit_note : ''}`,
+          u.id,
+        );
+        // Системное сообщение в чат — все участники сразу видят кто что изменил.
+        await tx.run(
+          `INSERT INTO production_request_messages (request_id, user_id, kind, text)
+           VALUES (?, ?, 'system', ?)`,
+          id, u.id,
+          `✏️ ${u.name || u.email} изменил${data.edit_note ? ' (' + data.edit_note + ')' : ''}: ${diffText}`,
+        );
+      }
+      return r;
+    });
+
+    await logAction(req, {
+      action: 'production_request.updated',
+      entity_type: 'production_request', entity_id: id,
+      details: { changed: changed.map((c) => c.field), by_director: isDirector },
+    });
+    // Менеджер получает уведомление если менял не он сам и есть финансовые/срочные изменения.
+    const importantChanged = changed.some((c) => ['client_price', 'reward_value', 'reward_type', 'production_deadline', 'work_start_date', 'work_end_date'].includes(c.field));
+    if (importantChanged && upd.manager_id !== u.id) {
+      await notifyManagerOfRequest(id, upd, `Внесены изменения: ${changed.length} поле${changed.length === 1 ? '' : 'й'}`, u).catch(() => {});
+    }
     res.json(sanitizeRequest(upd, u));
   }),
 );

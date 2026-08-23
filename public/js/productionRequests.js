@@ -620,6 +620,15 @@ async function openViewModal(id, onDone) {
       } }, '💵 Выплатить менеджеру'));
     }
 
+    // Директор/admin — полное редактирование заявки (все поля включая финансы,
+    // сроки). Каждое изменение логируется в price_history и в чат.
+    if (canSeeReward(user) && !['paid', 'cancelled', 'rejected'].includes(req.status)) {
+      actions.append(el('button', {
+        class: 'btn',
+        onClick: () => openDirectorEditModal(req, onDone),
+      }, '✏️ Редактировать (директор)'));
+    }
+
     // Админ: удалить навсегда (для тестовых записей). Доступно в любом статусе.
     // Скрыта в отдельном details, чтобы случайно не нажать.
     if (canAsAdmin) {
@@ -1227,6 +1236,85 @@ function openPriceModal(req, onDone) {
       try {
         await api.prPrice(req.id, payload);
         toast('Просчёт сохранён', 'success');
+        if (onDone) await onDone();
+        closeModal(); closeModal();
+        return true;
+      } catch (e) { toast(e.message, 'error'); return false; }
+    },
+  });
+}
+
+// ============================================================
+// МОДАЛКА: полное редактирование заявки (директор/admin).
+// Все поля: описание, финансы, сроки, оценка. Каждое сохранение → лог в
+// price_history + системное сообщение в чат.
+// ============================================================
+function openDirectorEditModal(req, onDone) {
+  const toDate = (s) => (s ? String(s).slice(0, 10) : '');
+  const titleI = el('input', { type: 'text', style: { width: '100%', padding: '6px' }, value: req.title || '' });
+  const descI = el('textarea', { rows: 4, style: { width: '100%', padding: '6px' } }, req.description || '');
+  const estI = el('input', { type: 'number', min: '1', max: '365', style: { padding: '6px', width: '90px' }, value: req.estimated_work_days || '' });
+  const costI = el('input', { type: 'number', step: '0.01', min: '0', style: { width: '100%', padding: '6px' }, value: req.cost_price || '' });
+  const priceI = el('input', { type: 'number', step: '0.01', min: '0', style: { width: '100%', padding: '6px' }, value: req.client_price || '' });
+  const rTypeSel = el('select', { style: { padding: '6px' } },
+    el('option', { value: 'percent', selected: req.reward_type !== 'fixed' }, '% от цены'),
+    el('option', { value: 'fixed', selected: req.reward_type === 'fixed' }, 'фикс ₽'),
+  );
+  const rValI = el('input', { type: 'number', step: '0.01', min: '0', style: { width: '100px', padding: '6px' }, value: req.reward_value || '' });
+  const dlI = el('input', { type: 'date', style: { padding: '6px' }, value: toDate(req.production_deadline) });
+  const wsI = el('input', { type: 'date', style: { padding: '6px' }, value: toDate(req.work_start_date) });
+  const weI = el('input', { type: 'date', style: { padding: '6px' }, value: toDate(req.work_end_date) });
+  const noteI = el('input', { type: 'text', style: { width: '100%', padding: '6px' }, placeholder: 'Причина/комментарий к правке (пойдёт в чат заявки)' });
+
+  const body = el('div', {},
+    el('div', {
+      style: { padding: '8px', background: '#fef3c7', border: '1px solid #fde68a', borderRadius: '4px', marginBottom: '10px', fontSize: '12px', color: '#78350f' },
+    },
+      '⚠️ Правка любого поля будет записана в историю заявки и в чат. Все участники увидят кто и что изменил.',
+    ),
+    el('label', { style: { fontSize: '11px', fontWeight: '600' } }, 'Название:'), titleI,
+    el('label', { style: { fontSize: '11px', fontWeight: '600', marginTop: '8px', display: 'block' } }, 'Описание:'), descI,
+    el('label', { style: { fontSize: '11px', fontWeight: '600', marginTop: '8px', display: 'block' } }, 'Оценка работы (дней):'), estI,
+    el('div', { style: { fontWeight: '700', fontSize: '12px', color: '#166534', marginTop: '10px', paddingTop: '6px', borderTop: '1px solid #d1d5db' } }, 'ФИНАНСЫ (менеджер увидит только цену клиенту и вознаграждение)'),
+    el('label', { style: { fontSize: '11px', fontWeight: '600', marginTop: '6px', display: 'block' } }, 'Себестоимость ₽:'), costI,
+    el('label', { style: { fontSize: '11px', fontWeight: '600', marginTop: '6px', display: 'block' } }, 'Цена клиенту ₽:'), priceI,
+    el('label', { style: { fontSize: '11px', fontWeight: '600', marginTop: '6px', display: 'block' } }, 'Вознаграждение менеджера:'),
+    el('div', { style: { display: 'flex', gap: '6px' } }, rTypeSel, rValI),
+    el('div', { style: { fontWeight: '700', fontSize: '12px', color: '#1e40af', marginTop: '10px', paddingTop: '6px', borderTop: '1px solid #d1d5db' } }, 'СРОКИ'),
+    el('label', { style: { fontSize: '11px', fontWeight: '600', marginTop: '6px', display: 'block' } }, 'Сдача клиенту:'), dlI,
+    el('label', { style: { fontSize: '11px', fontWeight: '600', marginTop: '6px', display: 'block' } }, 'Работа: с / по:'),
+    el('div', { style: { display: 'flex', gap: '6px' } }, wsI, weI),
+    el('label', { style: { fontSize: '11px', fontWeight: '600', marginTop: '10px', display: 'block' } }, 'Комментарий к правке:'), noteI,
+  );
+
+  openModal(`Редактировать заявку #${req.id}`, body, {
+    primaryLabel: 'Сохранить',
+    size: 'lg',
+    onSubmit: async () => {
+      const payload = { edit_note: noteI.value.trim() || null };
+      // Отправляем только то, что реально изменилось, чтобы не логировать пустой diff.
+      if (titleI.value.trim() !== (req.title || '')) payload.title = titleI.value.trim();
+      if (descI.value !== (req.description || '')) payload.description = descI.value || null;
+      const est = estI.value ? Number(estI.value) : null;
+      if (est !== (req.estimated_work_days || null)) payload.estimated_work_days = est;
+      const cost = costI.value === '' ? null : Number(costI.value);
+      if (cost !== (req.cost_price != null ? Number(req.cost_price) : null)) payload.cost_price = cost;
+      const price = priceI.value === '' ? null : Number(priceI.value);
+      if (price !== (req.client_price != null ? Number(req.client_price) : null)) payload.client_price = price;
+      if (rTypeSel.value !== (req.reward_type || 'percent')) payload.reward_type = rTypeSel.value;
+      const rv = rValI.value === '' ? null : Number(rValI.value);
+      if (rv !== (req.reward_value != null ? Number(req.reward_value) : null)) payload.reward_value = rv;
+      const dlNew = dlI.value || null;
+      if (dlNew !== toDate(req.production_deadline)) payload.production_deadline = dlNew;
+      const wsNew = wsI.value || null;
+      if (wsNew !== toDate(req.work_start_date)) payload.work_start_date = wsNew;
+      const weNew = weI.value || null;
+      if (weNew !== toDate(req.work_end_date)) payload.work_end_date = weNew;
+
+      if (Object.keys(payload).length <= 1) { toast('Ничего не изменилось', 'error'); return false; }
+      try {
+        await api.prUpdate(req.id, payload);
+        toast('Изменения сохранены (записано в историю)', 'success');
         if (onDone) await onDone();
         closeModal(); closeModal();
         return true;
