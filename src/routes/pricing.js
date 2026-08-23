@@ -48,6 +48,75 @@ router.post(
   }),
 );
 
+// GET /pricing/revision/changed — список изменённых цен с момента прошлого
+// подтверждения пользователя. Показывается менеджеру когда открывает «Что
+// изменилось» в баннере обновления прайса. Первое ознакомление (нет ack) →
+// возвращаем все цены (для полноты).
+router.get(
+  '/revision/changed',
+  asyncHandler(async (req, res) => {
+    await ensurePriceAckTable();
+    const ack = await getUserPriceAck(req.user.id);
+    const since = ack?.acknowledged_revision_at
+      ? new Date(ack.acknowledged_revision_at).toISOString()
+      : null;
+    let rows;
+    if (since) {
+      rows = await db.all(
+        `SELECT pp.id, pp.product_id, pp.marketplace, pp.warehouse, pp.price, pp.updated_at,
+                p.name AS product_name, p.sku AS product_sku
+         FROM product_prices pp
+         LEFT JOIN products p ON p.id = pp.product_id
+         WHERE pp.updated_at > ?::timestamptz
+         ORDER BY pp.updated_at DESC, p.name ASC
+         LIMIT 500`,
+        since,
+      );
+    } else {
+      // Ещё ни разу не подтверждал — покажем последние 200 изменений.
+      rows = await db.all(
+        `SELECT pp.id, pp.product_id, pp.marketplace, pp.warehouse, pp.price, pp.updated_at,
+                p.name AS product_name, p.sku AS product_sku
+         FROM product_prices pp
+         LEFT JOIN products p ON p.id = pp.product_id
+         ORDER BY pp.updated_at DESC, p.name ASC
+         LIMIT 200`,
+      );
+    }
+    // Группируем по товару — менеджеру удобнее видеть 1 карточку товара
+    // со всеми изменёнными связками маркетплейс+склад, чем длинный плоский список.
+    const byProduct = new Map();
+    for (const r of rows) {
+      const key = r.product_id;
+      if (!byProduct.has(key)) {
+        byProduct.set(key, {
+          product_id: r.product_id,
+          product_name: r.product_name || '(без товара)',
+          product_sku: r.product_sku || null,
+          latest_change: r.updated_at,
+          entries: [],
+        });
+      }
+      const g = byProduct.get(key);
+      g.entries.push({
+        marketplace: r.marketplace,
+        warehouse: r.warehouse,
+        price: Number(r.price),
+        updated_at: r.updated_at,
+      });
+      if (r.updated_at > g.latest_change) g.latest_change = r.updated_at;
+    }
+    const products = Array.from(byProduct.values())
+      .sort((a, b) => (a.latest_change < b.latest_change ? 1 : -1));
+    res.json({
+      since,
+      products_changed: products.length,
+      entries_changed: rows.length,
+      products,
+    });
+  }),
+);
+
 // Для админа/РОПа: кто из продающих ознакомился с актуальным прайсом, кто нет.
 router.get(
   '/ack-status',

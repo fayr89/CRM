@@ -541,6 +541,7 @@ export const api = {
 
   // Ревизия прайса + ознакомление менеджеров (баннер + статус, без блокировок)
   priceRevision: () => request('GET', '/api/pricing/revision'),
+  priceRevisionChanged: () => request('GET', '/api/pricing/revision/changed'),
   acknowledgePrice: () => request('POST', '/api/pricing/acknowledge'),
   priceAckStatus: () => request('GET', '/api/pricing/ack-status'),
 

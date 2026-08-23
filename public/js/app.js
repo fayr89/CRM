@@ -736,8 +736,14 @@ function renderPriceAckBanner(container, info) {
   const when = info.revision_at ? fmtDateTime(info.revision_at) : '';
   const node = el('div', { class: 'notice-banner notice-warning' },
     el('span', { class: 'notice-text' },
-      `⚠️ Прайс обновлён${when ? ' ' + when : ''}. Ознакомьтесь с новым прайсом и подтвердите.`),
-    el('a', { href: '#/products', class: 'btn btn-sm', style: { marginLeft: '8px' } }, 'Открыть прайс'),
+      `⚠️ Прайс обновлён${when ? ' ' + when : ''}. Посмотрите что изменилось и подтвердите.`),
+    // Основная кнопка: показать ТОЛЬКО изменённые товары (не весь каталог).
+    el('button', {
+      class: 'btn btn-sm',
+      style: { marginLeft: '8px' },
+      onClick: () => openPriceChangesModal(node),
+    }, '📋 Что изменилось'),
+    el('a', { href: '#/products', class: 'btn btn-sm', style: { marginLeft: '4px' } }, 'Весь прайс'),
     el('button', {
       class: 'btn btn-sm btn-primary',
       style: { marginLeft: '8px' },
@@ -756,6 +762,70 @@ function renderPriceAckBanner(container, info) {
     }, '✅ Подтверждаю, ознакомлен'),
   );
   container.append(node);
+}
+
+// Модалка «Что изменилось в прайсе» — только товары, где цена реально изменилась
+// с прошлого подтверждения. Плюс кнопка подтверждения прямо тут.
+async function openPriceChangesModal(bannerNode) {
+  const { openModal } = await import('./ui.js');
+  const body = el('div', {}, el('div', {}, '⏳ Загрузка изменений…'));
+  openModal('📋 Изменения в прайсе', body, {
+    primaryLabel: '✅ Подтверждаю, ознакомлен',
+    size: 'lg',
+    onSubmit: async () => {
+      try {
+        await api.acknowledgePrice();
+        toast('Ознакомление подтверждено', 'success');
+        if (bannerNode) bannerNode.remove();
+        return true;
+      } catch (e) { toast(e.message, 'error'); return false; }
+    },
+  });
+  try {
+    const r = await api.priceRevisionChanged();
+    body.innerHTML = '';
+    if (!r.products?.length) {
+      body.append(el('div', { style: { padding: '20px', textAlign: 'center', color: '#9ca3af' } },
+        'Изменений в прайсе нет с момента вашего последнего подтверждения.',
+      ));
+      return;
+    }
+    body.append(el('div', {
+      style: { padding: '8px', background: '#eff6ff', borderRadius: '4px', marginBottom: '10px', fontSize: '12px', color: '#1e40af' },
+    },
+      `💡 Изменено товаров: `,
+      el('b', {}, String(r.products_changed)),
+      ` (записей: ${r.entries_changed})${r.since ? ` с ${fmtDateTime(r.since)}` : ' (первое ознакомление — показаны последние 200 изменений)'}.`,
+      ' После просмотра — «Подтверждаю».',
+    ));
+    for (const p of r.products) {
+      const card = el('div', {
+        style: { padding: '10px', background: '#fff', border: '1px solid #e5e7eb', borderRadius: '6px', marginBottom: '6px' },
+      });
+      card.append(
+        el('div', { style: { fontWeight: '600', fontSize: '14px' } },
+          p.product_name,
+          p.product_sku ? el('span', { style: { color: '#9ca3af', fontSize: '12px', marginLeft: '6px', fontFamily: 'monospace' } }, p.product_sku) : null,
+        ),
+      );
+      const table = el('table', { style: { width: '100%', marginTop: '4px', fontSize: '12px' } });
+      const tbody = el('tbody', {});
+      for (const e of p.entries) {
+        tbody.append(el('tr', {},
+          el('td', { style: { padding: '3px 6px', color: '#374151' } }, `📢 ${e.marketplace}`),
+          el('td', { style: { padding: '3px 6px', color: '#6b7280' } }, `🏭 ${e.warehouse}`),
+          el('td', { style: { padding: '3px 6px', textAlign: 'right', fontWeight: '600', color: '#059669' } }, `${Number(e.price).toLocaleString('ru-RU')} ₽`),
+          el('td', { style: { padding: '3px 6px', color: '#9ca3af', fontSize: '11px' } }, fmtDateTime(e.updated_at)),
+        ));
+      }
+      table.append(tbody);
+      card.append(table);
+      body.append(card);
+    }
+  } catch (e) {
+    body.innerHTML = '';
+    body.append(el('div', { style: { color: '#ef4444' } }, 'Ошибка: ' + e.message));
+  }
 }
 
 // Рендер списка баннеров — принимает готовый массив, без сетевого запроса.
