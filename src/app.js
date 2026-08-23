@@ -35,7 +35,6 @@ import aiProposalsRoutes from './routes/aiProposals.js';
 import noticeBannersRoutes from './routes/noticeBanners.js';
 import notificationPrefsRoutes from './routes/notificationPrefs.js';
 import projectsRoutes from './routes/projects.js';
-import diagDailyRoutes from './routes/diagDaily.js';
 import materialsRoutes from './routes/materials.js';
 import processingPlansRoutes from './routes/processingPlans.js';
 import productionOrdersRoutes from './routes/productionOrders.js';
@@ -167,7 +166,6 @@ export function createApp({ serveStatic = true } = {}) {
   app.use('/api/notice-banners', noticeBannersRoutes);
   app.use('/api/notification-prefs', notificationPrefsRoutes);
   app.use('/api/projects', projectsRoutes);
-  app.use('/api/diag', diagDailyRoutes);
   app.use('/api/materials', materialsRoutes);
   app.use('/api/processing-plans', processingPlansRoutes);
   app.use('/api/production-orders', productionOrdersRoutes);
