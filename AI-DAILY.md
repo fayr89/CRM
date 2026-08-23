@@ -28481,3 +28481,61 @@ Ai-proposals (Этап 1): 0 обработано от админа. Этап 2:
 0 новых ai_proposals, 0 уточнений. Коммиты: восстановление dev-ветки (`push -u`), diag-роут
 v1252 (`4efdca8` на dev+prod), снос diag-v1252 (`9cbdf74` на prod, выровнено на dev) + этот
 журнал.
+
+## 2026-08-23 (v1253): meta без изменений; #65 экспозиция ~227.9ч, push не отправлен (уже эскалировано)
+
+Designated dev-ветка (`claude/inspiring-cannon-jpht93`) отсутствовала на origin на старте обхода
+(`git fetch origin claude/inspiring-cannon-jpht93` → `couldn't find remote ref`) — штатный паттерн
+«смержили и GitHub удалил ветку» (как v169/v1229–v1252). Первый `git fetch origin
+claude/build-crm-system-JzCP9` без `--force` вернул стейл-хэш (`3910e4f9`, конец v1191) при том что
+после `git fetch --unshallow origin` (репо стартовало shallow) локальный HEAD совпадал байт-в-байт с
+реальным прод-tip (`5b484cc`, финал v1252) — та же находка про стейл remote-tracking рефы без
+`--force`, что и в v1252. Разрешено принудительным `git fetch +refs/heads/<branch>:refs/remotes/origin/<branch>
+--force`. Восстановление dev-ветки — простой `git checkout -B <dev> <prod-tip>` → `push -u`.
+
+Diag `daily-v1253` задеплоен на dev+prod (ff-merge с первой попытки, прод-ветка синхронизирована
+`fetch --force` + `reset --hard` перед merge). Первые два запроса `op=meta` поймали стейл 404
+(пропагация, известный паттерн), третий — 200.
+
+`op=meta`: `proposals_total=66`, `proposals_by_status={done:63,pending:2,rejected:1}`,
+`feedback_by_status={awaiting_approval:16,closed:44,open:5}`, `feedback_open_count=21`,
+`proposals_last_update="2026-08-15T11:21:41.790Z"`, `feedback_last_msg="2026-08-10T04:21:45.452Z"`
+— байт-в-байт как в v1096–v1252, без сдвига (`server_now="2026-08-23T15:17:25.806Z"`). Этап 1
+(approved/revision/rejected) пропущен — `proposals_last_update` не сдвинулся, заведомо пусто.
+Этап 2 (полный обход тредов feedback) пропущен по правилу v592/v1130 (`feedback_last_msg` не
+сдвинулся с последнего полного прохода).
+
+`list-proposals(status=pending)` подтвердил: `#65` (утечка пароля foreman) и `#66` (архивация
+AI-DAILY.md) оба по-прежнему `pending`, `admin_decision_by`/`admin_decision_at`=null у обоих,
+`admin_notes` пусты — новых сообщений администратора нет. `check-user` для `foreman@iitit.ru`:
+`active=true`, `updated_at="2026-08-14T02:46:16.098Z"` не менялся — пароль `Foreman!2026`
+по-прежнему не ротирован, аккаунт активен.
+
+Экспозиция `#65` (создан 2026-08-14T03:24:11.626Z) на `server_now=2026-08-23T15:17:25Z` —
+**~227.9ч** (168ч-веха пройдена в v1197; экспозиция перешагнула 9.5 суток).
+
+Diag-эндпоинт `daily-v1253` снесён одним коммитом на прод (`ed59c3b0`): Edit убрал импорт из
+`app.js` первым шагом, `grep -n diag src/app.js` вернул exit code 1 сразу после Edit, затем `rm`
+файла роута, `ls src/routes | grep -i diag` тоже exit code 1, `git add -A -- src/app.js
+src/routes/` одной командой, `git diff --cached --stat` подтвердил оба файла (`M app.js`,
+`D diagDaily.js`) застейджены в одном коммите до `git commit` (граблина v210/v1225 учтена).
+Деплой сноса подтверждён READY на production через `mcp__Vercel__get_deployment` по `dpl_id`
+(`readyState=READY`), прямой запрос diag-роута после этого вернул 404, `/health` — 200. Dev-ветка
+синхронизирована с прод-tip (`fetch --force` + `reset --hard`) **до** записи этого журнала (урок
+v1249, инцидент не повторился).
+
+Также обнаружено: `AI-DAILY.md` (2.3МБ / 28483 строк на старте обхода) снова превысил лимит
+Read-инструмента (256KB) — тот же симптом, что породил `#66` (уже `pending`, файл вырос ещё
+сильнее с v1059/1.4МБ). Не архивирую сам — `#66` уже покрывает это как pending-предложение
+на решение админа, повторное создание дубликата не требуется.
+
+Push-уведомление: **не отправлено**. Ни `#65`, ни `#66` не изменились с последней проверки
+(v1252) — оба уже эскалированы push-уведомлениями ранее (#65: v1074/v1194/v1197; #66 связано с
+уже эскалированным #63/ai_proposal о росте `AI-DAILY.md`), повтор без новой информации был бы
+спамом. Инцидентов в этом обходе не было (кроме разрешённой ложной тревоги про стейл git fetch,
+тот же паттерн что и v1252).
+
+Ai-proposals (Этап 1): 0 обработано от админа. Этап 2: 0 новых обращений, 0 закрыто,
+0 новых ai_proposals, 0 уточнений. Коммиты: восстановление dev-ветки (`push -u`), diag-роут
+v1253 (`18da1806` на dev+prod), снос diag-v1253 (`ed59c3b0` на prod, выровнено на dev) + этот
+журнал.
