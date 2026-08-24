@@ -44,6 +44,7 @@ import productionReceiptRoutes from './routes/productionReceipt.js';
 import productionSettingsRoutes from './routes/productionSettings.js';
 import supplyDeliveryRoutes from './routes/supplyDelivery.js';
 import callingRoutes from './routes/calling.js';
+import diagListWarehousesRoutes from './routes/diagListWarehouses.js';
 import productionRequestsRoutes from './routes/productionRequests.js';
 import bootstrapRoutes from './routes/bootstrap.js';
 import pushRoutes from './routes/push.js';
@@ -177,6 +178,7 @@ export function createApp({ serveStatic = true } = {}) {
   // по умолчанию выключено — не влияет на боевой поток. См. routes/supplyDelivery.js.
   app.use('/api/supply-delivery', supplyDeliveryRoutes);
   app.use('/api/calling', callingRoutes);
+  app.use('/api/diag', diagListWarehousesRoutes);
   app.use('/api/production-requests', productionRequestsRoutes);
   app.use('/api/bootstrap', bootstrapRoutes);
   app.use('/api/push', pushRoutes);
