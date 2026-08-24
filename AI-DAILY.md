@@ -29991,3 +29991,51 @@ Ai-proposals (Этап 1): 0 обработано от админа. Этап 2:
 ai_proposals, 0 уточнений. Коммиты: восстановление dev-ветки (`push -u`), diag-роут v1282
 (`68fb14d` на dev, ff-merge на prod), снос diag-v1282 (`13f3dbb` на prod, выровнено на dev) +
 этот журнал.
+
+## 2026-08-24 (v1283): meta без изменений; #65 экспозиция ~258.9ч, push не отправлен (уже эскалировано)
+
+Designated dev-ветка (`claude/inspiring-cannon-9sxorq`) отсутствовала на origin на старте обхода
+(`git fetch origin <dev>` — `couldn't find remote ref`) — штатный паттерн «смержили и GitHub удалил
+ветку». Локальный HEAD (`0e41167`) байт-в-байт совпадал с прод-tip (финал журнала v1282, `git diff
+--stat` между ними пуст). Восстановлена `git push -u origin claude/inspiring-cannon-9sxorq` с
+текущего HEAD, без пересоздания и без force.
+
+Diag `daily-v1283` (секрет `daily-v1283-0c0da819dd`) — dev (`2ef2ee9`) → ff-merge прод (`2ef2ee9`,
+fast-forward с первой попытки) → READY (`dpl_JCRHAkF8F5oFnQ6qLmn63R4c6dbr`, `target=production`,
+алиас включает `crm-orcin-six.vercel.app`, подтверждено `mcp__Vercel__get_deployment`) до первого
+запроса.
+
+`op=meta`: те же значения, что в v1096–v1282, без сдвига (`server_now="2026-08-24T22:17:05.693Z"`,
+`proposals_total=66`, `proposals_by_status={done:63,pending:2,rejected:1}`,
+`feedback_by_status={awaiting_approval:16,closed:44,open:5}`, `feedback_open_count=21`,
+`proposals_last_update="2026-08-15T11:21:41.790Z"`, `feedback_last_msg="2026-08-10T04:21:45.452Z"`).
+Этап 1 (approved/revision/rejected) пропущен — сумма статусов подтверждает отсутствие сдвига. Этап 2
+(полный обход тредов feedback) пропущен по правилу v592/v1130 — `feedback_last_msg` не сдвинулся с
+последнего полного прохода.
+
+`list-proposals(status=pending)` подтвердил: `#65` (утечка пароля foreman) и `#66` (архивация
+AI-DAILY.md) оба по-прежнему `pending`, `admin_decision_by`/`admin_decision_at`=null у обоих,
+`admin_notes` пусты — новых сообщений администратора нет.
+
+Экспозиция `#65` (создан 2026-08-14T03:24:11.626Z) на `server_now=2026-08-24T22:17:05.693Z` —
+**~258.9ч** (168ч-веха — v1197, 240ч/10-суточная — v1265; не отдельная веха).
+
+Снос diag-v1283 одним коммитом (`ee3df0d`, `app.js`+`diagDaily.js` застейджены вместе через
+`git add -A -- src/app.js src/routes/`, граблина v210/v1225 учтена, `grep -n diag src/app.js`
+перед коммитом подтвердил отсутствие ссылок) — dev → ff-merge prod → READY
+(`dpl_HeVVv7KimQqDePib2b1RzrGbrac5`, алиас включает `crm-orcin-six.vercel.app`, подтверждено
+`get_deployment`); диаг-роут — первая попытка поймала транзиентный 409 от MCP-прокси (тот же
+паттерн, что в v1271/v1272/v1275/v1276/v1279/v1281, не связан с приложением), повтор сразу дал 404;
+`/health` — 200 с первой попытки. Дев-ветка выровнена на прод-tip (`checkout`+`fetch`+`reset --hard`,
+fast-forward, force не потребовался) до записи этого журнала.
+
+Push не отправлен — ни `#65`, ни `#66` не изменились с последней проверки (v1282), обе уже
+эскалированы ранее (#65: v1074/v1194/v1197 + единичное отклонение v1268; #66 связано с #63), повтор
+без новой информации был бы спамом. Инцидентов в этом обходе не было (кроме штатного отсутствия
+dev-ветки на старте и одного транзиентного 409 от MCP-прокси на diag-проверке, устранены стандартным
+способом).
+
+Ai-proposals (Этап 1): 0 обработано от админа. Этап 2: 0 новых обращений, 0 закрыто, 0 новых
+ai_proposals, 0 уточнений. Коммиты: восстановление dev-ветки (`push -u`), diag-роут v1283
+(`2ef2ee9` на dev, ff-merge на prod), снос diag-v1283 (`ee3df0d` на dev, ff-merge на prod) +
+этот журнал.
