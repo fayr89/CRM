@@ -29398,3 +29398,67 @@ Ai-proposals (Этап 1): 0 обработано от админа. Этап 2:
 0 новых ai_proposals, 0 уточнений. Коммиты: восстановление dev-ветки (`push -u`), diag-роут
 v1269 (`7b2b836b` на dev, ff-merge на prod), снос diag-v1269 (`f54ca7a7` на prod, выровнено на
 dev) + этот журнал.
+
+## 2026-08-24 (v1270): meta без изменений; #65 экспозиция ~245.9ч, push не отправлен (уже эскалировано)
+
+Designated dev-ветка (`claude/inspiring-cannon-zzrtc7`) отсутствовала на origin на старте обхода
+(`git fetch origin <dev>` — `couldn't find remote ref`) — тот же штатный паттерн «смержили и GitHub
+удалил ветку». Локальный HEAD (`1cd6bdb`) совпадал байт-в-байт с финалом журнала v1269. Восстановлена
+`git push -u origin claude/inspiring-cannon-zzrtc7` с текущего HEAD, без пересоздания.
+
+**Побочная граблина этого обхода:** первая попытка синхронизировать прод была одной командой
+`git fetch origin <prod> <dev>` — упала целиком (exit 128) из-за отсутствующей dev-ветки и **не
+обновила** remote-tracking ref для прод-ветки. Следующий `git merge-base`/`git log A..B` между
+локальным HEAD и стухшим `origin/<prod>` (застрявшим на v1191, 2026-08-20) ложно показал полностью
+unrelated histories (по 50 коммитов с каждой стороны, `merge-base` пустой). Прежде чем делать вывод
+о реальном расхождении, перепроверил через `mcp__Vercel__list_deployments` — последний prod-деплой
+уже был на коммите `1cd6bdb` (v1269), т.е. push в прошлом обходе реально прошёл, локальный
+tracking-ref был просто стухшим. Раздельный `git fetch origin claude/build-crm-system-JzCP9`
+подтвердил: прод реально на `1cd6bdb`, никакого расхождения нет. **Урок:** это тот же класс ошибки,
+что граблина v210 про `git add file1 file2` — комбинированный multi-ref `git fetch`/`git add` падает
+целиком и не обновляет НИЧЕГО, включая рефы, которые должны были обновиться успешно. Впредь: при
+подозрении на unrelated-histories/расхождение veток — сначала перепроверить раздельным fetch
+конкретно прод-ветки (и/или через Vercel `list_deployments`, что реально задеплоено), не доверять
+результату комбинированной команды, которая могла упасть целиком.
+
+Diag `daily-v1270` задеплоен на dev (`7fbb665`), ff-merge в прод прошёл штатно с первой попытки
+после раздельного fetch+reset прод-ветки (fast-forward без конфликтов). Готовность подтверждена
+через `mcp__Vercel__list_deployments` (`dpl_F681nJBSRq1TBDeMeGKu2JpErnaJ`, `state=READY`,
+`target=production`) перед первым запросом к diag-роуту.
+
+`op=meta`: `proposals_total=66`, `proposals_by_status={done:63,pending:2,rejected:1}`,
+`feedback_by_status={awaiting_approval:16,closed:44,open:5}`, `feedback_open_count=21`,
+`proposals_last_update="2026-08-15T11:21:41.790Z"`, `feedback_last_msg="2026-08-10T04:21:45.452Z"`
+— байт-в-байт как в v1096–v1269, без сдвига (`server_now="2026-08-24T09:19:09.069Z"`). Этап 1
+(approved/revision/rejected) пропущен — `proposals_last_update` не сдвинулся, заведомо пусто.
+Этап 2 (полный обход тредов feedback) пропущен по правилу v592/v1130 (`feedback_last_msg` не
+сдвинулся с последнего полного прохода).
+
+`list-proposals(status=pending)` подтвердил: `#65` (утечка пароля foreman) и `#66` (архивация
+AI-DAILY.md) оба по-прежнему `pending`, `admin_decision_by`/`admin_decision_at`=null у обоих,
+`admin_notes` пусты — новых сообщений администратора нет.
+
+Экспозиция `#65` (создан 2026-08-14T03:24:11.626Z) на `server_now=2026-08-24T09:19:09.069Z` —
+**~245.9ч** (168ч-веха — в v1197, 240ч/10-суточная — в v1265).
+
+Diag-эндпоинт `daily-v1270` снесён одним коммитом на прод (`26ab539`): Edit убрал импорт/роут из
+`app.js` первым шагом, `grep -n diag src/app.js` вернул exit code 1, затем `rm` файла роута,
+`ls src/routes | grep -i diag` тоже exit code 1, `git add -A -- src/app.js src/routes/` одной
+командой, `git status --short`/`git diff --cached --stat` подтвердили оба файла (`M app.js`,
+`D diagDaily.js`) застейджены в одном коммите до `git commit` (граблина v210/v1225 учтена).
+Деплой сноса подтверждён READY через `mcp__Vercel__list_deployments` (`dpl_AkgFZ5x1qVgRCLx6MSYGDYhoqKqA`,
+`target=production`); прямой запрос diag-роута после READY — сразу 404, `/health` — 200. Dev-ветка
+синхронизирована с прод-tip (`checkout`+`fetch`+`reset --hard`+`push --force-with-lease`) до записи
+этого журнала (урок v1249, инцидент не повторился).
+
+Push-уведомление: **не отправлено**. Ни `#65`, ни `#66` не изменились с последней проверки (v1269) —
+оба уже эскалированы push-уведомлениями ранее (#65: v1074/v1194/v1197, плюс единичное отклонение
+в v1268; #66 связано с уже эскалированным #63/ai_proposal о росте `AI-DAILY.md`), повтор без новой
+информации был бы спамом. Единственная находка этого обхода — уже описанная выше граблина с
+комбинированным multi-ref `git fetch`, устранена до какого-либо деструктивного действия (не было
+force-push, не было потери коммитов — только ложная тревога, разрешённая проверкой через Vercel).
+
+Ai-proposals (Этап 1): 0 обработано от админа. Этап 2: 0 новых обращений, 0 закрыто,
+0 новых ai_proposals, 0 уточнений. Коммиты: восстановление dev-ветки (`push -u`), diag-роут
+v1270 (`7fbb665` на dev, ff-merge на prod `7fbb665`), снос diag-v1270 (`26ab539` на prod, выровнено
+на dev) + этот журнал.
