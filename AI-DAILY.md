@@ -30039,3 +30039,50 @@ Ai-proposals (Этап 1): 0 обработано от админа. Этап 2:
 ai_proposals, 0 уточнений. Коммиты: восстановление dev-ветки (`push -u`), diag-роут v1283
 (`2ef2ee9` на dev, ff-merge на prod), снос diag-v1283 (`ee3df0d` на dev, ff-merge на prod) +
 этот журнал.
+
+## 2026-08-24 (v1284): штатный обход, meta без изменений, #65 exposure ~259.9ч, новых admin-решений нет
+
+Dev-ветка (`claude/inspiring-cannon-clx57n`) отсутствовала на origin на старте — восстановлена
+по правилу «PR уже смержен»: `checkout -B` от `origin/claude/build-crm-system-JzCP9` (репо
+shallow, `unrelated histories` не проверялся т.к. ветка создавалась от прод-tip, не сливалась).
+
+Diag v1284 (read + ограниченные write-операции — `proposal-set-status`, `proposal-message`,
+`proposal-create`, `feedback-set-status`, `feedback-message`, все под тем же секретом, т.к.
+`web_fetch_vercel_url` только GET, а `/api/ai-proposals`/`/api/feedback` требуют admin JWT;
+в этом обходе write-ветки не понадобились — pending без сдвига) — dev → ff-merge prod → push,
+деплой READY (`dpl_BaimJBqUz8boo74XgoXeJd4K4QVD`, алиас включает `crm-orcin-six.vercel.app`,
+подтверждено `get_deployment` через ~17с BUILDING→READY).
+
+`op=meta`: `proposals_by_status={"done":63,"pending":2,"rejected":1}`,
+`feedback_by_status={"awaiting_approval":16,"closed":44,"open":5}`,
+`proposals_last_update=2026-08-15T11:21:41.790Z`, `feedback_last_msg=2026-08-10T04:21:45.452Z` —
+байт-в-байт то же, что в v1283 и десятках обходов до него.
+
+Этап 1: `list-proposals` подтвердил — `#64` (rejected, дубль-заметка от админа, уже закрыт
+ранее), `#65` (утечка пароля foreman, pending, `admin_notes`=null) и `#66` (повторная архивация
+AI-DAILY.md, pending, `admin_notes`=null) — оба без новых решений. Approved/revision пусты,
+действовать не по чему.
+
+Этап 2: `list-feedback` (open+awaiting_approval, без attachments-поля в контексте — большой JSON
+430KB считан через файл, разобран `python3`) — 21 обращение, ровно тот же набор id, что в v738
+(open: `#29,42,47,61,64`; awaiting_approval: 16 остальных), у всех `updated_at` старше
+`feedback_last_msg` — новых сообщений в тредах нет ни от авторов, ни от админа. Полный обход
+тредов по одному пропущен по правилу v592/v1130 (не даёт новой информации при неизменном
+`feedback_last_msg` и неизменном составе списка).
+
+Экспозиция `#65` (создан 2026-08-14T03:24:11.626Z) на `server_now=2026-08-24T23:18:14.128Z` —
+**~259.9ч**, без новой вехи (168ч — v1197, 240ч/10-суточная — v1265).
+
+Снос diag-v1284 одним коммитом (`e855a44`, `app.js`+`diagDaily.js` застейджены вместе через
+`git add -A -- src/app.js src/routes/`, граблина v210 учтена, `grep -n diag src/app.js` перед
+коммитом подтвердил отсутствие ссылок) — dev → ff-merge prod → push.
+
+Push-уведомление не отправлено — ни `#65`, ни `#66` не изменились с последней проверки (v1283),
+обе уже эскалированы ранее (см. историю выше), повтор без новой информации был бы спамом.
+Инцидентов не было (кроме штатного отсутствия dev-ветки на старте, устранено стандартным
+способом).
+
+Ai-proposals (Этап 1): 0 обработано от админа. Этап 2: 0 новых обращений, 0 закрыто, 0 новых
+ai_proposals, 0 уточнений. Коммиты: восстановление dev-ветки (`push -u`), diag-роут v1284
+(`ebf677b` на dev, ff-merge на prod), снос diag-v1284 (`e855a44` на dev, ff-merge на prod) +
+этот журнал.
