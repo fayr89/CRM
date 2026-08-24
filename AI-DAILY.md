@@ -29275,3 +29275,60 @@ Ai-proposals (Этап 1): 0 обработано от админа. Этап 2:
 0 новых ai_proposals, 0 уточнений. Коммиты: восстановление dev-ветки (`push -u`), diag-роут
 v1267 (`426aa1c` на dev, ff-merge на prod), снос diag-v1267 (`f0769a9` на prod, выровнено на
 dev) + этот журнал.
+
+## 2026-08-24 (v1268): meta без изменений; #65 экспозиция ~243.9ч, push не отправлен (уже эскалировано)
+
+Designated dev-ветка (`claude/inspiring-cannon-yzxmn0`) отсутствовала на origin на старте обхода
+(`git ls-remote` — пусто) — тот же штатный паттерн «смержили и GitHub удалил ветку». Локальный
+HEAD (`2d642b0`) совпадал байт-в-байт с прод-tip (финал журнала v1267) после корректировки
+одной ложной находки: комбинированный `git fetch origin <prod> <dev>` в одну команду упал целиком
+из-за отсутствующей dev-ветки и не обновил remote-tracking ref для прод-ветки — раздельный
+`git fetch origin claude/build-crm-system-JzCP9` подтвердил реальный тип (совпадение, не
+расхождение). Восстановлена простым `git push -u origin claude/inspiring-cannon-yzxmn0` с
+текущего HEAD, без пересоздания. `git fetch --unshallow` выполнен на всякий случай перед выводами
+о ancestor/diverged (урок v169) — подтвердил обычное «prod является предком dev» без сюрпризов.
+
+Diag `daily-v1268` задеплоен на dev (`59b0ffbd`), ff-merge в прод прошёл штатно с первой попытки
+(прод-ветка синхронизирована `fetch`+`reset --hard` перед merge, fast-forward без конфликтов).
+Готовность подтверждена через `mcp__Vercel__get_deployment` (`dpl_2gVaXKnKLAxyURy3oqeb1knQS4ga`,
+`readyState=READY`, алиас включает `crm-orcin-six.vercel.app`) перед первым запросом к diag-роуту.
+
+`op=meta`: `proposals_total=66`, `proposals_by_status={done:63,pending:2,rejected:1}`,
+`feedback_by_status={awaiting_approval:16,closed:44,open:5}`, `feedback_open_count=21`,
+`proposals_last_update="2026-08-15T11:21:41.790Z"`, `feedback_last_msg="2026-08-10T04:21:45.452Z"`
+— байт-в-байт как в v1096–v1267, без сдвига (`server_now="2026-08-24T07:17:58.685Z"`). Этап 1
+(approved/revision/rejected) пропущен — `proposals_last_update` не сдвинулся, заведомо пусто.
+Этап 2 (полный обход тредов feedback) пропущен по правилу v592/v1130 (`feedback_last_msg` не
+сдвинулся с последнего полного прохода).
+
+`list-proposals(status=pending)` подтвердил: `#65` (утечка пароля foreman) и `#66` (архивация
+AI-DAILY.md) оба по-прежнему `pending`, `admin_decision_by`/`admin_decision_at`=null у обоих,
+`admin_notes` пусты — новых сообщений администратора нет.
+
+Экспозиция `#65` (создан 2026-08-14T03:24:11.626Z) на `server_now=2026-08-24T07:17:58.685Z` —
+**~243.9ч** (168ч-веха — в v1197, 240ч/10-суточная — в v1265).
+
+Diag-эндпоинт `daily-v1268` снесён одним коммитом на прод (`8bbf72d4`): Edit убрал импорт/роут из
+`app.js` первым шагом, `grep -n diag src/app.js` вернул exit code 1, затем `rm` файла роута,
+`ls src/routes | grep -i diag` тоже exit code 1, `git add -A -- src/app.js src/routes/` одной
+командой, `git status --short`/`git diff --cached --stat` подтвердили оба файла (`M app.js`,
+`D diagDaily.js`) застейджены в одном коммите до `git commit` (граблина v210/v1225 учтена).
+Деплой сноса подтверждён READY через `mcp__Vercel__get_deployment`
+(`dpl_4s1FmiEsV6kdpJ9uGunbdKexGK5E`, алиас включает `crm-orcin-six.vercel.app`); прямой запрос
+diag-роута после READY — сразу 404. `/health` поймал один транзиентный 409 от MCP-прокси
+`web_fetch_vercel_url` («Failed to create protection bypass», не связан с приложением) на первой
+попытке, повтор — 200. Dev-ветка синхронизирована с прод-tip (`checkout`+`fetch`+`reset --hard`+
+`push --force-with-lease`) **до** записи этого журнала (урок v1249, инцидент не повторился).
+
+Push-уведомление: **не отправлено**. Ни `#65`, ни `#66` не изменились с последней проверки
+(v1267) — оба уже эскалированы push-уведомлениями ранее (#65: v1074/v1194/v1197; #66 связано с
+уже эскалированным #63/ai_proposal о росте `AI-DAILY.md`, который сам растёт дальше), повтор без
+новой информации был бы спамом. Частотная находка (обход менее чем через час после предыдущего)
+тоже уже эскалирована ранее — не дублирую. Инцидентов в этом обходе не было (кроме двух
+разрешённых транзиентных 409 от MCP-прокси — на fetch-URL для `/health` и внутри самого сбора
+данных сессии, не связаны с приложением).
+
+Ai-proposals (Этап 1): 0 обработано от админа. Этап 2: 0 новых обращений, 0 закрыто,
+0 новых ai_proposals, 0 уточнений. Коммиты: восстановление dev-ветки (`push -u`), diag-роут
+v1268 (`59b0ffbd` на dev, ff-merge на prod `59b0ffbd`), снос diag-v1268 (`8bbf72d4` на prod,
+выровнено на dev) + этот журнал.
