@@ -29757,3 +29757,51 @@ ai_proposals, 0 уточнений (вне рутины: 1 найденный и
 сессии — см. выше). Коммиты: снос `diag/list-warehouses-v1` (`c376d472`), diag-роут v1277
 (`2115792a` на prod напрямую по ошибке — dev выровнен постфактум `push`), снос diag-v1277
 (`5baf0c97` на dev, ff-merge на prod) + этот журнал.
+
+## 2026-08-24 (v1278): meta без изменений; #65 экспозиция ~253.9ч, push не отправлен (уже эскалировано)
+
+Designated dev-ветка (`claude/inspiring-cannon-fyvhcb`) отсутствовала на origin на старте
+обхода (`git fetch` → `couldn't find remote ref`) — штатный паттерн «смержили и GitHub удалил
+ветку». `git fetch --unshallow origin` выполнен ДО каких-либо выводов о расхождении (граблина
+v169: на shallow-клоне `merge-base`/`git log A..B` может ложно показать unrelated-histories);
+после unshallow подтвердилось: локальный HEAD (`e89f7e2`, финал журнала v1277) байт-в-байт
+совпадал с прод-tip. Восстановлена `git push -u origin claude/inspiring-cannon-fyvhcb` с
+текущего HEAD, без пересоздания и без force.
+
+Diag `daily-v1278` — dev (`8e86c1c1`) → ff-merge прод (`8e86c1c1`, fast-forward с первой
+попытки) → READY (`dpl_z58rPHd7wwtLrbMWyF3hQDaEVi6p`, `target=production`, подтверждено
+`get_deployment` до первого запроса).
+
+`op=meta`: те же значения, что в v1096–v1277, без сдвига (`server_now=
+"2026-08-24T17:17:57.152Z"`, `proposals_last_update="2026-08-15T11:21:41.790Z"`,
+`feedback_last_msg="2026-08-10T04:21:45.452Z"`, `proposals_total=66`,
+`proposals_by_status={done:63,pending:2,rejected:1}`,
+`feedback_by_status={awaiting_approval:16,closed:44,open:5}`, `feedback_open_count=21`). Этап 1
+(approved/revision/rejected) пропущен — meta подтверждает отсутствие сдвига. Этап 2 (полный
+обход тредов feedback) пропущен по правилу v592/v1130 — `feedback_last_msg` не сдвинулся с
+последнего полного прохода.
+
+`list-proposals(status=pending)` подтвердил: `#65` (утечка пароля foreman) и `#66` (архивация
+AI-DAILY.md) оба по-прежнему `pending`, `admin_decision_by`/`admin_decision_at`=null у обоих,
+`admin_notes` пусты — новых сообщений администратора нет.
+
+Экспозиция `#65` (создан 2026-08-14T03:24:11.626Z) на `server_now=2026-08-24T17:17:57.152Z` —
+**~253.9ч** (168ч-веха — v1197, 240ч/10-суточная — v1265; не отдельная веха).
+
+Снос diag-v1278 одним коммитом (`9e277dea`, `app.js`+`diagDaily.js` застейджены вместе через
+`git add -A -- src/app.js src/routes/`, граблина v210/v1225 учтена, `grep -n diag src/app.js`
+перед коммитом подтвердил отсутствие ссылок) — dev → ff-merge prod → READY
+(`dpl_DU7mvCXt1tjDrfeFRUYzMoT5M8re`, алиас включает `crm-orcin-six.vercel.app`, подтверждено
+`get_deployment`); диаг-роут — 404, `/health` — 200, оба проверены на алиасе после READY.
+Дев-ветка выровнена на прод-tip (fast-forward, force не потребовался).
+
+Push не отправлен — ни `#65`, ни `#66` не изменились с последней проверки (v1277), обе уже
+эскалированы ранее (#65: v1074/v1194/v1197 + единичное отклонение v1268; #66 связано с #63),
+повтор без новой информации был бы спамом. Инцидентов в этом обходе не было (кроме штатного
+отсутствия dev-ветки на старте, устранено стандартным способом); дополнительных забытых
+diag-эндпоинтов не найдено (`grep -rn diag src/app.js` до старта дал 0 совпадений).
+
+Ai-proposals (Этап 1): 0 обработано от админа. Этап 2: 0 новых обращений, 0 закрыто, 0 новых
+ai_proposals, 0 уточнений. Коммиты: восстановление dev-ветки (`push -u`), diag-роут v1278
+(`8e86c1c1` на dev, ff-merge на prod), снос diag-v1278 (`9e277dea` на dev, ff-merge на prod) +
+этот журнал.
