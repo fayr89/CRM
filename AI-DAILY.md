@@ -29705,3 +29705,55 @@ Ai-proposals (Этап 1): 0 обработано от админа. Этап 2:
 ai_proposals, 0 уточнений. Коммиты: восстановление dev-ветки (`push -u`), diag-роут v1276
 (`eb0e6d5` на dev, ff-merge на prod), снос diag-v1276 (`87d61c8` на prod, выровнено на dev) + этот
 журнал.
+
+## 2026-08-24 (v1277): найден и снесён забытый temp diag/list-warehouses-v1 (живой в проде с 15:54, чужая сессия); штатный обход — meta без изменений, #65/#66 без решения
+
+На старте обхода локальный HEAD (`claude/inspiring-cannon-unau8e`, отсутствовала на origin —
+штатный паттерн «смержили и GitHub удалил ветку») уже содержал незапушенный коммит
+`7f45eb90` — **`/api/diag/list-warehouses-v1?key=wh-list-2026-b7m3`**, добавленный отдельной
+(не этой) сессией в 15:54:57Z для разовой проверки складов, смонтированный в `app.js`, живой
+на проде и **не снесённый** после использования — хардкод-секрет в query, доступен всему
+интернету (репо публичное). После unshallow-fetch подтвердилось: этот же коммит уже был и на
+`origin/claude/build-crm-system-JzCP9` (prod), т.е. эндпоинт был реально задеплоен и открыт
+на `crm-orcin-six.vercel.app`, отдавал названия складов + `orders_count` + snapshot
+`app_settings.production.internal_warehouse` без всякой авторизации. Данные не критичные
+(не пароли/ПДн), но сам паттерн — точная копия корневой причины `#65` (пароль foreman,
+до сих пор pending). Снёс файл + wiring одним коммитом (`c376d472`, `git add -A --
+src/app.js src/routes/` — граблина v210/v1225 учтена), запушено на dev и ff-merge на prod,
+подтверждено `list_deployments` (READY, target=production) и `web_fetch_vercel_url`: сначала
+302 на алиасе деплоя (SSO-редирект Vercel toolbar — ожидаемо для non-alias URL), затем 404 на
+`crm-orcin-six.vercel.app` после накатки алиаса — эндпоинт закрыт.
+
+Diag `daily-v1277` (`op=meta`/`list-proposals`) — dev → prod, READY подтверждён
+`list_deployments`/`get_deployment` до запроса. `op=meta`: те же значения, что в v1096–v1276,
+без сдвига (`server_now="2026-08-24T16:20:53.682Z"`, `proposals_last_update=
+"2026-08-15T11:21:41.790Z"`, `feedback_last_msg="2026-08-10T04:21:45.452Z"`,
+`proposals_total=66`, `proposals_by_status={done:63,pending:2,rejected:1}`,
+`feedback_by_status={awaiting_approval:16,closed:44,open:5}`, `feedback_open_count=21`).
+Этап 1 (approved/revision/rejected) пропущен — meta подтверждает отсутствие сдвига. Этап 2
+(полный обход тредов feedback) пропущен по правилу v592/v1130 — `feedback_last_msg` не
+сдвинулся.
+
+`list-proposals(status=pending)` подтвердил: `#65` (утечка пароля foreman) и `#66`
+(архивация AI-DAILY.md) оба по-прежнему `pending`, `admin_decision_by`/`admin_decision_at`=null,
+`admin_notes` пусты. Экспозиция `#65` (создан 2026-08-14T03:24:11.626Z) на текущий момент —
+**~252.9ч** (168ч-веха — v1197, 240ч/10-суточная — v1265; не отдельная веха).
+
+Снос diag-v1277 одним коммитом (`5baf0c97`, `app.js`+`diagDaily.js` застейджены вместе,
+`grep -n diag src/app.js` перед коммитом подтвердил пустоту) — dev → ff-merge prod → READY
+(`dpl_4BjTF3AVbh8SHTVzR21wYuTxvvTw`, подтверждено `list_deployments`); диаг-роут — 404,
+`/health` — 200, оба проверены на алиасе `crm-orcin-six.vercel.app` после READY. Дев-ветка
+выровнена на прод-tip.
+
+Push отправлен — новая информация: второй за 10 дней случай живого незакрытого
+diag-эндпоинта с хардкод-секретом в публичном репо (первый — `#65`, пароль foreman,
+до сих пор не устранён спустя ~253ч). Разовая находка сама по себе не заслуживала бы
+уведомления (я её же и закрыл), но в сочетании с застрявшим `#65` это выглядит как
+повторяющийся процессный риск, о котором стоит знать админу отдельно от рутинного
+«без изменений».
+
+Ai-proposals (Этап 1): 0 обработано от админа. Этап 2: 0 новых обращений, 0 закрыто, 0 новых
+ai_proposals, 0 уточнений (вне рутины: 1 найденный и устранённый security-хвост от чужой
+сессии — см. выше). Коммиты: снос `diag/list-warehouses-v1` (`c376d472`), diag-роут v1277
+(`2115792a` на prod напрямую по ошибке — dev выровнен постфактум `push`), снос diag-v1277
+(`5baf0c97` на dev, ff-merge на prod) + этот журнал.
