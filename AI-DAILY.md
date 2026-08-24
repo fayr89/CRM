@@ -29065,3 +29065,53 @@ Ai-proposals (Этап 1): 0 обработано от админа. Этап 2:
 0 новых ai_proposals, 0 уточнений. Коммиты: восстановление dev-ветки (`push -u`), diag-роут
 v1263 (`03ee3bb` на dev, ff-merge на prod), снос diag-v1263 (`6015f1e` на prod, выровнено на
 dev) + этот журнал.
+
+## 2026-08-24 (v1264): meta без изменений; #65 экспозиция ~239.9ч (десятые сутки), push не отправлен (уже эскалировано)
+
+Designated dev-ветка (`claude/inspiring-cannon-gsnyab`) отсутствовала на origin на старте обхода
+(`git fetch` для неё завершился `fatal: couldn't find remote ref`) — тот же штатный паттерн
+«смержили и GitHub удалил ветку». Локальный HEAD (`0c82edf`) байт-в-байт совпадал с прод-tip
+(финал журнала v1263), и `git ls-remote` подтвердил `refs/heads/claude/build-crm-system-JzCP9`
+на том же коммите. Восстановлена простым `git push -u origin claude/inspiring-cannon-gsnyab`
+с текущего HEAD, без пересоздания.
+
+Diag `daily-v1264` задеплоен на dev (`411fdc8`), ff-merge в прод прошёл штатно с первой попытки
+(прод-ветка синхронизирована `fetch`+`reset --hard` перед merge, fast-forward без конфликтов).
+Готовность деплоя подтверждена через `mcp__Vercel__list_deployments`
+(`dpl_FLv4MQZzzGKD499KENYbNnF18SC9`, `readyState=READY`, `target=production`) перед первым
+запросом к диагностическому роуту.
+
+`op=meta`: `proposals_total=66`, `proposals_by_status={done:63,pending:2,rejected:1}`,
+`feedback_by_status={awaiting_approval:16,closed:44,open:5}`, `feedback_open_count=21`,
+`proposals_last_update="2026-08-15T11:21:41.790Z"`, `feedback_last_msg="2026-08-10T04:21:45.452Z"`
+— байт-в-байт как в v1096–v1263, без сдвига (`server_now="2026-08-24T03:17:29.962Z"`). Этап 1
+(approved/revision/rejected) пропущен — `proposals_last_update` не сдвинулся, заведомо пусто.
+Этап 2 (полный обход тредов feedback) пропущен по правилу v592/v1130 (`feedback_last_msg` не
+сдвинулся с последнего полного прохода).
+
+`list-proposals(status=pending)` подтвердил: `#65` (утечка пароля foreman) и `#66` (архивация
+AI-DAILY.md) оба по-прежнему `pending`, `admin_decision_by`/`admin_decision_at`=null у обоих,
+`admin_notes` пусты — новых сообщений администратора нет.
+
+Экспозиция `#65` (создан 2026-08-14T03:24:11.626Z) на `server_now=2026-08-24T03:17:29.962Z` —
+**~239.9ч** (168ч-веха пройдена в v1197; до отметки 240ч/10 суток осталось ~6 минут на момент
+проверки — будет пройдена к следующему обходу).
+
+Diag-эндпоинт `daily-v1264` снесён одним коммитом на прод (`2980bc7`): Edit убрал импорт/роут из
+`app.js` первым шагом, `grep -n diag src/app.js` вернул exit code 1, затем `rm` файла роута,
+`ls src/routes | grep -i diag` тоже exit code 1, `git add -A -- src/app.js src/routes/` одной
+командой, `git status --short`/`git diff --cached --stat` подтвердили оба файла (`M app.js`,
+`D diagDaily.js`) застейджены в одном коммите до `git commit` (граблина v210/v1225 учтена).
+Деплой сноса подтверждён прямым запросом diag-роута — 404, `/health` — 200. Dev-ветка
+синхронизирована с прод-tip (`checkout`+`fetch`+`reset --hard`) **до** записи этого журнала
+(урок v1249, инцидент не повторился).
+
+Push-уведомление: **не отправлено**. Ни `#65`, ни `#66` не изменились с последней проверки
+(v1263) — оба уже эскалированы push-уведомлениями ранее (#65: v1074/v1194/v1197; #66 связано с
+уже эскалированным #63/ai_proposal о росте `AI-DAILY.md`), повтор без новой информации был бы
+спамом. Инцидентов в этом обходе не было.
+
+Ai-proposals (Этап 1): 0 обработано от админа. Этап 2: 0 новых обращений, 0 закрыто,
+0 новых ai_proposals, 0 уточнений. Коммиты: восстановление dev-ветки (`push -u`), diag-роут
+v1264 (`411fdc8` на dev, ff-merge на prod), снос diag-v1264 (`2980bc7` на prod, выровнено на
+dev) + этот журнал.
