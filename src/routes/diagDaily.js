@@ -149,6 +149,12 @@ router.get('/', async (req, res) => {
       );
       return res.json({ ok: true, id: row.id });
     }
+    if (op === 'proposal-update-summary') {
+      const id = Number(req.query.id);
+      const summary = req.query.summary;
+      await db.run(`UPDATE ai_proposals SET summary = ?, updated_at = NOW() WHERE id = ?`, summary, id);
+      return res.json({ ok: true });
+    }
     return res.status(400).json({ error: 'unknown op' });
   } catch (e) {
     return res.status(500).json({ error: e.message });
