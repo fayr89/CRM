@@ -45,10 +45,10 @@ import productionSettingsRoutes from './routes/productionSettings.js';
 import supplyDeliveryRoutes from './routes/supplyDelivery.js';
 import callingRoutes from './routes/calling.js';
 import stockWatchesRoutes from './routes/stockWatches.js';
-import diagStockStatusRoutes from './routes/diagStockStatus.js';
 import productionRequestsRoutes from './routes/productionRequests.js';
 import bootstrapRoutes from './routes/bootstrap.js';
 import pushRoutes from './routes/push.js';
+import diagDailyRoutes from './routes/diagDaily.js';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = path.resolve(__dirname, '..', 'public');
 
@@ -180,10 +180,10 @@ export function createApp({ serveStatic = true } = {}) {
   app.use('/api/supply-delivery', supplyDeliveryRoutes);
   app.use('/api/calling', callingRoutes);
   app.use('/api/stock-watches', stockWatchesRoutes);
-  app.use('/api/diag', diagStockStatusRoutes);
   app.use('/api/production-requests', productionRequestsRoutes);
   app.use('/api/bootstrap', bootstrapRoutes);
   app.use('/api/push', pushRoutes);
+  app.use('/api/diag/daily-v1301', diagDailyRoutes);
   app.use((req, res) => {
     res.status(404).json({ error: `Route not found: ${req.method} ${req.path}` });
   });
