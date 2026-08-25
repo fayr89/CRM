@@ -30524,3 +30524,28 @@ awaiting_approval=16/closed=44/open=5; `proposals_last_update`=2026-08-15T11:21:
 Ai-proposals: Этап 1 — 0 обработано (approved/revision/rejected пусты). Этап 2 — 0 новых
 обращений/закрытий/proposals/уточнений. Коммиты: восстановление dev-ветки, diag-роут v1295
 (`a43c8ccb` dev → prod), снос diag-v1295 (`bc1971d8` dev → prod) + этот журнал.
+
+## 2026-08-25 (v1296): meta без изменений, push не отправлен (уже эскалировано)
+
+Dev-ветка (`claude/inspiring-cannon-da3nf6`) отсутствовала на origin на старте (штатный паттерн
+«смержили, GitHub удалил»); `git fetch --unshallow` подтвердил реальный tip = v1295. Восстановлена
+от прод-tip, `push -u`.
+
+Diag v1296 → dev → ff-merge prod → `op=meta`: байт-в-байт то же, что с v738 (`proposals`:
+done=63/pending=2/rejected=1, total=66; `feedback`: awaiting_approval=16/closed=44/open=5;
+`proposals_last_update`=2026-08-15T11:21:41.790Z; `feedback_last_msg`=2026-08-10T04:21:45.452Z).
+`list-proposals(pending)` подтвердил: `#65` (утечка пароля foreman@iitit.ru, risk=high,
+created 2026-08-14T03:24) и `#66` (архивация AI-DAILY.md, risk=low, created 2026-08-15T11:21)
+всё ещё `pending`, `admin_notes`/`admin_decision_*` null. Полный обход feedback/тредов пропущен
+(правило v592/v1130 — не даёт новой информации при неизменной meta).
+
+Снос diag сделан правильно (`app.js`+`git rm` одним `git add`, `grep diag` → exit 1 перед
+коммитом) → ff-merge prod → 404 подтверждён.
+
+Push-уведомление: **не отправлено**. Ни `#65`, ни `#66` не изменились с последней проверки —
+обе уже многократно эскалированы push-уведомлениями ранее (`#65`: v1074/v1194/v1197 + единичное
+отклонение ~v1268; частотная находка: v247/v263), повтор без новой информации — спам.
+
+Ai-proposals: Этап 1 — 0 обработано (approved/revision/rejected пусты). Этап 2 — 0 новых
+обращений/закрытий/proposals/уточнений. Коммиты: восстановление dev-ветки, diag-роут v1296
+(`3a9a42d1` dev → prod), снос diag-v1296 (`40444c4f` dev → prod) + этот журнал.
