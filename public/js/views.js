@@ -11005,6 +11005,115 @@ async function renderProjectsSection(area) {
 }
 
 // Карточка PWA push-уведомлений в «Мой профиль».
+// Секция «Уведомления по складам». Загружает список известных складов
+// (из orders/product_prices) + текущие подписки. Даёт таблицу с чекбоксами
+// «Резерв / Отгрузка / Приход» на каждый склад. Кнопка «Сохранить» отправляет
+// весь набор PUT'ом. Для админа автоподставляет «Новосибирск (производство)»
+// (или что-то похожее по regex) как первую строку с включёнными галками.
+function buildStockWatchesCard() {
+  const card = el('div', { class: 'card', style: { marginBottom: '12px' } },
+    el('h3', { style: { marginTop: 0 } }, '🏭 Уведомления по складам'),
+    el('div', { style: { fontSize: '13px', color: 'var(--text-muted)', marginBottom: '8px' } },
+      'Получать push/MAX при событиях на конкретном складе. ',
+      el('b', {}, 'Резерв'),
+      ' — заказ ушёл в статус «зарезервирован» (списание с available). ',
+      el('b', {}, 'Отгрузка'),
+      ' — заказ отгружен клиенту. ',
+      el('b', {}, 'Приход'),
+      ' — возврат от клиента (restock).',
+    ),
+  );
+  const body = el('div', {});
+  card.append(body);
+  (async () => {
+    try {
+      const [wl, whList] = await Promise.all([api.stockWatches(), api.stockWatchesWarehouses()]);
+      const currentByWh = new Map((wl.watches || []).map((w) => [w.warehouse, w]));
+      const allWh = [...new Set([...whList.warehouses || [], ...currentByWh.keys()])].sort();
+      // Автоподставляем «Новосибирск (производство)» если совсем пусто.
+      if (!currentByWh.size) {
+        const nsk = allWh.find((w) => /новосибирск.*производств|производств.*новосибирск/i.test(w))
+          || allWh.find((w) => /новосибирск/i.test(w));
+        if (nsk) currentByWh.set(nsk, { warehouse: nsk, watch_reserve: true, watch_ship: true, watch_receipt: true });
+      }
+      renderWatchesUI(body, allWh, currentByWh);
+    } catch (e) {
+      body.innerHTML = '';
+      body.append(el('div', { class: 'error' }, e.message));
+    }
+  })();
+  return card;
+}
+
+function renderWatchesUI(body, allWarehouses, currentByWh) {
+  body.innerHTML = '';
+  // Таблица подписок.
+  const table = el('table', { style: { width: '100%', fontSize: '13px' } });
+  table.append(el('thead', {}, el('tr', {},
+    el('th', { style: { textAlign: 'left', padding: '4px' } }, 'Склад'),
+    el('th', { style: { padding: '4px', width: '90px' } }, '📦 Резерв'),
+    el('th', { style: { padding: '4px', width: '90px' } }, '🚚 Отгрузка'),
+    el('th', { style: { padding: '4px', width: '90px' } }, '📥 Приход'),
+    el('th', { style: { padding: '4px', width: '40px' } }, ''),
+  )));
+  const tbody = el('tbody', {});
+  table.append(tbody);
+  body.append(table);
+
+  function addRow(warehouseName, values = { watch_reserve: true, watch_ship: true, watch_receipt: true }) {
+    const cbR = el('input', { type: 'checkbox', checked: !!values.watch_reserve });
+    const cbS = el('input', { type: 'checkbox', checked: !!values.watch_ship });
+    const cbC = el('input', { type: 'checkbox', checked: !!values.watch_receipt });
+    const row = el('tr', {},
+      el('td', { style: { padding: '6px', fontWeight: '500' } }, warehouseName),
+      el('td', { style: { padding: '6px', textAlign: 'center' } }, cbR),
+      el('td', { style: { padding: '6px', textAlign: 'center' } }, cbS),
+      el('td', { style: { padding: '6px', textAlign: 'center' } }, cbC),
+      el('td', { style: { padding: '6px', textAlign: 'right' } },
+        el('button', { class: 'btn btn-sm', style: { color: '#ef4444' }, onClick: () => row.remove() }, '✕'),
+      ),
+    );
+    row.dataset.warehouse = warehouseName;
+    row._cb = { r: cbR, s: cbS, c: cbC };
+    tbody.append(row);
+  }
+  for (const [wh, val] of currentByWh) addRow(wh, val);
+
+  // Селект «Добавить склад».
+  const remain = allWarehouses.filter((w) => !currentByWh.has(w));
+  const addSel = el('select', { style: { padding: '6px', minWidth: '200px' } },
+    el('option', { value: '' }, '— выберите склад —'),
+    ...remain.map((w) => el('option', { value: w }, w)),
+  );
+  const addBtn = el('button', { class: 'btn', style: { marginLeft: '6px' },
+    onClick: () => {
+      if (!addSel.value) return;
+      const wh = addSel.value;
+      addRow(wh);
+      // убираем из селекта.
+      addSel.querySelector(`option[value="${wh.replace(/"/g, '\\"')}"]`)?.remove();
+      addSel.value = '';
+    },
+  }, '+ Добавить склад');
+  body.append(el('div', { style: { marginTop: '10px' } }, addSel, addBtn));
+
+  const saveBtn = el('button', { class: 'btn btn-primary', style: { marginTop: '10px' },
+    onClick: async () => {
+      const watches = Array.from(tbody.querySelectorAll('tr')).map((r) => ({
+        warehouse: r.dataset.warehouse,
+        watch_reserve: r._cb.r.checked,
+        watch_ship: r._cb.s.checked,
+        watch_receipt: r._cb.c.checked,
+      }));
+      try {
+        await api.stockWatchesSave(watches);
+        toast(`Подписки сохранены (${watches.length})`, 'success');
+      } catch (e) { toast(e.message, 'error'); }
+    },
+  }, '💾 Сохранить подписки');
+  body.append(el('div', { style: { marginTop: '10px' } }, saveBtn));
+}
+
 function buildPushProfileCard() {
   const card = el('div', { class: 'card', style: { marginBottom: '12px' } });
   card.append(el('div', { style: { fontWeight: '600', fontSize: '15px', marginBottom: '4px' } }, '📲 PWA push-уведомления'));
@@ -11189,6 +11298,9 @@ export async function renderMyProfile(main) {
 
   // ---- PWA push-уведомления ----
   main.append(buildPushProfileCard());
+
+  // ---- Подписки на движения по складам ----
+  main.append(buildStockWatchesCard());
 
   // Смена пароля. Валидация на бэке: текущий должен совпадать, новый ≥6 символов и
   // отличаться от старого. После успеха поля очищаются.

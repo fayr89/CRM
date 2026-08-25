@@ -547,6 +547,11 @@ export const api = {
   // Ревизия прайса + ознакомление менеджеров (баннер + статус, без блокировок)
   priceRevision: () => request('GET', '/api/pricing/revision'),
   priceRevisionChanged: () => request('GET', '/api/pricing/revision/changed'),
+
+  // Подписки на движения по складам.
+  stockWatches: () => request('GET', '/api/stock-watches'),
+  stockWatchesWarehouses: () => request('GET', '/api/stock-watches/warehouses'),
+  stockWatchesSave: (watches) => request('PUT', '/api/stock-watches', { body: { watches } }),
   acknowledgePrice: () => request('POST', '/api/pricing/acknowledge'),
   priceAckStatus: () => request('GET', '/api/pricing/ack-status'),
 

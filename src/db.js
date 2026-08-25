@@ -1456,6 +1456,24 @@ export async function ensureInitialized() {
       // Индекс для фильтра «reserved без напечатанной этикетки».
       await pool.query(`CREATE INDEX IF NOT EXISTS idx_orders_status_no_label ON orders(status) WHERE status = 'reserved' AND label_printed_at IS NULL`);
 
+      // ===== Подписка на движения по складу (SCHEMA_VERSION 41) =====
+      // user_stock_watches: пользователь подписывается на события по конкретному
+      // складу (резерв / отгрузка / поступление). При соответствующем событии
+      // (см. services/stock-notify.js) — идёт push + MAX.
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS user_stock_watches (
+          id SERIAL PRIMARY KEY,
+          user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          warehouse TEXT NOT NULL,
+          watch_reserve BOOLEAN NOT NULL DEFAULT TRUE,
+          watch_ship BOOLEAN NOT NULL DEFAULT TRUE,
+          watch_receipt BOOLEAN NOT NULL DEFAULT TRUE,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          UNIQUE (user_id, warehouse)
+        )
+      `);
+      await pool.query(`CREATE INDEX IF NOT EXISTS idx_user_stock_watches_wh ON user_stock_watches(warehouse)`);
+
       // Маркер успешно прогнанных миграций — следующие холодные старты пропустят DDL.
       await pool.query(
         `INSERT INTO app_settings (key, value, updated_at)

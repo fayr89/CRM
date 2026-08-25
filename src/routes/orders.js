@@ -7,6 +7,7 @@ import { BadRequest, Forbidden, NotFound, asyncHandler } from '../errors.js';
 import { parsePagination, parseSort, paginated } from '../query.js';
 import { notify, notifyWarehouse, buildOrderNotificationBody } from '../services/notifications.js';
 import { emitEvent } from '../services/webhooks.js';
+import { notifyStockMovement } from '../services/stock-notify.js';
 import { toCsv } from '../services/csv.js';
 import ExcelJS from 'exceljs';
 import { nextShippingDate, getSchedule } from '../services/shippingSchedule.js';
@@ -981,6 +982,11 @@ router.post(
     // «Списание»; уценка → новый товар + возврат на склад уценки + задача админу.
     if (resolution === 'restocked') {
       await enqueueMsJob(order.id, 'customerreturn.create');
+      // Возврат на склад = поступление. Уведомляем подписчиков склада.
+      notifyStockMovement(order.warehouse, 'receipt', {
+        orderId: order.id, clientName: order.client_name,
+        amount: order.total_amount, marketplace: order.marketplace,
+      }).catch(() => {});
     } else if (resolution === 'written_off' || resolution === 'lost') {
       await enqueueMsJob(order.id, 'loss.create');
     } else if (resolution === 'markdown') {
@@ -1532,6 +1538,11 @@ router.post(
           logAction(req, { action: 'order.reserved', entity_type: 'order', entity_id: order.id }),
         ]);
         emitEvent('order.reserved', updated);
+        // Уведомляем подписчиков движений по этому складу (резерв = списание).
+        notifyStockMovement(updated.warehouse, 'reserve', {
+          orderId: order.id, clientName: updated.client_name,
+          amount: updated.total_amount, marketplace: updated.marketplace,
+        }).catch(() => {});
       } catch (e) { console.error('[reserve async]', e.message); }
     });
   }),
@@ -1569,6 +1580,10 @@ router.post(
           logAction(req, { action: 'order.shipped', entity_type: 'order', entity_id: order.id }),
         ]);
         emitEvent('order.shipped', updated);
+        notifyStockMovement(updated.warehouse, 'ship', {
+          orderId: order.id, clientName: updated.client_name,
+          amount: updated.total_amount, marketplace: updated.marketplace,
+        }).catch(() => {});
       } catch (e) { console.error('[ship async]', e.message); }
     });
   }),
@@ -1659,6 +1674,11 @@ router.post(
         });
       }
       emitEvent('order.shipped', { ...order, status: 'shipped' });
+      // Подписчики движений по складу — уведомляем каждого.
+      notifyStockMovement(order.warehouse, 'ship', {
+        orderId: order.id, clientName: order.client_name,
+        amount: order.total_amount, marketplace: order.marketplace,
+      }).catch(() => {});
     }
     // Батч-INSERT в notifications (чанками по 500 значений: 5 колонок × 500 = 2500 плейсхолдеров — ок).
     const NOTIF_CHUNK = 500;
