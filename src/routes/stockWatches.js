@@ -13,30 +13,56 @@ import { asyncHandler } from '../errors.js';
 const router = Router();
 router.use(authenticate);
 
+// Ленивое создание таблицы — на случай если основная миграция ещё не прогналась
+// (лямбда закеширована / rollback другого шага миграции).
+async function ensureTable() {
+  await db.run(`
+    CREATE TABLE IF NOT EXISTS user_stock_watches (
+      id SERIAL PRIMARY KEY,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      warehouse TEXT NOT NULL,
+      watch_reserve BOOLEAN NOT NULL DEFAULT TRUE,
+      watch_ship BOOLEAN NOT NULL DEFAULT TRUE,
+      watch_receipt BOOLEAN NOT NULL DEFAULT TRUE,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE (user_id, warehouse)
+    )
+  `);
+}
+
 router.get(
   '/',
   asyncHandler(async (req, res) => {
-    const rows = await db.all(
-      `SELECT warehouse, watch_reserve, watch_ship, watch_receipt, created_at
-       FROM user_stock_watches WHERE user_id = ? ORDER BY warehouse`,
-      req.user.id,
-    );
-    res.json({ watches: rows });
+    try {
+      await ensureTable();
+      const rows = await db.all(
+        `SELECT warehouse, watch_reserve, watch_ship, watch_receipt, created_at
+         FROM user_stock_watches WHERE user_id = ? ORDER BY warehouse`,
+        req.user.id,
+      );
+      res.json({ watches: rows });
+    } catch (e) {
+      res.status(500).json({ error: 'stock-watches list failed', detail: e.message });
+    }
   }),
 );
 
 router.get(
   '/warehouses',
   asyncHandler(async (_req, res) => {
-    // Уникальные имена складов из orders + product_prices — что реально используется.
-    const rows = await db.all(
-      `SELECT warehouse FROM (
-         SELECT DISTINCT warehouse FROM orders WHERE warehouse IS NOT NULL AND warehouse <> ''
-         UNION
-         SELECT DISTINCT warehouse FROM product_prices WHERE warehouse IS NOT NULL AND warehouse <> ''
-       ) t ORDER BY warehouse`,
-    );
-    res.json({ warehouses: rows.map((r) => r.warehouse) });
+    // Собираем склады из orders + product_prices. Каждый источник независимо
+    // (если одна таблица упала — не роняем всё).
+    const uniq = new Set();
+    try {
+      const a = await db.all(`SELECT DISTINCT warehouse FROM orders WHERE warehouse IS NOT NULL AND warehouse <> ''`);
+      for (const r of a) uniq.add(r.warehouse);
+    } catch (e) { /* ignore */ }
+    try {
+      const b = await db.all(`SELECT DISTINCT warehouse FROM product_prices WHERE warehouse IS NOT NULL AND warehouse <> ''`);
+      for (const r of b) uniq.add(r.warehouse);
+    } catch (e) { /* ignore */ }
+    const list = Array.from(uniq).sort((a, b) => a.localeCompare(b, 'ru'));
+    res.json({ warehouses: list });
   }),
 );
 
@@ -53,18 +79,22 @@ router.put(
   '/',
   asyncHandler(async (req, res) => {
     const { watches } = putSchema.parse(req.body || {});
-    // Полная замена: чистим и вставляем текущий набор.
-    await db.withTransaction(async (tx) => {
-      await tx.run(`DELETE FROM user_stock_watches WHERE user_id = ?`, req.user.id);
-      for (const w of watches) {
-        await tx.run(
-          `INSERT INTO user_stock_watches (user_id, warehouse, watch_reserve, watch_ship, watch_receipt)
-           VALUES (?, ?, ?, ?, ?)`,
-          req.user.id, w.warehouse, w.watch_reserve, w.watch_ship, w.watch_receipt,
-        );
-      }
-    });
-    res.json({ ok: true, count: watches.length });
+    try {
+      await ensureTable();
+      await db.withTransaction(async (tx) => {
+        await tx.run(`DELETE FROM user_stock_watches WHERE user_id = ?`, req.user.id);
+        for (const w of watches) {
+          await tx.run(
+            `INSERT INTO user_stock_watches (user_id, warehouse, watch_reserve, watch_ship, watch_receipt)
+             VALUES (?, ?, ?, ?, ?)`,
+            req.user.id, w.warehouse, w.watch_reserve, w.watch_ship, w.watch_receipt,
+          );
+        }
+      });
+      res.json({ ok: true, count: watches.length });
+    } catch (e) {
+      res.status(500).json({ error: 'stock-watches save failed', detail: e.message });
+    }
   }),
 );
 
