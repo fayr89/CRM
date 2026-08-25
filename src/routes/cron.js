@@ -360,24 +360,60 @@ router.get(
         }
       }
 
-      // 7. Резолвим external_id → название товара.
+      // 7. Резолвим external_id → название товара + product_id (для связки с заказами).
       const allIds = new Set();
       for (const wh of Object.keys(summary.warehouses)) {
         for (const r of summary.warehouses[wh].receipts) allIds.add(r.id);
         for (const s of summary.warehouses[wh].ships) allIds.add(s.id);
       }
       const idToName = new Map();
+      const idToProductId = new Map();
       if (allIds.size) {
         const prods = await db.all(
-          `SELECT external_id, name FROM products WHERE external_id = ANY(?)`,
+          `SELECT id, external_id, name FROM products WHERE external_id = ANY(?)`,
           Array.from(allIds),
         );
-        for (const p of prods) idToName.set(p.external_id, p.name);
+        for (const p of prods) {
+          idToName.set(p.external_id, p.name);
+          idToProductId.set(p.external_id, p.id);
+        }
+      }
+
+      // 7b. Для каждого списания пытаемся определить покупателя: ищем недавние
+      // CRM-заказы за последний час на этом складе, в которых была позиция
+      // с этим product_id, и берём client_name. Если один заказ — точный клиент,
+      // если несколько — берём самый свежий.
+      const shipmentClients = {}; // { warehouse: { externalId: clientName } }
+      for (const wh of Object.keys(summary.warehouses)) {
+        const { ships } = summary.warehouses[wh];
+        if (!ships.length) continue;
+        const productIds = ships.map((s) => idToProductId.get(s.id)).filter(Boolean);
+        if (!productIds.length) continue;
+        try {
+          const recent = await db.all(
+            `SELECT o.client_name, o.marketplace, oi.product_id, oi.name AS item_name, o.shipped_at, o.reserved_at
+             FROM orders o
+             JOIN order_items oi ON oi.order_id = o.id
+             WHERE o.warehouse = ?
+               AND oi.product_id = ANY(?)
+               AND (o.shipped_at > NOW() - INTERVAL '1 hour' OR o.reserved_at > NOW() - INTERVAL '1 hour')
+             ORDER BY COALESCE(o.shipped_at, o.reserved_at) DESC
+             LIMIT 200`,
+            wh, productIds,
+          );
+          const byProdId = {};
+          for (const r of recent) {
+            const extId = [...idToProductId.entries()].find(([, pid]) => pid === r.product_id)?.[0];
+            if (extId && !byProdId[extId]) byProdId[extId] = r.client_name || '—';
+          }
+          shipmentClients[wh] = byProdId;
+        } catch (e) { /* ignore lookup fail */ }
       }
 
       // 8. Уведомления подписчикам (одно на склад).
       for (const wh of Object.keys(summary.warehouses)) {
         const { receipts, ships } = summary.warehouses[wh];
+        const clientsMap = shipmentClients[wh] || {};
         const subs = await db.all(
           `SELECT u.id AS uid, w.watch_ship, w.watch_receipt
            FROM user_stock_watches w
@@ -394,9 +430,11 @@ router.get(
             parts.push(`📥 Приход (${receipts.length}):\n${preview}${receipts.length > 5 ? '\n…' : ''}`);
           }
           if (s.watch_ship && ships.length) {
-            const preview = ships.slice(0, 5).map((x) =>
-              `−${x.delta.toFixed(2)} · ${(idToName.get(x.id) || x.id.slice(0, 8) + '…')}`
-            ).join('\n');
+            const preview = ships.slice(0, 5).map((x) => {
+              const name = idToName.get(x.id) || x.id.slice(0, 8) + '…';
+              const client = clientsMap[x.id];
+              return `−${x.delta.toFixed(2)} · ${name}${client ? ` → 🧑 ${client}` : ''}`;
+            }).join('\n');
             parts.push(`🚚 Списание (${ships.length}):\n${preview}${ships.length > 5 ? '\n…' : ''}`);
           }
           if (parts.length) {
