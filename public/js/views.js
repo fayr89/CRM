@@ -9048,7 +9048,21 @@ function renderContent(container, schedule, readyList, canEdit, reload) {
         toast('Выберите заказы', 'error');
         return;
       }
-      if (!(await confirm(`Подтвердить отгрузку ${ids.length} заказов?`))) return;
+      // Проверяем что для всех выбранных есть напечатанная этикетка. Если нет —
+      // показываем список и требуем явное подтверждение (менеджер иначе
+      // «отгружает» заказы, для которых наклейку никто не печатал).
+      const notPrinted = ids
+        .map((id) => orders.find((o) => o.id === id))
+        .filter((o) => o && !o.label_printed_at);
+      if (notPrinted.length) {
+        const list = notPrinted.map((o) => `#${o.id}`).join(', ');
+        if (!(await confirm(
+          `⚠️ У ${notPrinted.length} из ${ids.length} заказов этикетка НЕ печаталась: ${list}.\n\n` +
+          `Обычно это значит что склад их физически не отгрузил. Продолжить и всё равно отметить их как отгруженные?`,
+        ))) return;
+      } else {
+        if (!(await confirm(`Подтвердить отгрузку ${ids.length} заказов?`))) return;
+      }
       try {
         const r = await api.shipBulk(ids);
         toast(`Отгружено: ${r.shipped}`, 'success');
@@ -9081,13 +9095,17 @@ function renderContent(container, schedule, readyList, canEdit, reload) {
           class: 'btn',
           title: 'PDF с этикетками 58×40 мм: штрих-код, № и служба доставки',
           onClick: async () => {
-            // Берём id ВЫБРАННЫХ заказов (если есть), иначе ВСЕ reserved
-            // в том же порядке как в Excel.
             const ids = selected.size ? [...selected] : orders.map((o) => o.id);
             if (!ids.length) { toast('Нет заказов для печати', 'error'); return; }
             try {
-              await api.downloadLabelsPdf(ids);
-              toast(`Этикетки сохранены (${ids.length} шт)`, 'success');
+              const r = await api.downloadLabelsPdf(ids);
+              if (r.skipped > 0) {
+                toast(`Напечатано ${r.printed} из ${ids.length}. ПРОПУЩЕНО ${r.skipped} без QR: #${r.skipped_ids.join(', #')}. Заполните QR и повторите.`, 'error');
+              } else {
+                toast(`Этикетки сохранены (${r.printed} шт). Факт печати сохранён.`, 'success');
+              }
+              // Перерисовываем — покажутся зелёные бейджи «🖨 ✓».
+              setTimeout(() => reload(), 500);
             } catch (e) {
               toast(e.message || 'Не удалось сгенерировать PDF', 'error');
             }
@@ -9102,6 +9120,31 @@ function renderContent(container, schedule, readyList, canEdit, reload) {
         el('button', { class: 'btn', onClick: () => shipSelected(orders.map((o) => o.id)) }, '✓ Отгрузить все'),
       );
     }
+    // Фильтр «Только без напечатанной этикетки» — быстрая проверка что склад
+    // ничего не пропустил.
+    const notPrintedCount = orders.filter((o) => !o.label_printed_at).length;
+    const notPrintedToggle = el('label', {
+      style: { marginLeft: '12px', fontSize: '13px', cursor: 'pointer',
+        padding: '4px 10px', background: notPrintedCount ? '#fee2e2' : '#f3f4f6',
+        border: `1px solid ${notPrintedCount ? '#fca5a5' : '#e5e7eb'}`, borderRadius: '4px' },
+    },
+      el('input', { type: 'checkbox', id: 'shipping_filter_not_printed' }),
+      ` 🚫 Только без напечатанной этикетки${notPrintedCount ? ` (${notPrintedCount})` : ''}`,
+    );
+    actions.append(notPrintedToggle);
+    // Обработчик фильтра: скрываем/показываем строки с/без этикетки.
+    setTimeout(() => {
+      const cb = document.getElementById('shipping_filter_not_printed');
+      if (cb) cb.addEventListener('change', () => {
+        document.querySelectorAll('tr').forEach((tr) => {
+          if (!tr.classList.contains('ship-row-no-label') && (tr.querySelector('.ship-row-cb') || tr.dataset.oid)) {
+            // Строка с чекбоксом отгрузки — но не «no-label»: значит есть этикетка.
+            if (cb.checked) tr.style.display = 'none';
+            else tr.style.display = '';
+          }
+        });
+      });
+    }, 100);
 
     const headRow = el('tr', {});
     if (canEdit) {
@@ -9122,6 +9165,7 @@ function renderContent(container, schedule, readyList, canEdit, reload) {
       el('th', {}, 'Клиент'),
       el('th', {}, 'Способ оплаты'),
       el('th', {}, 'QR'),
+      el('th', { title: 'Была ли распечатана этикетка' }, '🖨'),
       el('th', {}, 'Менеджер'),
       el('th', {}, 'Зарезервирован'),
       el('th', {}, 'Сумма'),
@@ -9150,12 +9194,21 @@ function renderContent(container, schedule, readyList, canEdit, reload) {
           rowEl.append(el('td', {}, cb));
         }
         const needQr = o.marketplace === 'Avito' && o.payment_method === 'avito_delivery';
+        // Флаг печати этикетки: если reserved и не печаталась — красный бейдж.
+        const printCell = o.label_printed_at
+          ? el('span', { title: `Напечатано ${fmtDateTime(o.label_printed_at)} (раз: ${o.label_print_count || 1})`, style: { color: '#059669', fontWeight: '600' } }, '🖨 ' + (o.label_print_count > 1 ? `×${o.label_print_count}` : '✓'))
+          : el('span', { title: 'Этикетка НЕ печаталась — не отгружайте до печати', style: { color: '#dc2626', fontWeight: '600', background: '#fee2e2', padding: '2px 6px', borderRadius: '4px' } }, '🚫 нет');
+        // Подсвечиваем строку красным если без этикетки — сразу видно пропуски.
+        if (!o.label_printed_at) rowEl.style.background = '#fef2f2';
+        // Помечаем class для фильтра «не напечатано».
+        if (!o.label_printed_at) rowEl.classList.add('ship-row-no-label');
         rowEl.append(
           el('td', {}, '#' + o.id),
           el('td', {}, o.marketplace || '—'),
           el('td', {}, o.client_name || '—'),
           el('td', {}, o.payment_method || '—'),
           el('td', {}, o.shipment_qr ? el('span', { title: o.shipment_qr }, '✓ есть') : (needQr ? el('span', { class: 'dev-down' }, '✗ нет!') : '—')),
+          el('td', {}, printCell),
           el('td', {}, o.manager_name || '—'),
           el('td', {}, fmtDateTime(o.reserved_at)),
           el('td', {}, fmtMoney(o.total_amount, o.currency)),

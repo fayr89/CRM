@@ -494,7 +494,7 @@ export const db = {
 // БАМПАЙ ПРИ КАЖДОМ ДОБАВЛЕНИИ МИГРАЦИИ. Текущие миграции прогоняются
 // только если запись в app_settings.schema_version отличается. Это экономит
 // ~500-2000мс на каждом холодном старте serverless-лямбды.
-const SCHEMA_VERSION = 40;
+const SCHEMA_VERSION = 41;
 
 // Транзиентные ошибки коннекта — стоит ретраить (БД просыпается, сетевой сбой).
 // Явные не-транзиентные (auth, protocol) — ретрай не поможет, лучше сразу упасть.
@@ -1442,6 +1442,19 @@ export async function ensureInitialized() {
       // Оценка от менеджера: сколько дней ориентировочно нужно на изготовление.
       // Показывается начальнику производства при распределении в календаре.
       await pool.query(`ALTER TABLE production_requests ADD COLUMN IF NOT EXISTS estimated_work_days INTEGER`);
+
+      // ===== Логирование печати этикеток (SCHEMA_VERSION 41) =====
+      // Раньше «Отгрузить всех» отправляло в shipped ВСЕХ, даже тех, для кого
+      // этикетка не печаталась (пустой shipment_qr → пропуск в labels-pdf,
+      // но статус всё равно менялся). Теперь /labels.pdf проставляет
+      // label_printed_at ТОЛЬКО тем, для кого страница реально была в PDF
+      // (был shipment_qr). Склад может фильтровать «reserved без напечатанной
+      // этикетки» и физически найти пропуски.
+      await pool.query(`ALTER TABLE orders ADD COLUMN IF NOT EXISTS label_printed_at TIMESTAMPTZ`);
+      await pool.query(`ALTER TABLE orders ADD COLUMN IF NOT EXISTS label_printed_by INTEGER REFERENCES users(id) ON DELETE SET NULL`);
+      await pool.query(`ALTER TABLE orders ADD COLUMN IF NOT EXISTS label_print_count INTEGER NOT NULL DEFAULT 0`);
+      // Индекс для фильтра «reserved без напечатанной этикетки».
+      await pool.query(`CREATE INDEX IF NOT EXISTS idx_orders_status_no_label ON orders(status) WHERE status = 'reserved' AND label_printed_at IS NULL`);
 
       // Маркер успешно прогнанных миграций — следующие холодные старты пропустят DDL.
       await pool.query(

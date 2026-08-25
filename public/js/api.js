@@ -138,6 +138,10 @@ export const api = {
       try { const j = await res.json(); msg = j.error || msg; } catch { /* ignore */ }
       throw new Error(msg);
     }
+    // Возвращаем метаинформацию: сколько попало в PDF, что пропустилось (без QR).
+    const printedCount = Number(res.headers.get('X-Labels-Printed') || 0);
+    const skippedCount = Number(res.headers.get('X-Labels-Skipped') || 0);
+    const skippedIdsHdr = res.headers.get('X-Labels-Skipped-Ids') || '';
     const blob = await res.blob();
     const cd = res.headers.get('content-disposition') || '';
     const m = /filename="?([^"]+)"?/.exec(cd);
@@ -150,6 +154,7 @@ export const api = {
     a.click();
     a.remove();
     URL.revokeObjectURL(downloadUrl);
+    return { printed: printedCount, skipped: skippedCount, skipped_ids: skippedIdsHdr ? skippedIdsHdr.split(',').map(Number) : [] };
   },
   reserveOrder: (id, opts = {}) => request('POST', `/api/orders/${id}/reserve`, {
     query: opts.force ? { force: '1' } : {},

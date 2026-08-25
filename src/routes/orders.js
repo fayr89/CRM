@@ -596,12 +596,40 @@ router.get(
       itemsByOrder[it.order_id].push(it);
     }
     for (const o of orders) o.items = itemsByOrder[o.id] || [];
-    // shipment_qr — обязательное поле этикетки. Если у кого-то пусто — пропускаем (внутри).
+    // Отбираем ТОЛЬКО заказы с непустым shipment_qr — только для них
+    // будет страница в PDF. Остальные попадут в лог как «пропущены».
+    const printableOrders = orders.filter((o) => String(o.shipment_qr || '').trim());
+    const skippedIds = orders.filter((o) => !String(o.shipment_qr || '').trim()).map((o) => o.id);
+    if (!printableOrders.length) {
+      throw BadRequest(`Ни у одного из ${orders.length} заказов нет «Номера отправления». Печатать нечего. ID без QR: ${skippedIds.join(', ')}`);
+    }
     const { generateLabelsPdf } = await import('../services/labels-pdf.js');
-    const pdf = await generateLabelsPdf(orders);
+    const pdf = await generateLabelsPdf(printableOrders);
+    // ФИКСИРУЕМ факт печати для тех, чьи страницы реально попали в PDF.
+    // Раньше не было связи: склад мог «Отгрузить всех» без реальной печати
+    // → заказы 1988/1984-86 помечались shipped, но наклейки не было.
+    const printedIds = printableOrders.map((o) => o.id);
+    try {
+      await db.run(
+        `UPDATE orders SET
+           label_printed_at = NOW(),
+           label_printed_by = ?,
+           label_print_count = COALESCE(label_print_count, 0) + 1
+         WHERE id = ANY(?)`,
+        req.user.id, printedIds,
+      );
+    } catch (e) {
+      // Не блокируем скачивание PDF если UPDATE упал — но логируем.
+      console.error('[labels.pdf] update label_printed failed:', e.message);
+    }
     const filename = `labels-${new Date().toISOString().slice(0, 10)}.pdf`;
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    // Метаданные в заголовках: сколько напечатано / пропущено. UI может показать
+    // предупреждение «пропущены заказы без QR: ...».
+    res.setHeader('X-Labels-Printed', String(printedIds.length));
+    res.setHeader('X-Labels-Skipped', String(skippedIds.length));
+    if (skippedIds.length) res.setHeader('X-Labels-Skipped-Ids', skippedIds.join(','));
     res.send(pdf);
   }),
 );
@@ -727,6 +755,7 @@ router.get(
       `SELECT o.id, o.reference_number, o.marketplace, o.client_name,
               o.total_amount, o.currency, o.manager_id, o.reserved_at,
               o.payment_method, o.shipment_qr, o.warehouse,
+              o.label_printed_at, o.label_print_count,
               u.name AS manager_name,
               (SELECT COUNT(*)::int FROM order_items WHERE order_id = o.id) AS items_count
        FROM orders o
