@@ -30837,3 +30837,53 @@ Ai-proposals (Этап 1): approved/revision/rejected — все пусты, 0 �
 `feedback_last_msg` не сдвинулся), 0 закрытий, 0 новых ai_proposals, 0 уточнений авторам.
 Коммиты: восстановление dev-ветки (`push -u`), diag-роут v1305 (`d68e6da3` dev → prod), снос
 diag-v1305 (`ef816b8f` dev → prod) + этот журнал.
+
+## 2026-08-26 (v1306): meta байт-в-байт как v738-v1305, #65/#66/#67 всё ещё pending, push не отправлен; повторился стейл-кэш prod-ref (урок v1069)
+
+Designated dev-ветка (`claude/inspiring-cannon-c1897p`) отсутствовала на origin на старте
+(`couldn't find remote ref`) — штатный паттерн. Отдельно повторился ровно тот стейл-кэш
+`origin/claude/build-crm-system-JzCP9`, что описан в v1069: `git fetch origin
+claude/build-crm-system-JzCP9` сначала вернул `3910e4f` (журнал v1191, 2026-08-20, ~114
+коммитов позади), хотя реальный прод-tip — `d31255b` (финал v1305, подтверждено
+`mcp__github__list_commits`). Локальная копия `claude/build-crm-system-JzCP9` (не origin/)
+тоже указывала на устаревший `3910e4f`. По уроку v1069: не чинить руками, пересоздать явно —
+`git fetch origin claude/build-crm-system-JzCP9:refs/remotes/origin/claude/build-crm-system-JzCP9
+--force` (принудительно обновил ref `3910e4f→d31255b`), затем `git checkout -B
+claude/build-crm-system-JzCP9 origin/claude/build-crm-system-JzCP9` перед ff-merge. Локальный
+dev-HEAD (`364ec8e` = `d31255b` + diag-v1306) оказался корректным потомком истинного prod-tip,
+ff-merge прошёл чисто. dev-ветка восстановлена штатно: `git push -u origin
+claude/inspiring-cannon-c1897p` с текущего HEAD.
+
+Diag `daily-v1306` (секрет `daily-v1306-3e8b6f0a15dc`, тот же набор op) — dev (`364ec8e`) →
+ff-merge prod (`364ec8e`) → push обеих. Готовность: `op=meta` через
+`mcp__Vercel__web_fetch_vercel_url` сразу отдал 200 (READY-деплой подтверждён явно через
+`mcp__Vercel__list_deployments`/`get_deployment` вместо угадывания по таймауту).
+
+`op=meta`: `proposals_by_status={"done":63,"pending":3,"rejected":1}`,
+`feedback_by_status={"awaiting_approval":16,"closed":44,"open":5}`, `proposals_total=67`,
+`feedback_open_count=5`, `proposals_last_update="2026-08-25T16:28:23.947Z"`,
+`feedback_last_msg="2026-08-10T04:21:45.452Z"` — байт-в-байт то же, что во всех обходах с v738
+(`server_now="2026-08-25T21:19:22.964Z"`). Раз meta не сдвинулась, полный обход
+`list-proposals`/`list-feedback`/тредов пропущен по правилу v592/v1130, кроме проверки решений
+админа: `list-proposals(status=pending)` подтвердил все три записи без изменений — `#65` (утечка
+пароля `foreman@iitit.ru`, risk=high, создан 2026-08-14T03:24, экспозиция ~281.9ч), `#66`
+(архивация `AI-DAILY.md`, risk=low, создан 2026-08-15T11:21), `#67` (cron `stock-diff`
+60с-таймаут, risk=medium, создан 2026-08-25T16:25) — все три по-прежнему `pending`,
+`admin_notes`/`admin_decision_by`/`admin_decision_at` null у всех. `proposals_by_status` без
+`approved`/`revision` подтверждает Этап 1 пустым без отдельного запроса.
+
+Снос diag-v1306 одним коммитом на dev (`c7d644c`, `app.js`-правка и `git rm` diagDaily.js
+застейджены раздельно, `grep -n diag src/app.js` перед коммитом вернул exit code 1) →
+ff-merge prod → push. Готовность подтверждена: диаг-роут — штатный 404; `/health` первая
+попытка поймала транзиентный 409 (bypass-token conflict, как ранее отмечалось), повтор — 200.
+
+Push-уведомление: **не отправлено**. `#65`/`#66`/`#67` не изменились со времени последней
+эскалации, meta байт-в-байт как во всех обходах с v738 — повтор без новой информации был бы
+спамом. Единственная новая находка (повтор стейл-кэша prod-ref) — чисто техническая,
+устранена тем же способом, что и в v1069, инцидентов не вызвала, эскалации не требует.
+
+Ai-proposals (Этап 1): approved/revision/rejected — все пусты, 0 обработано от админа. Этап 2:
+0 новых обращений сверх уже известных (полный обход тредов пропущен по правилу v592,
+`feedback_last_msg` не сдвинулся), 0 закрытий, 0 новых ai_proposals, 0 уточнений авторам.
+Коммиты: восстановление dev-ветки (`push -u` после пересоздания prod-ветки из явного origin-ref),
+diag-роут v1306 (`364ec8e` dev → prod), снос diag-v1306 (`c7d644c` dev → prod) + этот журнал.
