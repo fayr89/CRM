@@ -11,9 +11,10 @@ import { Router } from 'express';
 import { db } from '../db.js';
 import { asyncHandler } from '../errors.js';
 import { decryptSecret } from '../services/secrets.js';
-import { msFetchStockByProductIds } from '../services/moysklad.js';
+import { msFetchStockByProductIds, fetchMoyskladStockByStorePage } from '../services/moysklad.js';
 import { applyLocalStockReserveDelta } from '../services/ms-orders.js';
 import { enqueueMsJob } from '../services/ms-jobs.js';
+import { notify } from '../services/notifications.js';
 
 const router = Router();
 
@@ -258,6 +259,190 @@ router.get(
     }
 
     res.json({ ok: true, reserved, skipped });
+  }),
+);
+
+// ==================== СРАВНЕНИЕ ОСТАТКОВ ПО СКЛАДАМ (МойСклад diff) ====================
+// Пуллит МС stock-by-store, сравнивает со снапшотом в stock_ms_snapshots.
+// Для складов, у которых есть подписчики (user_stock_watches) — шлёт уведомления
+// об изменениях (приход +N, списание −N). Обновляет снапшот.
+// Ловит движения даже если кто-то провёл приход/списание руками прямо в МС.
+router.get(
+  '/stock-diff',
+  asyncHandler(async (req, res) => {
+    if (!verifyCron(req)) return res.status(401).send();
+    const started = Date.now();
+
+    // Ленивое создание таблицы снапшотов (на случай если основная миграция ещё не прошла).
+    await db.run(`
+      CREATE TABLE IF NOT EXISTS stock_ms_snapshots (
+        warehouse TEXT NOT NULL,
+        product_external_id TEXT NOT NULL,
+        stock NUMERIC(14,3) NOT NULL DEFAULT 0,
+        reserve NUMERIC(14,3) NOT NULL DEFAULT 0,
+        snapshot_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        PRIMARY KEY (warehouse, product_external_id)
+      )
+    `);
+
+    // 1. Найти склады с подписчиками.
+    const watchRows = await db.all(
+      `SELECT DISTINCT warehouse FROM user_stock_watches
+       WHERE watch_ship = TRUE OR watch_receipt = TRUE`,
+    ).catch(() => []);
+    if (!watchRows.length) return res.json({ ok: true, no_subscribers: true, elapsed_ms: Date.now() - started });
+    const watchedSet = new Set(watchRows.map((r) => r.warehouse));
+
+    // 2. МС-токен.
+    const token = await getMoyskladToken();
+    if (!token) return res.status(500).json({ error: 'MoySklad token not configured' });
+
+    // 3. Пуллим stock-by-store страницами. Строим current[warehouse][productExtId] = {stock, reserve}.
+    const current = {};
+    const LIMIT = 500;
+    const MAX_PAGES = 40;
+    for (let p = 0; p < MAX_PAGES; p++) {
+      let page;
+      try {
+        page = await fetchMoyskladStockByStorePage(token, p * LIMIT, LIMIT);
+      } catch (e) {
+        console.error('[stock-diff] MS page fetch failed:', e.message);
+        break;
+      }
+      const byId = page.byId || new Map();
+      if (byId.size === 0) break;
+      for (const [productExtId, stores] of byId) {
+        for (const s of stores) {
+          if (!watchedSet.has(s.store)) continue;
+          (current[s.store] = current[s.store] || {})[productExtId] = { stock: s.stock, reserve: s.reserve };
+        }
+      }
+      if (byId.size < LIMIT) break;
+    }
+
+    // 4. Читаем прошлый снапшот для подписанных складов.
+    const whs = Array.from(watchedSet);
+    const prevRows = await db.all(
+      `SELECT warehouse, product_external_id, stock, reserve FROM stock_ms_snapshots WHERE warehouse = ANY(?)`,
+      whs,
+    );
+    const prev = {};
+    for (const r of prevRows) {
+      (prev[r.warehouse] = prev[r.warehouse] || {})[r.product_external_id] = {
+        stock: Number(r.stock), reserve: Number(r.reserve),
+      };
+    }
+
+    // 5. Первый прогон (снапшот пустой) — только сохраняем, БЕЗ уведомлений
+    // (иначе флуднём всеми текущими остатками как «приход»).
+    const firstRun = prevRows.length === 0;
+
+    // 6. Diff.
+    const summary = { warehouses: {}, totals: { receipts: 0, ships: 0 } };
+    if (!firstRun) {
+      for (const wh of whs) {
+        const cur = current[wh] || {};
+        const old = prev[wh] || {};
+        const receipts = [];
+        const ships = [];
+        const allIds = new Set([...Object.keys(cur), ...Object.keys(old)]);
+        for (const id of allIds) {
+          const c = cur[id]?.stock ?? 0;
+          const o = old[id]?.stock ?? 0;
+          const d = c - o;
+          if (d > 0.001) receipts.push({ id, delta: d, current: c });
+          else if (d < -0.001) ships.push({ id, delta: -d, current: c });
+        }
+        if (receipts.length || ships.length) {
+          summary.warehouses[wh] = { receipts, ships };
+          summary.totals.receipts += receipts.length;
+          summary.totals.ships += ships.length;
+        }
+      }
+
+      // 7. Резолвим external_id → название товара.
+      const allIds = new Set();
+      for (const wh of Object.keys(summary.warehouses)) {
+        for (const r of summary.warehouses[wh].receipts) allIds.add(r.id);
+        for (const s of summary.warehouses[wh].ships) allIds.add(s.id);
+      }
+      const idToName = new Map();
+      if (allIds.size) {
+        const prods = await db.all(
+          `SELECT external_id, name FROM products WHERE external_id = ANY(?)`,
+          Array.from(allIds),
+        );
+        for (const p of prods) idToName.set(p.external_id, p.name);
+      }
+
+      // 8. Уведомления подписчикам (одно на склад).
+      for (const wh of Object.keys(summary.warehouses)) {
+        const { receipts, ships } = summary.warehouses[wh];
+        const subs = await db.all(
+          `SELECT u.id AS uid, w.watch_ship, w.watch_receipt
+           FROM user_stock_watches w
+           JOIN users u ON u.id = w.user_id AND u.active = TRUE
+           WHERE w.warehouse = ?`,
+          wh,
+        );
+        for (const s of subs) {
+          const parts = [];
+          if (s.watch_receipt && receipts.length) {
+            const preview = receipts.slice(0, 5).map((r) =>
+              `+${r.delta.toFixed(2)} · ${(idToName.get(r.id) || r.id.slice(0, 8) + '…')}`
+            ).join('\n');
+            parts.push(`📥 Приход (${receipts.length}):\n${preview}${receipts.length > 5 ? '\n…' : ''}`);
+          }
+          if (s.watch_ship && ships.length) {
+            const preview = ships.slice(0, 5).map((x) =>
+              `−${x.delta.toFixed(2)} · ${(idToName.get(x.id) || x.id.slice(0, 8) + '…')}`
+            ).join('\n');
+            parts.push(`🚚 Списание (${ships.length}):\n${preview}${ships.length > 5 ? '\n…' : ''}`);
+          }
+          if (parts.length) {
+            await notify(
+              s.uid, 'stock.ms_diff',
+              `📊 Движения на складе: ${wh}`,
+              parts.join('\n\n'),
+              '#/products',
+            ).catch(() => {});
+          }
+        }
+      }
+    }
+
+    // 9. Обновляем снапшот (upsert текущих значений).
+    const upsertPairs = [];
+    for (const wh of whs) {
+      const cur = current[wh] || {};
+      for (const [id, s] of Object.entries(cur)) {
+        upsertPairs.push([wh, id, s.stock, s.reserve]);
+      }
+    }
+    // Батч-INSERT по 200 записей.
+    const BATCH = 200;
+    for (let i = 0; i < upsertPairs.length; i += BATCH) {
+      const chunk = upsertPairs.slice(i, i + BATCH);
+      const values = chunk.map(() => `(?, ?, ?, ?, NOW())`).join(', ');
+      const params = [];
+      for (const [wh, id, st, rv] of chunk) params.push(wh, id, st, rv);
+      await db.run(
+        `INSERT INTO stock_ms_snapshots (warehouse, product_external_id, stock, reserve, snapshot_at)
+         VALUES ${values}
+         ON CONFLICT (warehouse, product_external_id)
+         DO UPDATE SET stock = EXCLUDED.stock, reserve = EXCLUDED.reserve, snapshot_at = NOW()`,
+        ...params,
+      );
+    }
+
+    res.json({
+      ok: true,
+      first_run: firstRun,
+      warehouses_watched: whs.length,
+      snapshot_rows_upserted: upsertPairs.length,
+      movements: summary.totals,
+      elapsed_ms: Date.now() - started,
+    });
   }),
 );
 
