@@ -24,6 +24,13 @@ const KIND_FIELD = {
   receipt: 'watch_receipt',
 };
 
+// Короткое имя склада для заголовка push (в мобильном превью 60 символов).
+function shortWarehouse(name) {
+  if (!name) return '';
+  // Убираем скобочные пояснения и «Склад НСК» → просто выделяем ключевое слово.
+  return name.replace(/^Склад\s+/, '').slice(0, 30);
+}
+
 export async function notifyStockMovement(warehouse, kind, ctx = {}) {
   if (!warehouse) return;
   if (!KIND_LABELS[kind]) return;
@@ -40,13 +47,19 @@ export async function notifyStockMovement(warehouse, kind, ctx = {}) {
   } catch { return; }
   if (!subscribers.length) return;
   const label = KIND_LABELS[kind];
-  const title = `${label} · ${warehouse}`;
-  // Тело: сумма / клиент / состав первых 3 позиций.
+  // Заголовок: КЛИЕНТ вытянут вперёд (в мобильном push превью видно только его).
+  //   ship / reserve / receipt из заказа → «🚚 Списание · Иванов И.И. · Склад НСК»
+  // Если клиента нет — «... · Склад НСК».
+  const titleParts = [label];
+  if (ctx.clientName) titleParts.push(`🧑 ${ctx.clientName}`);
+  titleParts.push(shortWarehouse(warehouse));
+  const title = titleParts.join(' · ');
+  // Тело: детали.
   const bodyParts = [];
   if (ctx.orderId) bodyParts.push(`Заказ #${ctx.orderId}`);
-  if (ctx.clientName) bodyParts.push(`🧑 ${ctx.clientName}`);
   if (ctx.amount) bodyParts.push(`💰 ${Number(ctx.amount).toLocaleString('ru-RU')} ₽`);
   if (ctx.marketplace) bodyParts.push(`🛒 ${ctx.marketplace}`);
+  bodyParts.push(`📍 ${warehouse}`); // полное имя склада — в теле
   if (ctx.itemsPreview) bodyParts.push('\n' + ctx.itemsPreview);
   const body = bodyParts.join(' · ');
   const link = ctx.orderId ? `#/orders?id=${ctx.orderId}` : (ctx.link || '#/orders');
