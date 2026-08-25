@@ -30590,3 +30590,50 @@ Push-уведомление: **не отправлено**. Ни `#65`, ни `#6
 Ai-proposals: Этап 1 — 0 обработано (approved/revision/rejected пусты). Этап 2 — 0 новых
 обращений/закрытий/proposals/уточнений. Коммиты: восстановление dev-ветки (`push -u`), diag-роут
 v1297 (`c61f4b8` dev → prod), снос diag-v1297 (`8f61617` dev → prod) + этот журнал.
+
+## 2026-08-25 (v1298): meta байт-в-байт как v1297, #65 экспозиция ~274.0ч, push не отправлен
+
+Обход стартовал ~54 мин после завершения v1297. Designated dev-ветка
+(`claude/inspiring-cannon-ill7uw`) отсутствовала на origin (`git fetch` →
+`couldn't find remote ref`) — тот же паттерн «смержили в прод, GitHub удалил
+ветку», что и во всех предыдущих циклах (v169 и далее): локальный
+`claude/build-crm-system-JzCP9` оказался байт-в-байт равен коммиту `7bccbb3`
+(финал v1297). Восстановлена по правилу «PR уже смержен»: `git checkout -B
+claude/inspiring-cannon-ill7uw origin/claude/build-crm-system-JzCP9` → push.
+
+Поднял `/api/diag/daily-v1298`. ff-merge dev→prod прошёл штатно с первой
+попытки (dev = prod + 1 коммит). `/health` — 200 сразу после пуша (~20с).
+
+`op=meta`: `proposals_by_status={"done":63,"pending":2,"rejected":1}`,
+`feedback_by_status={"open":5,"awaiting_approval":16,"closed":44}`,
+`proposals_total=66`, `feedback_open_count=5`,
+`proposals_last_update=2026-08-15T11:21:41.790Z`,
+`feedback_last_msg=2026-08-10T04:21:45.452Z` — байт-в-байт совпадает с v1297
+(и с сотнями предыдущих циклов). По правилу v592 повторный построчный обход
+всех тредов feedback не требуется — `feedback_last_msg` не сдвинулся с
+прошлого полного прохода.
+
+`list-proposals(status=pending)` подтвердил: `#65` (утечка пароля
+`foreman@iitit.ru`, risk=high, created 2026-08-14T03:24) и `#66` (архивация
+AI-DAILY.md, risk=low, created 2026-08-15T11:21) оба по-прежнему `pending`,
+`admin_notes`/`admin_decision_by`/`admin_decision_at` все null у обоих —
+новых решений админа нет.
+
+Экспозиция `ai_proposal #65` (создан 2026-08-14T03:24:11.626Z) на
+`server_now=2026-08-25T13:23:08.712Z` — **~274.0ч** (следующая веха —
+288ч/12 суток, ожидается ~2026-08-26T03:24).
+
+Снос diag-v1298 одним коммитом на dev (`c4d0662`, `app.js`-правка и удаление
+`diagDaily.js` застейджены раздельно — `git add src/app.js` отдельно от
+`git rm`, граблина v210 учтена; `grep -n diag src/app.js` перед коммитом
+вернул exit code 1, `git show --stat` подтвердил оба файла в одном коммите)
+→ ff-merge prod → push.
+
+Push-уведомление: **не отправлено**. Ни `#65`, ни `#66` не изменились с
+последней проверки — обе уже многократно эскалированы ранее (см. v1297 и
+раньше), повтор без новой информации — спам.
+
+Ai-proposals: Этап 1 — 0 обработано (approved/revision/rejected пусты).
+Этап 2 — 0 новых обращений/закрытий/proposals/уточнений. Коммиты:
+восстановление dev-ветки (`push -u`), diag-роут v1298 (`6ea1e4d` dev → prod),
+снос diag-v1298 (`c4d0662` dev → prod) + этот журнал.
