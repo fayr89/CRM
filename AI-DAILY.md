@@ -32025,3 +32025,59 @@ Ai-proposals (Этап 1): approved/revision/rejected — все пусты, 0 �
 
 Коммиты: восстановление dev-ветки (`push -u`), diag-роут v1328 (`80e1fe41` dev → prod), снос
 diag-v1328 (`a5e33221` dev → prod) + этот журнал.
+
+## 2026-08-26 (v1329): meta байт-в-байт как v738-v1328, #65/#66/#67 всё ещё pending, push не отправлен
+
+Стартовал сразу после v1328 (~1ч разницы). Designated dev-ветка (`claude/inspiring-cannon-43dgyb`)
+отсутствовала на origin на старте обхода (`git ls-remote` пустой) — штатный паттерн «смержили в
+прод, GitHub удалил ветку». Репо стартовало shallow; `git fetch --unshallow origin` выполнен до
+выводов о состоянии веток (урок v169/v1316). Явный `git fetch origin claude/build-crm-system-JzCP9`
++ `git merge-base --is-ancestor` (в обе стороны) подтвердили: локальный HEAD (`42d7dfcb`, финал
+журнала v1328) байт-в-байт равен прод-tip, 0 коммитов расхождения. Восстановлена по правилу «PR уже
+смержен»: `git push -u origin claude/inspiring-cannon-43dgyb` с текущего HEAD (без пересоздания,
+без force).
+
+Diag `daily-v1329` (секрет `v1329-6b1de4a08f7c2953`, полный набор read/write op, что в v1284+) —
+dev (`76c9407b`) → `git checkout` prod → `git fetch` + `git reset --hard origin/...` (синхронизация)
+→ `git merge --ff-only` (fast-forward с первой попытки) → push. Первый запрос к диаг-роуту дал 404
+дважды подряд (webhook/пропагация ещё не подхватили пуш — та же задержка, что в v1324/v1325/v1327);
+вместо повторного угадывания интервала — явный `list_deployments`/`get_deployment` (потребовался
+`list_teams` для актуального `teamId`, старое кешированное значение не бралось на веру) подтвердил
+`READY` на нужном коммите (`dpl_CgYXxsM8op6JTkTMfEJSqYoqjF9D`, alias включает
+`crm-orcin-six.vercel.app`) — следующий запрос дал штатный 200.
+
+`op=meta`: `proposals_by_status={"done":63,"pending":3,"rejected":1}`,
+`feedback_by_status={"awaiting_approval":16,"closed":44,"open":5}`,
+`proposals_last_update="2026-08-25T16:28:23.947Z"`, `feedback_last_msg="2026-08-10T04:21:45.452Z"`
+— байт-в-байт то же, что во всех обходах с v738 (`server_now="2026-08-26T20:16:19.329Z"`). Раз meta
+не сдвинулась, полный обход `list-feedback`/тредов пропущен по правилу v592/v1130;
+`list-proposals(status=approved)` и `list-proposals(status=revision)` оба пусты явным запросом —
+Этап 1 подтверждён пустым (0 обработано от админа). `list-proposals(status=pending)` подтвердил все
+три записи без изменений — `#65` (утечка пароля `foreman@iitit.ru`, risk=high, создан
+2026-08-14T03:24:11.626Z, экспозиция ≈304.9ч — следующая назначенная веха 336ч/14 суток
+(`~2026-08-28T03:24`, см. v1319) ещё не достигнута, ~31ч впереди), `#66` (архивация `AI-DAILY.md`,
+risk=low, создан 2026-08-15T11:21), `#67` (cron `stock-diff` 60с-таймаут, risk=medium, создан
+2026-08-25T16:25) — все три по-прежнему `pending`, `admin_notes`/`admin_decision_by`/
+`admin_decision_at` null у всех — новых решений админа нет. `check-user` для `foreman@iitit.ru`:
+`id=15, role=foreman, active=true, updated_at="2026-08-14T02:46:16.098Z"` — не менялся, пароль
+по-прежнему не ротирован, аккаунт по-прежнему активен.
+
+Снос diag-v1329 одним коммитом на dev (`e3dc3d9c`, `app.js`-правка и `git rm` diagDaily.js
+застейджены раздельно двумя `git add`, граблина v210/v1225 учтена; `grep -n diag src/app.js` после
+правки вернул exit code 1, `git show --stat` подтвердил оба файла в одном коммите) → ff-merge prod →
+push.
+
+Push-уведомление: **не отправлено**. `#65`/`#66`/`#67` не изменились со времени последней эскалации
+(288ч-веха по `#65` — v1313; следующая назначенная веха — 336ч, ещё не достигнута, ~31ч впереди),
+meta байт-в-байт как во всех обходах с v738 — повтор без новой информации был бы спамом. Инцидентов,
+требующих действий, не было (кроме штатного отсутствия dev-ветки на старте и двух транзиентных 404
+на диаг-роуте сразу после пуша, устранённых явной проверкой `get_deployment` вместо угадывания
+задержки).
+
+Ai-proposals (Этап 1): approved/revision/rejected — все пусты (pending(3)+done(63)+rejected(1)=67=
+total), 0 обработано от админа. Этап 2: 0 новых обращений сверх уже известных (полный обход тредов
+пропущен по правилу v592, `feedback_last_msg` не сдвинулся), 0 закрытий, 0 новых ai_proposals, 0
+уточнений авторам.
+
+Коммиты: восстановление dev-ветки (`push -u`), diag-роут v1329 (`76c9407b` dev → prod), снос
+diag-v1329 (`e3dc3d9c` dev → prod) + этот журнал.
