@@ -30986,3 +30986,53 @@ Ai-proposals (Этап 1): approved/revision/rejected — все пусты, 0 �
 `feedback_last_msg` не сдвинулся), 0 закрытий, 0 новых ai_proposals, 0 уточнений авторам.
 Коммиты: восстановление dev-ветки (`push -u`), diag-роут v1308 (`4256fc6` dev → prod), снос
 diag-v1308 (`8948f41` prod → ff обратно в dev) + этот журнал.
+
+## 2026-08-26 (v1309): meta байт-в-байт как v738-v1308, #65/#66/#67 всё ещё pending, push не отправлен
+
+Designated dev-ветка (`claude/inspiring-cannon-g9wab4`) отсутствовала на origin на старте обхода
+(`git fetch origin claude/inspiring-cannon-g9wab4` — `couldn't find remote ref`) — штатный
+паттерн «смержили в прод, GitHub удалил ветку». `git fetch --unshallow` (репо стартовало
+shallow) + `git fetch origin claude/build-crm-system-JzCP9` подтвердили: локальный `HEAD`
+байт-в-байт равен прод-tip (`77e2e39a`, финал журнала v1308). Восстановлена по правилу «PR уже
+смержен»: `git push -u origin claude/inspiring-cannon-g9wab4` с текущего HEAD (без пересоздания,
+без force).
+
+Diag `daily-v1309` (секрет `daily-v1309-6a3f81ce7b02`, тот же набор read-op, что в v1284+) —
+dev (`769cce9e`) → ff-merge prod (`769cce9e`, fast-forward с первой попытки) → push обеих.
+Готовность подтверждена `mcp__Vercel__get_deployment` по алиасу (`dpl_G5NL5sbnj3qyq5eqLCC3xmvtxsGA`,
+`READY`, алиас включает `crm-orcin-six.vercel.app`) — первые два запроса к диаг-роуту всё равно
+поймали 404 (пропагация ~15с до реального переключения алиаса на новый деплоймент несмотря на
+`READY`-статус самого деплоймента), третий дал штатный 200.
+
+`op=meta`: `proposals_by_status={"done":63,"pending":3,"rejected":1}`,
+`feedback_by_status={"awaiting_approval":16,"closed":44,"open":5}`, `proposals_total=67`,
+`feedback_open_count=5`, `proposals_last_update="2026-08-25T16:28:23.947Z"`,
+`feedback_last_msg="2026-08-10T04:21:45.452Z"` — байт-в-байт то же, что во всех обходах с v738
+(`server_now="2026-08-26T00:16:33.591Z"`). Раз meta не сдвинулась, полный обход
+`list-feedback`/тредов пропущен по правилу v592/v1130; `list-proposals` по approved/revision
+проверен явно (оба пусты, Этап 1 — 0 обработано) и `list-proposals(status=pending)` подтвердил
+все три записи без изменений — `#65` (утечка пароля `foreman@iitit.ru`, risk=high, создан
+2026-08-14T03:24:11.626Z, экспозиция ~284.9ч — 288ч/12-суточная веха ещё не достигнута, ожидается
+~2026-08-26T03:24, следующий обход её, вероятно, застанет), `#66` (архивация `AI-DAILY.md`,
+risk=low, создан 2026-08-15T11:21), `#67` (cron `stock-diff` 60с-таймаут, risk=medium, создан
+2026-08-25T16:25) — все три по-прежнему `pending`, `admin_notes`/`admin_decision_by`/
+`admin_decision_at` null у всех — новых решений админа нет.
+
+Снос diag-v1309 одним коммитом на dev (`6d486794`, `app.js`-правка и `git rm` diagDaily.js
+застейджены раздельно двумя `git add`, граблина v210/v1225 учтена; `grep -n diag src/app.js`
+после коммита вернул exit code 1, `git show --stat` подтвердил оба файла в одном коммите) →
+ff-merge prod → push. Новый деплоймент (`dpl_FCWT9y13uUj22bPMeq87QLTRs6rX`) занял ~15с в
+`BUILDING` до `READY`; после готовности диаг-роут — штатный 404, `/health` — 200 с первой
+попытки.
+
+Push-уведомление: **не отправлено**. `#65`/`#66`/`#67` не изменились со времени последней
+эскалации (`#65`/`#66` — многократно ранее, `#67` — v1301), meta байт-в-байт как во всех обходах
+с v738, 288ч-веха по `#65` ещё не достигнута — повтор без новой информации был бы спамом.
+Инцидентов, требующих действий, не было (кроме штатного отсутствия dev-ветки на старте,
+устранено стандартным способом).
+
+Ai-proposals (Этап 1): approved/revision/rejected — все пусты, 0 обработано от админа. Этап 2:
+0 новых обращений сверх уже известных (полный обход тредов пропущен по правилу v592,
+`feedback_last_msg` не сдвинулся), 0 закрытий, 0 новых ai_proposals, 0 уточнений авторам.
+Коммиты: восстановление dev-ветки (`push -u`), diag-роут v1309 (`769cce9e` dev → prod), снос
+diag-v1309 (`6d486794` dev → prod) + этот журнал.
