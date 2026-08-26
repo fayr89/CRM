@@ -31239,3 +31239,54 @@ Ai-proposals (Этап 1): approved/revision/rejected — все пусты, 0 �
 `feedback_last_msg` не сдвинулся), 0 закрытий, 0 новых ai_proposals, 0 уточнений авторам.
 Коммиты: восстановление dev-ветки (`push -u`), diag-роут v1313 (`44050a4` dev → prod), снос
 diag-v1313 (`86c3f4d` dev → prod) + этот журнал.
+
+## 2026-08-26 (v1314): meta байт-в-байт как v738-v1313, #65/#66/#67 всё ещё pending, push не отправлен
+
+Designated dev-ветка (`claude/inspiring-cannon-v3onqp`) отсутствовала на origin на старте обхода
+— штатный паттерн «смержили в прод, GitHub удалил ветку». Явный `git fetch origin
+claude/build-crm-system-JzCP9` подтвердил: локальный `HEAD` (`7b57b9f`, финал журнала v1313)
+байт-в-байт равен прод-tip. Восстановлена по правилу «PR уже смержен»: `git push -u origin
+claude/inspiring-cannon-v3onqp` с текущего HEAD (без пересоздания, без force).
+
+Diag `daily-v1314` (секрет `daily-v1314-9c4f7902ebc63eff`, полный набор read/write op, что в
+v1284+) — dev (`dc2af61`) → ff-merge prod (`dc2af61`, fast-forward с первой попытки) → push.
+Готовность подтверждена явным `mcp__Vercel__get_deployment` (`dpl_EBMdt7sNuTUjM2CQiqvCd6SkqRRr`,
+`READY`, alias включает `crm-orcin-six.vercel.app`) перед первым запросом — сразу штатный 200.
+
+`op=meta`: `proposals_by_status={"done":63,"pending":3,"rejected":1}`,
+`feedback_by_status={"awaiting_approval":16,"closed":44,"open":5}`, `proposals_total=67`,
+`feedback_open_count=5`, `proposals_last_update="2026-08-25T16:28:23.947Z"`,
+`feedback_last_msg="2026-08-10T04:21:45.452Z"` — байт-в-байт то же, что во всех обходах с v738
+(`server_now="2026-08-26T05:21:48.250Z"`). Раз meta не сдвинулась, полный обход
+`list-feedback`/тредов пропущен по правилу v592/v1130; `list-proposals(status=approved)` и
+`list-proposals(status=revision)` оба пусты явным запросом — Этап 1 подтверждён пустым (0
+обработано от админа). `list-proposals(status=pending)` подтвердил все три записи без изменений
+— `#65` (утечка пароля `foreman@iitit.ru`, risk=high, создан 2026-08-14T03:24:11.626Z,
+экспозиция ~290ч — 288ч-веха уже пройдена и отдельно эскалирована в v1313, следующего
+заранее назначенного порога нет), `#66` (архивация `AI-DAILY.md`, risk=low, создан
+2026-08-15T11:21), `#67` (cron `stock-diff` 60с-таймаут, risk=medium, создан 2026-08-25T16:25)
+— все три по-прежнему `pending`, `admin_notes`/`admin_decision_by`/`admin_decision_at` null у
+всех — новых решений админа нет. `check-user` для `foreman@iitit.ru`: `id=15, role=foreman,
+active=true, updated_at="2026-08-14T02:46:16.098Z"` — не менялся, пароль по-прежнему не
+ротирован, аккаунт по-прежнему активен.
+
+Снос diag-v1314 одним коммитом на dev (`958ed8b`, `app.js`-правка и `git rm` diagDaily.js
+застейджены раздельно двумя `git add`, граблина v210/v1225 учтена; `grep -n diag src/app.js`
+после правки вернул exit code 1, `git show --stat` подтвердил оба файла в одном коммите) →
+ff-merge prod → push. Готовность подтверждена явным `get_deployment`
+(`dpl_96pft9HN51W96dBkyy2prrGgXXkT`, `READY`, alias включает `crm-orcin-six.vercel.app`) перед
+проверкой; первый запрос к диаг-роуту поймал транзиентный `409` от `web_fetch_vercel_url` (тот
+же паттерн, что в предыдущих обходах — устранился одним повтором), повтор дал штатный 404.
+`/health` — 200 с первой попытки.
+
+Push-уведомление: **не отправлено**. `#65`/`#66`/`#67` не изменились со времени последней
+эскалации (`#65`/`#66` — многократно ранее, `#67` — v1301, 288ч-веха по `#65` — v1313), meta
+байт-в-байт как во всех обходах с v738 — повтор без новой информации был бы спамом. Инцидентов,
+требующих действий, не было (кроме штатного отсутствия dev-ветки на старте, устранено
+стандартным способом).
+
+Ai-proposals (Этап 1): approved/revision/rejected — все пусты, 0 обработано от админа. Этап 2:
+0 новых обращений сверх уже известных (полный обход тредов пропущен по правилу v592,
+`feedback_last_msg` не сдвинулся), 0 закрытий, 0 новых ai_proposals, 0 уточнений авторам.
+Коммиты: восстановление dev-ветки (`push -u`), diag-роут v1314 (`dc2af61` dev → prod), снос
+diag-v1314 (`958ed8b` dev → prod) + этот журнал.
