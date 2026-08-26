@@ -31290,3 +31290,54 @@ Ai-proposals (Этап 1): approved/revision/rejected — все пусты, 0 �
 `feedback_last_msg` не сдвинулся), 0 закрытий, 0 новых ai_proposals, 0 уточнений авторам.
 Коммиты: восстановление dev-ветки (`push -u`), diag-роут v1314 (`dc2af61` dev → prod), снос
 diag-v1314 (`958ed8b` dev → prod) + этот журнал.
+
+## 2026-08-26 (v1315): meta байт-в-байт как v738-v1314, #65/#66/#67 всё ещё pending, push не отправлен
+
+Designated dev-ветка этого обхода (`claude/inspiring-cannon-lnofdc`) уже присутствовала на
+origin и байт-в-байт совпадала с прод-tip (`76084a9`) на старте — восстановление не потребовалось
+(в отличие от v1314, где ветка была штатно удалена GitHub после мержа).
+
+Diag `daily-v1315` (секрет `daily-v1315-be646b2f5b1c68365ad19d00211d9cb4`, тот же набор
+read/write op, что в v1284+) — dev (`cfa09ee`) → ff-merge prod (`cfa09ee`, fast-forward с первой
+попытки; локальная ветка `claude/build-crm-system-JzCP9` перед этим оказалась расходящейся со
+своим origin — стейл-указатель контейнера с 50 разошедшимися коммитами с обеих сторон,
+`git reset --hard origin/...` перед ff-merge устранил без потери истории, origin — источник
+истины) → push. Готовность подтверждена явным `mcp__Vercel__get_deployment`
+(`dpl_fhb5xU79J1hU1wNBQVshszxLG9me`, `READY`, alias включает `crm-orcin-six.vercel.app`) перед
+первым запросом — сразу штатный 200, без транзиентного 409 на этот раз.
+
+`op=meta`: `proposals_by_status={"done":63,"pending":3,"rejected":1}`,
+`feedback_by_status={"awaiting_approval":16,"closed":44,"open":5}`, `proposals_total=67`,
+`feedback_open_count=5`, `proposals_last_update="2026-08-25T16:28:23.947Z"`,
+`feedback_last_msg="2026-08-10T04:21:45.452Z"` — байт-в-байт то же, что во всех обходах с v738
+(`server_now="2026-08-26T06:26:33.271Z"`). Раз meta не сдвинулась, полный обход
+`list-feedback`/тредов пропущен по правилу v592/v1130; `list-proposals(status=approved)` и
+`list-proposals(status=revision)` оба пусты явным запросом — Этап 1 подтверждён пустым (0
+обработано от админа). `list-proposals(status=pending)` подтвердил все три записи без изменений
+— `#65` (утечка пароля `foreman@iitit.ru`, risk=high, создан 2026-08-14T03:24:11.626Z,
+экспозиция ≈291ч — 288ч-веха пройдена и эскалирована в v1313, следующего заранее назначенного
+порога нет), `#66` (архивация `AI-DAILY.md`, risk=low, создан 2026-08-15T11:21), `#67` (cron
+`stock-diff` 60с-таймаут, risk=medium, создан 2026-08-25T16:25) — все три по-прежнему `pending`,
+`admin_notes`/`admin_decision_by`/`admin_decision_at` null у всех — новых решений админа нет.
+`check-user` для `foreman@iitit.ru`: `id=15, role=foreman, active=true,
+updated_at="2026-08-14T02:46:16.098Z"` — не менялся, пароль по-прежнему не ротирован, аккаунт
+по-прежнему активен.
+
+Снос diag-v1315 одним коммитом на dev (`4ff5ef2`, `app.js`-правка и `git rm` diagDaily.js
+застейджены раздельно двумя `git add`, граблина v210/v1225 учтена; `grep -n diag src/app.js`
+после правки вернул exit code 1) → ff-merge prod → push. Готовность подтверждена явным
+`get_deployment` (`dpl_EiGnaE541u57AJjvUd1gRr5sbSkB`, `READY`, alias включает
+`crm-orcin-six.vercel.app`) перед проверкой; `/health` — 200 сразу, диаг-роут — штатный 404
+(`Route not found`) с первой попытки, без ретрая.
+
+Push-уведомление: **не отправлено**. `#65`/`#66`/`#67` не изменились со времени последней
+эскалации (288ч-веха по `#65` — v1313, следующий порог не назначен), meta байт-в-байт как во
+всех обходах с v738 — повтор без новой информации был бы спамом. Инцидентов, требующих действий,
+не было (кроме штатного расхождения локального указателя прод-ветки на старте, устранено
+`reset --hard` на origin).
+
+Ai-proposals (Этап 1): approved/revision/rejected — все пусты, 0 обработано от админа. Этап 2:
+0 новых обращений сверх уже известных (полный обход тредов пропущен по правилу v592,
+`feedback_last_msg` не сдвинулся), 0 закрытий, 0 новых ai_proposals, 0 уточнений авторам.
+Коммиты: diag-роут v1315 (`cfa09ee` dev → prod), снос diag-v1315 (`4ff5ef2` dev → prod) + этот
+журнал.
