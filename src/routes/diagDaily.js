@@ -66,6 +66,23 @@ router.get('/daily-v1344', async (req, res) => {
       return res.json({ feedback: rows });
     }
 
+    if (op === 'list-feedback-lite') {
+      const status = req.query.status ? String(req.query.status) : null;
+      const rows = await db.all(
+        status
+          ? `SELECT f.id, f.status, f.category, f.subject, f.created_at, f.updated_at,
+                    u.name AS user_name
+             FROM feedback f LEFT JOIN users u ON u.id = f.user_id
+             WHERE f.status = ? ORDER BY f.id`
+          : `SELECT f.id, f.status, f.category, f.subject, f.created_at, f.updated_at,
+                    u.name AS user_name
+             FROM feedback f LEFT JOIN users u ON u.id = f.user_id
+             WHERE f.status IN ('open','awaiting_approval') ORDER BY f.id`,
+        ...(status ? [status] : []),
+      );
+      return res.json({ feedback: rows });
+    }
+
     if (op === 'feedback-thread') {
       const id = Number(req.query.id);
       if (!id) return res.status(400).json({ error: 'id required' });
