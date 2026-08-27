@@ -293,6 +293,17 @@ CRM разделяет заказы на два потока:
   **работает** — критичные обновления перед резервом всё равно делает
   `refreshProductStocks` per-order (там per-UUID на 1-10 товаров заказа
   быстро).
+- **Ручная кнопка «Обновить остатки из МойСклад»** (Интеграции, `POST
+  /api/products/import/moysklad-stock`, admin/aus): раньше — один вызов
+  `fetchMoyskladStock`→`fetchAll('/report/stock/all')` на весь каталог, на
+  большом каталоге упирался в 60с лимит лямбды → HTTP 504 (2026-08-27).
+  Починено: эндпоинт порционный — принимает `{token, offset}`, обрабатывает
+  по 500 позиций через `fetchMoyskladStockByStorePage` (тот же хелпер, что у
+  cron), отдаёт `{done, next_offset, updated, batch_size}`; фронт
+  (`openMoyskladStock` в `views.js`) крутит while-цикл до `done=true`
+  (страховка max 100 раундов). Обнуление остатков у товаров, которых МС не
+  вернул, из этого пути убрано — оставлено фоновому cron (`refresh-stocks`),
+  у ручной кнопки такой ответственности больше нет.
 - **МС webhookstock-подписка**: точечное обновление stock_by_store по
   событиям в МС. Принимающий маршрут — `POST /api/webhooks/moysklad-stock`
   (`msWebhook.js`): парсит `events[].meta.href`/`stockUpdate.goodMeta.href`,
