@@ -33442,3 +33442,57 @@ Ai-proposals (Этап 1): approved/revision пусты, `pending(3)+done(63)+re
 
 Коммиты: восстановление dev-ветки (`push -u`), diag-роут v1354 (`dac06ee` dev → prod), снос diag-v1354
 (`f416d76` dev → prod) + этот журнал.
+
+## 2026-08-27 (v1355): meta байт-в-байт как оставил v1354, #65/#66/#67 всё ещё pending, push не отправлен
+
+Стартовал после v1354. Репо стартовало shallow (глубина ~50 коммитов); локальный `HEAD` уже стоял на
+финале журнала v1354 (`054ec6f`), после `git fetch --unshallow origin` подтверждён байт-в-байт равным
+`origin/claude/build-crm-system-JzCP9` (без unrelated-histories). Designated dev-ветка
+(`claude/inspiring-cannon-l81iyo`) отсутствовала на origin на старте (`git ls-remote` пусто) — штатный
+паттерн «смержили в прод, GitHub удалил ветку» (v169 и далее); восстановлена по правилу «PR уже
+смержен»: `git checkout -B claude/inspiring-cannon-l81iyo 054ec6f` → `push -u`, без пересоздания и без
+force.
+
+Diag `daily-v1355` (секрет `v1355-3f7a1c9de6b02458`, тот же read + write набор op, что в v1345-v1354) —
+dev (`a93b388`) → `git checkout` prod → `git fetch` + `git merge --ff-only` (fast-forward с первой
+попытки, dev = prod-tip) → push обеих. `list_teams`/`list_deployments` подтвердили `teamId`
+(`team_wvTCeYoXryH1pT01kYA7oU2z`) и прод-деплой (`dpl_4tn8kDcdmCid55DkVkcZM6sEK94L`, target production) —
+`BUILDING` при первой проверке, `READY` через ~20с (alias включает `crm-orcin-six.vercel.app`,
+`crm.iitit.ru`) — диаг-роут ответил штатным 200 после подтверждения готовности.
+
+`op=meta`: `proposals_by_status={"done":63,"pending":3,"rejected":1}`,
+`feedback_by_status={"awaiting_approval":17,"closed":44,"open":5}`,
+`proposals_last_update="2026-08-25T16:28:23.947Z"`, `feedback_last_msg="2026-08-27T05:24:01.459Z"` —
+байт-в-байт то же, что оставил v1354 (`server_now="2026-08-27T23:17:27.691Z"`).
+
+**Этап 1**: `list-proposals(status=approved)` и `list-proposals(status=revision)` оба пусты явным
+запросом — 0 обработано администратором. `list-proposals(status=pending)` подтвердил все три записи без
+изменений (`admin_notes`/`admin_decision_by`/`admin_decision_at` = null у всех): `#65` (утечка пароля
+`foreman@iitit.ru`, risk=high, создан 2026-08-14T03:24:11.626Z, экспозиция ≈331.9ч — следующая
+назначенная веха 336ч/14 суток (`~2026-08-28T03:24Z`, см. v1319) ещё не достигнута, ~4ч07м впереди — push
+не отправлен, эскалация уже сделана ранее v1313), `#66` (архивация `AI-DAILY.md`, risk=low, создан
+2026-08-15T11:21, без изменений), `#67` (cron `stock-diff` 60с-таймаут, risk=medium, создан
+2026-08-25T16:25, без изменений). `check-user` для `foreman@iitit.ru`: `id=15, active=true,
+updated_at="2026-08-14T02:46:16.098Z"` — не менялся, пароль по-прежнему не ротирован, аккаунт по-прежнему
+активен.
+
+**Этап 2**: `op=list-feedback-lite` явным запросом по `open` (5 записей: id 29/42/47/61/64) и
+`awaiting_approval` (17 записей: id 10/35/36/45/46/50/52/53/54/55/56/57/59/62/63/65/66) — оба списка
+id-в-id и `updated_at`-в-`updated_at` совпадают с v1354 (включая `#66`, чей
+`updated_at=2026-08-27T05:24:22.803Z` — собственный ответ AI из v1338, автор повторно не писала). Новой
+активности нет, действий не потребовалось.
+
+Diag-эндпоинт снесён одним коммитом на dev-ветке (`app.js`-правка и `git rm diagDaily.js` застейджены
+вместе одной командой `git add` — граблина v210/v1225 учтена; `grep -n diag src/app.js` вернул exit
+code 1, `node --check` прошёл чисто) → ff-merge prod → push.
+
+Push-уведомление: **не отправлено**. `#65`/`#66`/`#67` не пересекли новых вех эскалации (~4ч07м до
+следующей по `#65`), meta байт-в-байт как в v1354, feedback явно перепроверен и подтверждён без новой
+активности — повтор был бы спамом без новой информации.
+
+Ai-proposals (Этап 1): approved/revision пусты, `pending(3)+done(63)+rejected(1)=67=total` подтверждён
+явным `op=meta`, 0 обработано от админа. Этап 2: 0 новых обращений сверх уже известных (явно
+перепроверено), 0 закрытий, 0 новых ai_proposals, 0 уточнений авторам.
+
+Коммиты: восстановление dev-ветки (`push -u`), diag-роут v1355 (`a93b388` dev → prod), снос diag-v1355
++ этот журнал.
