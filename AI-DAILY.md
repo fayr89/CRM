@@ -32863,3 +32863,67 @@ Ai-proposals (Этап 1): approved/revision пусты, `pending(3)+done(63)+re
 
 Коммиты: восстановление dev-ветки (`push -u`), diag-роут v1343 (`70616ff` dev → prod), снос
 diag-v1343 (dev → prod) + этот журнал.
+
+## 2026-08-27 (v1344): meta байт-в-байт как v738-v1343, #65/#66/#67 всё ещё pending, push не отправлен
+
+Стартовал после v1343. Designated dev-ветка (`claude/inspiring-cannon-8gm9tf`) отсутствовала на origin
+(штатно — новая ветка на сессию), локальный `HEAD` уже стоял на финале журнала v1343 (`b7100850`)
+после `git fetch --unshallow` + `git fetch origin claude/build-crm-system-JzCP9 --force` (репо
+стартовало не-shallow сессией, но синхронизация прод-ref сделана явно на всякий случай) — 0 коммитов
+расхождения, просто `push -u origin claude/inspiring-cannon-8gm9tf`.
+
+Diag `daily-v1344` (секрет `v1344-9c2a71fe6db3405c`, read-only набор как в v1343) — dev (`326f4d5`) →
+ff-merge prod (fast-forward с первой попытки, dev = prod-tip) → push обеих. `list_teams`/
+`list_projects` подтвердили `teamId`/`projectId` (`crm` = `prj_LPYnHsLG5N1QKqaLHN410uHkNOXX`);
+`list_deployments`/`get_deployment` подтвердили `READY` (`dpl_4ytAEXM7fWXjDC8973amccfR9n9B`, target
+production, alias включает `crm-orcin-six.vercel.app`) перед использованием — 200 с первой попытки.
+
+**Находка процесса:** `op=list-feedback&status=open` (полный `SELECT f.*`, как в штатном шаблоне)
+вернул ответ 337 КБ — превысил лимит инструмента чтения на стороне сессии (feedback тянет
+base64-вложения по каждой строке, та же проблема, что отмечена в бэклоге CLAUDE.md про список
+заказов). Добавил второй коммит с лёгким op `list-feedback-lite` (только
+id/status/category/subject/created_at/updated_at/user_name, без вложений) — не переделывал
+существующие read-op'ы, просто добавил новый, ff-merge в прод прошёл с первой попытки, `READY`
+подтверждён `get_deployment` перед использованием. **Если в будущем обходе снова прилетит
+oversized-ответ на `list-feedback`/`list-proposals` — сразу использовать lite-вариант вместо полного
+`SELECT *`, не пытаться читать сырой файл построчно.**
+
+`op=meta`: `proposals_by_status={"done":63,"pending":3,"rejected":1}`,
+`feedback_by_status={"awaiting_approval":17,"closed":44,"open":5}`,
+`proposals_last_update="2026-08-25T16:28:23.947Z"`, `feedback_last_msg="2026-08-27T05:24:01.459Z"` —
+байт-в-байт то же, что во всех обходах с v738 (`server_now="2026-08-27T11:22:51.764Z"`).
+
+**Этап 1**: `list-proposals(status=approved)` и `list-proposals(status=revision)` оба пусты явным
+запросом — 0 обработано администратором. `list-proposals(status=pending)` подтвердил все три записи
+без изменений — `#65` (утечка пароля `foreman@iitit.ru`, risk=high, создан
+2026-08-14T03:24:11.626Z, экспозиция ≈320ч — следующая назначенная веха 336ч/14 суток
+(`~2026-08-28T03:24Z`, см. v1319) ещё не достигнута, ~16ч впереди — push не отправлен, эскалация уже
+сделана ранее v1313), `#66` (архивация `AI-DAILY.md`, risk=low, создан 2026-08-15T11:21, без
+изменений), `#67` (cron `stock-diff` 60с-таймаут, risk=medium, создан 2026-08-25T16:25, без
+изменений) — все три `admin_notes`/`admin_decision_by`/`admin_decision_at` = null, решений нет.
+`list-proposals(status=rejected)` подтвердил `#64` без изменений (собственный дубль-close v1028,
+битая кодировка, не решение админа).
+
+**Этап 2**: `feedback_last_msg` байт-в-байт равен собственному сообщению AI из v1338 (тред #66) —
+проверено явным запросом `list-feedback-lite` по `open` (5 записей, все `updated_at` в
+июне-июле 2026, без изменений) и `awaiting_approval` (17 записей, все `updated_at` кроме #66 —
+до 2026-07-24 включительно; #66 — `2026-08-27T05:24:22.803Z`, тот же собственный ответ AI, автор
+(Ангелина) повторно не писала). Новой активности нет, полный обход тредов по существу не требовался
+(подтверждено явным запросом, а не пропущен вслепую по мета-байт-в-байт, т.к. предыдущий обход v1338
+уже показывал, что байт-в-байт мета может маскировать собственные же действия AI — на этот раз
+никакого расхождения не нашлось).
+
+Diag-эндпоинт снесён одним коммитом на dev-ветке (`app.js`-правка и `git rm diagDaily.js`
+застейджены раздельно — граблина v210/v1225 учтена; `grep -n diag src/app.js` вернул exit code 1,
+`node --check` прошёл чисто) → ff-merge prod → push.
+
+Push-уведомление: **не отправлено**. `#65`/`#66`/`#67` не пересекли новых вех эскалации (~16ч до
+следующей по `#65`), meta байт-в-байт как во всех обходах с v738, feedback явно перепроверен и
+подтверждён без новой активности — повтор был бы спамом без новой информации.
+
+Ai-proposals (Этап 1): approved/revision/rejected — все пусты (кроме подтверждённого `pending(3)`),
+0 обработано от админа. Этап 2: 0 новых обращений сверх уже известных (явно перепроверено, не
+пропущено вслепую), 0 закрытий, 0 новых ai_proposals, 0 уточнений авторам.
+
+Коммиты: diag-роут v1344 read-only (`326f4d5` dev → prod), diag-роут v1344 +list-feedback-lite
+(`23c0838` dev → prod), снос diag-v1344 + этот журнал (dev → prod).
