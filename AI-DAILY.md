@@ -32301,3 +32301,56 @@ total), 0 обработано от админа. Этап 2: 0 новых об�
 
 Коммиты: восстановление dev-ветки (`push -u`), diag-роут v1333 (`5e61ac90` dev → prod), снос
 diag-v1333 (`0ea65995` dev → prod) + этот журнал.
+
+## 2026-08-27 (v1334): meta байт-в-байт как v738-v1333, #65/#66/#67 всё ещё pending, push не отправлен
+
+Designated dev-ветка (`claude/inspiring-cannon-s9g9br`) отсутствовала на origin на старте обхода
+(`git fetch`/`git ls-remote` пустой) — штатный паттерн «смержили в прод, GitHub удалил ветку». Репо
+стартовало shallow; `git fetch --unshallow origin` выполнен до выводов о состоянии веток (урок
+v169/v1316). Явный `git fetch origin claude/build-crm-system-JzCP9` + `git merge-base --is-ancestor`
+(в обе стороны) подтвердили: локальный HEAD (`2ad23df`, финал журнала v1333) байт-в-байт равен
+прод-tip, 0 коммитов расхождения. Восстановлена по правилу «PR уже смержен»: `git push -u origin
+claude/inspiring-cannon-s9g9br` с текущего HEAD (без пересоздания, без force).
+
+Diag `daily-v1334` (секрет `v1334-980a917fd6f70b22`, тот же read-only набор op, что в v1333) — dev
+(`a8725eab`) → ff-merge prod (`a8725eab`, fast-forward с первой попытки, `git checkout` prod →
+`git reset --hard origin/...` синхронизация, локальная prod-ветка отставала на 469 коммитов) → push
+обеих. `list_teams` подтвердил актуальный `teamId` (`team_wvTCeYoXryH1pT01kYA7oU2z`) перед
+`get_deployment` — деплой (`dpl_ADyex69UwtYfBNA21cgBGdYweYeZ`) был `BUILDING`, после ~15с паузы
+`READY`, alias включает `crm-orcin-six.vercel.app` — первый запрос к диаг-роуту дал штатный 200 без
+дополнительных попыток.
+
+`op=meta`: `proposals_by_status={"done":63,"pending":3,"rejected":1}`,
+`feedback_by_status={"awaiting_approval":16,"closed":44,"open":5}`,
+`proposals_last_update="2026-08-25T16:28:23.947Z"`, `feedback_last_msg="2026-08-10T04:21:45.452Z"` —
+байт-в-байт то же, что во всех обходах с v738 (`server_now="2026-08-27T01:17:17.678Z"`). Раз meta не
+сдвинулась, полный обход `list-feedback`/тредов пропущен по правилу v592/v1130;
+`list-proposals(status=approved)` и `list-proposals(status=revision)` оба пусты явным запросом — Этап
+1 подтверждён пустым (0 обработано от админа). `list-proposals(status=pending)` подтвердил все три
+записи без изменений — `#65` (утечка пароля `foreman@iitit.ru`, risk=high, создан
+2026-08-14T03:24:11.626Z, экспозиция ≈309.9ч — следующая назначенная веха 336ч/14 суток
+(`~2026-08-28T03:24`, см. v1319) ещё не достигнута, ~26ч впереди), `#66` (архивация `AI-DAILY.md`,
+risk=low, создан 2026-08-15T11:21), `#67` (cron `stock-diff` 60с-таймаут, risk=medium, создан
+2026-08-25T16:25) — все три по-прежнему `pending`, `admin_notes`/`admin_decision_by`/
+`admin_decision_at` null у всех — новых решений админа нет. `check-user` для `foreman@iitit.ru`:
+`id=15, role` не запрашивался (нет в SELECT), `active=true, updated_at="2026-08-14T02:46:16.098Z"` —
+не менялся, пароль по-прежнему не ротирован, аккаунт по-прежнему активен.
+
+Снос diag-v1334 одним коммитом на dev (`76cbc97f`, `app.js`-правка и `git rm` diagDaily.js
+застейджены раздельно двумя `git add`/`git rm`, граблина v210/v1225 учтена; `grep -n diag
+src/app.js` после правки вернул exit code 1, `git show --stat` подтвердил оба файла в одном коммите)
+→ ff-merge prod → push, деплой подтверждён.
+
+Push-уведомление: **не отправлено**. `#65`/`#66`/`#67` не изменились со времени последней эскалации
+(288ч-веха по `#65` — v1313; следующая назначенная веха — 336ч, ещё не достигнута, ~26ч впереди),
+meta байт-в-байт как во всех обходах с v738 — повтор без новой информации был бы спамом. Инцидентов,
+требующих действий, не было (кроме штатного отсутствия dev-ветки на старте и отставания локальной
+prod-ветки на 469 коммитов, устранённого стандартным `reset --hard`).
+
+Ai-proposals (Этап 1): approved/revision/rejected — все пусты (pending(3)+done(63)+rejected(1)=67=
+total), 0 обработано от админа. Этап 2: 0 новых обращений сверх уже известных (полный обход тредов
+пропущен по правилу v592, `feedback_last_msg` не сдвинулся), 0 закрытий, 0 новых ai_proposals, 0
+уточнений авторам.
+
+Коммиты: восстановление dev-ветки (`push -u`), diag-роут v1334 (`a8725eab` dev → prod), снос
+diag-v1334 (`76cbc97f` dev → prod) + этот журнал.
