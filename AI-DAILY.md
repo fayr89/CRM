@@ -32462,3 +32462,59 @@ rejected(1)=67` неявно подтверждает), 0 обработано �
 
 Коммиты: восстановление dev-ветки (`push -u`), diag-роут v1336 (`d4df9f3` dev → prod), снос
 diag-v1336 (`1b1472c` dev → prod) + этот журнал.
+
+## 2026-08-27 (v1337): meta байт-в-байт как v738-v1336, #65/#66/#67 всё ещё pending, push не отправлен
+
+Стартовал сразу после v1336 (~1ч разницы). Designated dev-ветка (`claude/inspiring-cannon-6aq1nr`)
+отсутствовала на origin на старте обхода (`git fetch` → `couldn't find remote ref`) — штатный паттерн
+«смержили в прод, GitHub удалил ветку». Репо стартовало shallow; первый `git fetch origin
+claude/build-crm-system-JzCP9` вернул стейл-кэш (`3910e4f`, журнал v1191, ~145 коммитов позади) — тот
+же симптом, что в v1069/v1306/v1336, устранён тем же способом: `git fetch origin
+claude/build-crm-system-JzCP9:refs/remotes/origin/claude/build-crm-system-JzCP9 --force` подтянул
+истинный прод-tip (`75fd90e`, финал журнала v1336) — локальный `HEAD` оказался байт-в-байт равен ему.
+Восстановлена по правилу «PR уже смержен»: `git checkout -B claude/inspiring-cannon-6aq1nr 75fd90e` →
+`push -u` (без пересоздания, без force).
+
+Diag `daily-v1337` (секрет `v1337-3f9a1c7ed82b0641`, тот же read-only набор op, что в v1336) — dev
+(`06c7d8d`) → `git checkout` prod → `git fetch` + `git reset --hard origin/...` → `git merge --ff-only`
+(fast-forward с первой попытки) → push обеих. `list_teams` подтвердил `teamId`
+(`team_wvTCeYoXryH1pT01kYA7oU2z`); `get_deployment`/`list_deployments` нашёл нужный прод-деплой
+(`dpl_5F93SGBJXvjUMP3F3A37hy5J28fP`, изначально `BUILDING`, после ~20с паузы `READY`, alias включает
+`crm-orcin-six.vercel.app`) — диаг-роут ответил штатным 200 с первой попытки после подтверждения
+готовности.
+
+`op=meta`: `proposals_by_status={"done":63,"pending":3,"rejected":1}`,
+`feedback_by_status={"awaiting_approval":16,"closed":44,"open":5}`,
+`proposals_last_update="2026-08-25T16:28:23.947Z"`, `feedback_last_msg="2026-08-10T04:21:45.452Z"` —
+байт-в-байт то же, что во всех обходах с v738 (`server_now="2026-08-27T04:17:23.384Z"`). Раз meta не
+сдвинулась, полный обход `list-feedback`/тредов пропущен по правилу v592/v1130;
+`list-proposals(status=approved)` и `list-proposals(status=revision)` оба пусты явным запросом — Этап
+1 подтверждён пустым (0 обработано от админа). `list-proposals(status=pending)` подтвердил все три
+записи без изменений — `#65` (утечка пароля `foreman@iitit.ru`, risk=high, создан
+2026-08-14T03:24:11.626Z, экспозиция ≈312.9ч — следующая назначенная веха 336ч/14 суток
+(`~2026-08-28T03:24`, см. v1319) ещё не достигнута, ~23ч впереди), `#66` (архивация `AI-DAILY.md`,
+risk=low, создан 2026-08-15T11:21), `#67` (cron `stock-diff` 60с-таймаут, risk=medium, создан
+2026-08-25T16:25) — все три по-прежнему `pending`, `admin_notes`/`admin_decision_by`/
+`admin_decision_at` null у всех — новых решений админа нет. `check-user` для `foreman@iitit.ru`:
+`id=15, role=foreman, active=true, updated_at="2026-08-14T02:46:16.098Z"` — не менялся, пароль
+по-прежнему не ротирован, аккаунт по-прежнему активен.
+
+Снос diag-v1337 одним коммитом на dev (`059e23b`, `app.js`-правка и `git rm` diagDaily.js застейджены
+раздельно двумя `git add`/`git rm`, граблина v210/v1225 учтена; `grep -n diag src/app.js` после правки
+вернул exit code 1, `git show --stat` подтвердил оба файла в одном коммите) → ff-merge prod → push.
+Готовность подтверждена явным `list_deployments` (`dpl_EHfXoZEa9E9x4QFaa27KQbZj7349`, `READY`, target
+production) перед проверкой; диаг-роут — штатный 404, `/health` — 200, оба с первой попытки.
+
+Push-уведомление: **не отправлено**. `#65`/`#66`/`#67` не изменились со времени последней эскалации
+(288ч-веха по `#65` — v1313; следующая назначенная веха — 336ч, ещё не достигнута, ~23ч впереди), meta
+байт-в-байт как во всех обходах с v738 — повтор без новой информации был бы спамом. Инцидентов,
+требующих действий, не было (кроме штатного отсутствия dev-ветки и стейл-кэша prod-ref на старте,
+устранённых стандартными способами).
+
+Ai-proposals (Этап 1): approved/revision — пусты (0 обработано от админа), `pending(3)+done(63)+
+rejected(1)=67=total` подтверждён явным `op=meta`. Этап 2: 0 новых обращений сверх уже известных
+(полный обход тредов пропущен по правилу v592, `feedback_last_msg` не сдвинулся), 0 закрытий, 0 новых
+ai_proposals, 0 уточнений авторам.
+
+Коммиты: восстановление dev-ветки (`push -u`), diag-роут v1337 (`06c7d8d` dev → prod), снос
+diag-v1337 (`059e23b` dev → prod) + этот журнал.
