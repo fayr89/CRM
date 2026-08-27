@@ -33180,3 +33180,53 @@ Ai-proposals (Этап 1): approved/revision пусты, `pending(3)+done(63)+re
 
 Коммиты: diag-роут v1349 (`1513b35b` dev → prod), снос diag-v1349
 (dev → prod) + этот журнал.
+
+## 2026-08-27 (v1350): meta байт-в-байт как оставил v1349, #65/#66/#67 всё ещё pending, push не отправлен
+
+Стартовал после v1349. Designated dev-ветка (`claude/inspiring-cannon-tk80dc`) уже существовала на
+origin с полным содержимым до финала журнала v1349 (`079b950e`) — не потребовалось восстанавливать
+`checkout -B`. Репо стартовало shallow (глубина ~50 коммитов) — первый `git fetch
+origin claude/build-crm-system-JzCP9` без `--unshallow` ложно показал прод на старом коммите
+(`3910e4f`, 508 коммитов позади) — тот же артефакт обрезанной истории, что и в v169/v268/v1348.
+`git fetch --unshallow origin` устранил артефакт: прод корректно резолвится в `079b950e`, байт-в-байт
+равен локальному HEAD и v1349.
+
+Diag `daily-v1350` (секрет `v1350-4d81fe6ac2937b0e`, тот же read + write набор op, что в
+v1345-v1349) — dev (`90a7b54c`) → `git checkout` prod → `git fetch` + `git merge --ff-only`
+(fast-forward с первой попытки, dev = prod-tip) → push обеих. `list_deployments`/`get_deployment`
+подтвердили прод-деплой (`dpl_BiQUEavz6oxabcDziUtKRQg6EMDi`, target production) — `BUILDING` при
+первой проверке, `READY` через ~22с (alias включает `crm-orcin-six.vercel.app`) — диаг-роут ответил
+штатным 200 с первого запроса после подтверждения готовности.
+
+`op=meta`: `proposals_by_status={"done":63,"pending":3,"rejected":1}`,
+`feedback_by_status={"awaiting_approval":17,"closed":44,"open":5}`,
+`proposals_last_update="2026-08-25T16:28:23.947Z"`, `feedback_last_msg="2026-08-27T05:24:01.459Z"` —
+байт-в-байт то же, что оставил v1349 (`server_now="2026-08-27T18:17:41.710Z"`).
+
+**Этап 1**: `list-proposals(status=approved)` и `list-proposals(status=revision)` оба пусты явным
+запросом — 0 обработано администратором. `list-proposals(status=pending)` подтвердил все три записи
+без изменений (`admin_notes`/`admin_decision_by`/`admin_decision_at` = null у всех): `#65` (утечка
+пароля `foreman@iitit.ru`, risk=high, создан 2026-08-14T03:24:11.626Z, экспозиция ≈333ч — следующая
+назначенная веха 336ч/14 суток (`~2026-08-28T03:24Z`, см. v1319) ещё не достигнута, ~9ч впереди —
+push не отправлен, эскалация уже сделана ранее v1313), `#66` (архивация `AI-DAILY.md`, risk=low,
+создан 2026-08-15T11:21, без изменений), `#67` (cron `stock-diff` 60с-таймаут, risk=medium, создан
+2026-08-25T16:25, без изменений).
+
+**Этап 2**: `op=list-feedback-lite` явным запросом (`open`: id 29/42/47/61/64, `awaiting_approval`:
+17 записей) — оба списка id-в-id и `updated_at`-в-`updated_at` совпадают с v1349 (включая `#66`,
+чей `updated_at=2026-08-27T05:24:22.803Z` — собственный ответ AI из v1338, автор повторно не
+писала). Новой активности нет, действий не потребовалось.
+
+Diag-эндпоинт снесён одним коммитом на dev-ветке (`app.js`-правка и `git rm diagDaily.js`
+застейджены раздельно двумя командами — граблина v210/v1225 учтена; `grep -n diag src/app.js`
+вернул exit code 1, `node --check` прошёл чисто) → ff-merge prod → push.
+
+Push-уведомление: **не отправлено**. `#65`/`#66`/`#67` не пересекли новых вех эскалации (~9ч до
+следующей по `#65`), meta байт-в-байт как в v1349, feedback явно перепроверен и подтверждён без
+новой активности — повтор был бы спамом без новой информации.
+
+Ai-proposals (Этап 1): approved/revision пусты, `pending(3)+done(63)+rejected(1)=67=total`
+подтверждён явным `op=meta`, 0 обработано от админа. Этап 2: 0 новых обращений сверх уже известных,
+0 закрытий, 0 новых ai_proposals, 0 уточнений авторам.
+
+Коммиты: diag-роут v1350 (`90a7b54c` dev → prod), снос diag-v1350 (dev → prod) + этот журнал.
