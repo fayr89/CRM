@@ -7689,13 +7689,27 @@ async function openMoyskladStock(onDone) {
   await openModal('Обновить остатки из МойСклад', body, {
     primaryLabel: 'Обновить остатки',
     onSubmit: async () => {
-      statusEl.textContent = '⏳ Обновляю остатки…';
+      statusEl.textContent = '⏳ Начинаю обновление…';
       try {
-        const r = await api.refreshMoyskladStock(tokenI.value.trim() || undefined);
-        statusEl.innerHTML = `✅ Обновлено остатков: ${r.updated} из ${r.total}`;
+        // Порционный режим: сервер возвращает { done, next_offset, updated,
+        // batch_size } — крутим цикл до done=true. Каждый запрос ≤ 60 сек.
+        let offset = 0;
+        let totalUpdated = 0;
+        let round = 0;
+        const token = tokenI.value.trim() || undefined;
+        while (round < 100) { // страховка от бесконечного цикла
+          round++;
+          statusEl.textContent = `⏳ Раунд ${round}, обработано ~${offset}, обновлено ${totalUpdated}…`;
+          const r = await api.refreshMoyskladStock(token, offset);
+          totalUpdated += r.updated || 0;
+          if (r.done) break;
+          offset = r.next_offset;
+          if (!r.batch_size) break; // МС вернул пустую страницу — конец.
+        }
+        statusEl.innerHTML = `✅ Готово. Обновлено остатков: ${totalUpdated} (${round} раундов).`;
         toast('Остатки обновлены', 'success');
         await onDone?.();
-        return new Promise((resolve) => setTimeout(() => resolve(true), 1200));
+        return new Promise((resolve) => setTimeout(() => resolve(true), 1500));
       } catch (e) {
         statusEl.textContent = `❌ ${e.message}`;
         return false;

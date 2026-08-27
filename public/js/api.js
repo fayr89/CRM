@@ -442,8 +442,10 @@ export const api = {
     request('DELETE', `/api/products/${id}/prices/${encodeURIComponent(marketplace)}`, { query: { warehouse } }),
   importMoysklad: (token) =>
     request('POST', '/api/products/import/moysklad', { body: token ? { token } : {} }),
-  refreshMoyskladStock: (token) =>
-    request('POST', '/api/products/import/moysklad-stock', { body: token ? { token } : {} }),
+  refreshMoyskladStock: (token, offset = 0) =>
+    request('POST', '/api/products/import/moysklad-stock', {
+      body: { ...(token ? { token } : {}), offset },
+    }),
   refreshMoyskladStores: (token, offset) =>
     request('POST', '/api/products/import/moysklad-stores', { body: { token: token || undefined, offset: offset || 0 } }),
   warehousesList: () => cachedGet('warehousesList', 30 * 60_000, () => request('GET', '/api/products/warehouses/list')),

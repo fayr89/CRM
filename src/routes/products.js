@@ -495,7 +495,10 @@ router.post(
   }),
 );
 
-// Быстрое обновление только остатков (без выгрузки самого каталога).
+// Быстрое обновление только остатков — ПОРЦИОННО через /report/stock/bystore.
+// Раньше был один вызов /report/stock/all fetchAll: на большом каталоге
+// упирался в 60-сек лимит лямбды → HTTP 504. Теперь по 500 позиций за
+// запрос: клиент вызывает с растущим offset пока done=false.
 router.post(
   '/import/moysklad-stock',
   requireRole('admin', 'aus'),
@@ -504,69 +507,80 @@ router.post(
     if (!token) {
       throw BadRequest('Передайте токен МойСклад в теле запроса {token: "..."}');
     }
-    let report;
+    const offset = Math.max(0, Number(req.body?.offset) || 0);
+    const LIMIT = 500;
+
+    let page;
     try {
-      report = await fetchMoyskladStock(token);
+      page = await fetchMoyskladStockByStorePage(token, offset, LIMIT);
     } catch (e) {
-      throw BadRequest(e.message);
+      throw BadRequest('МС: ' + e.message);
     }
-    const { byId, bySku, count } = report;
+    const { byId, bySku } = page;
+    const batchSize = byId.size;
 
-    if (count === 0) {
-      res.json({ ok: true, updated: 0, total: 0 });
-      return;
-    }
+    // Ленивая колонка stock (может отсутствовать на старом пуле).
+    await db.run('ALTER TABLE products ADD COLUMN IF NOT EXISTS stock REAL').catch(() => {});
 
+    // Суммируем остаток по всем складам → общий stock (для колонки products.stock).
+    // Плюс сохраняем полный stock_by_store (уже используется UI по складам).
     let updated = 0;
-    let clearedMissing = 0;
-    try {
-      await db.withTransaction(async (tx) => {
-        // На пулере соединение могло «застрять» на старой схеме без колонки stock —
-        // в той же транзакции гарантируем её, затем обновляем остатки.
-        await tx.run('ALTER TABLE products ADD COLUMN IF NOT EXISTS stock REAL');
-        // Помечаем все moysklad-товары как «не обновлено в этом импорте» через
-        // временную секунду: ставим updated_at в прошлое, затем UPDATE из отчёта
-        // поднимает updated_at у тех, что вернул МС. После — обнуляем stock у
-        // отстающих (МС не вернул их → 0 на складе).
-        const startedAt = new Date().toISOString();
-        if (byId.size) {
-          const r = await tx.run(
-            `UPDATE products AS p SET stock = d.stock, updated_at = NOW()
-             FROM unnest(?::text[], ?::real[]) AS d(external_id, stock)
-             WHERE p.external_source = 'moysklad' AND p.external_id = d.external_id`,
-            [...byId.keys()],
-            [...byId.values()],
-          );
-          updated += r.changes || 0;
-        }
-        if (bySku.size) {
-          // Запасной путь: по артикулу — для тех, кого не нашли по UUID.
-          const r = await tx.run(
-            `UPDATE products AS p SET stock = d.stock, updated_at = NOW()
-             FROM unnest(?::text[], ?::real[]) AS d(sku, stock)
-             WHERE p.external_source = 'moysklad' AND p.sku = d.sku AND p.stock IS NULL`,
-            [...bySku.keys()],
-            [...bySku.values()],
-          );
-          updated += r.changes || 0;
-        }
-        // Обнуляем stock у moysklad-товаров, которые МС не вернул в /report/stock/all
-        // (значит остаток 0 либо товар архивирован). is_markdown пропускаем — у них
-        // собственный учёт через CRM при создании уценки.
-        const r = await tx.run(
-          `UPDATE products SET stock = 0, updated_at = NOW()
-           WHERE external_source = 'moysklad'
-             AND COALESCE(stock, 0) > 0
-             AND updated_at < ?::timestamptz
-             AND is_markdown IS NOT TRUE`,
-          startedAt,
-        );
-        clearedMissing = r.changes || 0;
-      });
-    } catch (e) {
-      throw BadRequest('Не удалось записать остатки: ' + e.message);
+    if (byId.size) {
+      const ids = [];
+      const stocks = [];
+      for (const [extId, stores] of byId) {
+        const total = stores.reduce((s, x) => s + (Number(x.stock) || 0), 0);
+        ids.push(extId);
+        stocks.push(total);
+      }
+      const r = await db.run(
+        `UPDATE products AS p SET stock = d.stock, updated_at = NOW()
+         FROM unnest(?::text[], ?::real[]) AS d(external_id, stock)
+         WHERE p.external_source = 'moysklad' AND p.external_id = d.external_id`,
+        ids, stocks,
+      );
+      updated += r.changes || 0;
     }
-    res.json({ ok: true, updated, clearedMissing, total: count });
+    if (bySku.size) {
+      const skus = [];
+      const stocks = [];
+      for (const [sku, stores] of bySku) {
+        const total = stores.reduce((s, x) => s + (Number(x.stock) || 0), 0);
+        skus.push(sku);
+        stocks.push(total);
+      }
+      const r = await db.run(
+        `UPDATE products AS p SET stock = d.stock, updated_at = NOW()
+         FROM unnest(?::text[], ?::real[]) AS d(sku, stock)
+         WHERE p.external_source = 'moysklad' AND p.sku = d.sku`,
+        skus, stocks,
+      );
+      updated += r.changes || 0;
+    }
+    // Обновляем stock_by_store по каждому товару (для «Остатки по складам»).
+    for (const [extId, stores] of byId) {
+      try {
+        await db.run(
+          `UPDATE products SET stock_by_store = ?::jsonb, updated_at = NOW()
+           WHERE external_source = 'moysklad' AND external_id = ?`,
+          JSON.stringify(stores), extId,
+        );
+      } catch { /* некритично, не роняем весь batch */ }
+    }
+
+    // Если МС вернул < LIMIT — это последняя страница.
+    // ВНИМАНИЕ: обнуление отставших (то что было раньше в старой версии) убрано —
+    // porционный режим не знает какие товары не вернулись «в этом импорте»
+    // без клиентского state. Полное обнуление отсутствующих делается только
+    // фоновым cron /api/cron/refresh-stocks (там своя логика).
+    const done = batchSize < LIMIT;
+    res.json({
+      ok: true,
+      done,
+      next_offset: offset + LIMIT,
+      updated,
+      batch_size: batchSize,
+    });
   }),
 );
 
