@@ -33553,3 +33553,62 @@ Ai-proposals (Этап 1): approved/revision пусты, `pending(3)+done(63)+re
 
 Коммиты: восстановление dev-ветки (`push -u`), diag-роут v1356 (`bedf816b` dev → prod), снос diag-v1356
 (`f25a0f42` dev → prod) + этот журнал.
+
+## 2026-08-28 (v1357): meta байт-в-байт как оставил v1356, #65/#66/#67 всё ещё pending, push не отправлен
+
+Стартовал после v1356. Локальный `HEAD` уже стоял на финале журнала v1356 (`bd9c221`) на designated
+dev-ветке (`claude/inspiring-cannon-1437kf`), но эта ветка отсутствовала на origin (`git fetch` →
+`couldn't find remote ref`) — штатный паттерн «смержили в прод, GitHub удалил ветку» (v169 и далее), с
+поправкой: на этот раз содержимого для восстановления не потребовалось, ветка уже стояла на нужном
+коммите локально. `git push -u origin claude/inspiring-cannon-1437kf` восстановил её на origin без
+пересоздания и без force. Прод (`origin/claude/build-crm-system-JzCP9`) на момент первого `git fetch`
+внутри обхода подтверждён равным той же точке (`bd9c221`, byte-в-byte, без unrelated-histories) —
+`list_deployments` показал прод-деплой `dpl_6NzXQoiyzF9g8NDUgBSkbw1HGkQr` (commit `bd9c221`, target
+production) уже `READY` из прошлого обхода, т.е. v1356 был полноценно задеплоен и не требовал повтора.
+
+Diag `daily-v1357` (секрет `v1357-9d19021def154e47`, тот же read + write набор op, что в v1350-v1356) —
+dev (`c375da9`) → `git checkout` prod → `git fetch` + `git reset --hard
+origin/claude/build-crm-system-JzCP9` → `git merge --ff-only` (fast-forward с первой попытки, dev =
+prod-tip) → push обеих. `list_teams`/`list_deployments`/`get_deployment` подтвердили `teamId`
+(`team_wvTCeYoXryH1pT01kYA7oU2z`) и прод-деплой (`dpl_DG3CoikWTQUaKnorS1eQWuVooVS2`, target production) —
+`BUILDING` при первой проверке, `READY` через ~20с (alias включает `crm-orcin-six.vercel.app`,
+`crm.iitit.ru`) — диаг-роут ответил штатным 200 после подтверждения готовности.
+
+`op=meta`: `proposals_by_status={"done":63,"pending":3,"rejected":1}`,
+`feedback_by_status={"awaiting_approval":17,"closed":44,"open":5}`,
+`proposals_last_update="2026-08-25T16:28:23.947Z"`, `feedback_last_msg="2026-08-27T05:24:01.459Z"` —
+байт-в-байт то же, что оставил v1356 (`server_now="2026-08-28T01:18:08.021Z"`).
+
+**Этап 1**: `list-proposals(status=approved)` и `list-proposals(status=revision)` оба пусты явным
+запросом — 0 обработано администратором. `list-proposals(status=pending)` подтвердил все три записи без
+изменений (`admin_notes`/`admin_decision_by`/`admin_decision_at` = null у всех): `#65` (утечка пароля
+`foreman@iitit.ru`, risk=high, создан 2026-08-14T03:24:11.626Z, экспозиция ≈333.9ч — следующая
+назначенная веха 336ч/14 суток (`~2026-08-28T03:24Z`, см. v1319) ещё не достигнута, ~2ч06м впереди — push
+не отправлен, эскалация уже сделана ранее v1313), `#66` (архивация `AI-DAILY.md`, risk=low, создан
+2026-08-15T11:21, без изменений), `#67` (cron `stock-diff` 60с-таймаут, risk=medium, создан
+2026-08-25T16:25, без изменений). `check-user` для `foreman@iitit.ru`: `id=15, active=true,
+updated_at="2026-08-14T02:46:16.098Z"` — не менялся, пароль по-прежнему не ротирован, аккаунт по-прежнему
+активен.
+
+**Этап 2**: `op=list-feedback-lite` явным запросом по `open` (5 записей: id 29/42/47/61/64) и
+`awaiting_approval` (17 записей: id 10/35/36/45/46/50/52/53/54/55/56/57/59/62/63/65/66) — оба списка
+id-в-id и `updated_at`-в-`updated_at` совпадают с v1356 (включая `#66`, чей
+`updated_at=2026-08-27T05:24:22.803Z` — собственный ответ AI из v1338, автор повторно не писала). Новой
+активности нет, действий не потребовалось.
+
+Diag-эндпоинт снесён одним коммитом на dev-ветке (`app.js`-правка и `git rm diagDaily.js` застейджены
+вместе одной командой `git add` — граблина v210/v1225 учтена; `grep -n diag src/app.js` вернул exit
+code 1, `node --check` прошёл чисто) → ff-merge prod → push.
+
+Push-уведомление: **не отправлено**. `#65`/`#66`/`#67` не пересекли новых вех эскалации (~2ч06м до
+следующей по `#65`), meta байт-в-байт как в v1356, feedback явно перепроверен и подтверждён без новой
+активности — повтор был бы спамом без новой информации. Следующий обход, скорее всего, застанет 336ч-веху
+пройденной — тогда по правилу v1148/v1313 отправить push с сутью (публично скомпрометированный пароль
+`foreman@iitit.ru`, экспозиция 14 суток без решения администратора).
+
+Ai-proposals (Этап 1): approved/revision пусты, `pending(3)+done(63)+rejected(1)=67=total` подтверждён
+явным `op=meta`, 0 обработано от админа. Этап 2: 0 новых обращений сверх уже известных (явно
+перепроверено), 0 закрытий, 0 новых ai_proposals, 0 уточнений авторам.
+
+Коммиты: восстановление dev-ветки (`push -u`), diag-роут v1357 (`c375da9` dev → prod), снос diag-v1357
+(`0308a48` dev → prod) + этот журнал.
