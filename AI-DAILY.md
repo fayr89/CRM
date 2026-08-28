@@ -34161,3 +34161,53 @@ Ai-proposals (Этап 1): approved/revision пусты, `pending(3)+done(63)+re
 
 Коммиты: восстановление dev-ветки (`push -u`), diag-роут v1367 (`fa896b51` dev → prod), снос diag-v1367 +
 этот журнал (dev → prod).
+
+## 2026-08-28 (v1368): meta байт-в-байт как оставил v1367, #65/#66/#67 всё ещё pending, push не отправлен
+
+Стартовал после v1367. Designated dev-ветка (`claude/inspiring-cannon-54qfyf`) отсутствовала на origin на
+старте (штатный паттерн «смержили в прод, GitHub удалил ветку», v169 и далее); локальный `HEAD` уже стоял
+на финале журнала v1367 (`ae2615d9`). Репо стартовало shallow (~50 коммитов); после `git fetch --unshallow
+origin` + явный `git fetch origin claude/build-crm-system-JzCP9` прод подтверждён байт-в-байт равным той же
+точке (`git merge-base --is-ancestor` в обе стороны, без unrelated-histories). Восстановлена `git push -u
+origin claude/inspiring-cannon-54qfyf` с текущего HEAD, без пересоздания и без force.
+
+Diag `daily-v1368` (секрет сгенерирован свежий, тот же read + write набор op, что в v1350-v1367) — dev
+(`8d5f4714`) → `git checkout` prod → `git fetch` + `git reset --hard origin/claude/build-crm-system-JzCP9`
+→ `git merge --ff-only` (fast-forward с первой попытки, dev = prod-tip) → push обеих. Первый запрос к
+диаг-роуту (пока деплой ещё был `BUILDING`) сразу вернул штатный 200 — без обычной 404-задержки, вероятно
+попал уже на готовый инстанс.
+
+`op=meta`: `proposals_by_status={"done":63,"pending":3,"rejected":1}`,
+`feedback_by_status={"awaiting_approval":17,"closed":44,"open":5}`,
+`proposals_last_update="2026-08-25T16:28:23.947Z"`, `feedback_last_msg="2026-08-27T05:24:01.459Z"` —
+байт-в-байт то же, что оставил v1367 (`server_now="2026-08-28T12:23:34.616Z"`).
+
+**Этап 1**: `list-proposals(status=approved)` и `list-proposals(status=revision)` оба пусты явным запросом
+— 0 обработано администратором. `list-proposals(status=pending)` подтвердил все три записи без изменений
+(`admin_notes`/`admin_decision_by`/`admin_decision_at` = null у всех): `#65` (утечка пароля
+`foreman@iitit.ru`, risk=high, создан 2026-08-14T03:24:11.626Z, 336ч-веха уже пересечена и заэскалирована
+push-уведомлением в v1360 — новых вех эскалации нет), `#66` (архивация `AI-DAILY.md`, risk=low, создан
+2026-08-15T11:21, без изменений — актуальность растёт: файл уже 34161+ строк), `#67` (cron `stock-diff`
+60с-таймаут, risk=medium, создан 2026-08-25T16:25, без изменений). `check-user` для `foreman@iitit.ru`:
+`id=15, active=true, updated_at="2026-08-14T02:46:16.098Z"` — не менялся, пароль по-прежнему не ротирован,
+аккаунт по-прежнему активен (14+ суток экспозиции без решения администратора).
+
+**Этап 2**: `op=list-feedback-lite` явным запросом по `open` (5 записей: id 29/42/47/61/64) и
+`awaiting_approval` (17 записей: id 10/35/36/45/46/50/52/53/54/55/56/57/59/62/63/65/66) — оба списка
+id-в-id и `updated_at`-в-`updated_at` совпадают с v1367 (включая `#66`, чей `updated_at=2026-08-27T05:24:22.803Z`
+— собственный ответ AI из v1338, автор повторно не писала). Новой активности нет, действий не потребовалось.
+
+Diag-эндпоинт снесён на dev-ветке с учётом граблины v1363: `import`/mount убраны через Edit, файл удалён
+`rm` (не `git rm`), `node --check src/app.js` и `grep -n diag src/app.js` (exit code 1) пройдены ДО
+коммита.
+
+Push-уведомление: **не отправлено**. 336ч-веха по `#65` уже пересечена и заэскалирована в v1360; в этом
+обходе новых вех/изменений нет, meta байт-в-байт как в v1367, feedback явно перепроверен и подтверждён без
+новой активности — повтор был бы спамом без новой информации.
+
+Ai-proposals (Этап 1): approved/revision пусты, `pending(3)+done(63)+rejected(1)=67=total` подтверждён
+явным `op=meta`, 0 обработано от админа. Этап 2: 0 новых обращений сверх уже известных (явно
+перепроверено), 0 закрытий, 0 новых ai_proposals, 0 уточнений авторам.
+
+Коммиты: восстановление dev-ветки (`push -u`), diag-роут v1368 (`8d5f4714` dev → prod), снос diag-v1368 +
+этот журнал (dev → prod).
