@@ -34798,3 +34798,57 @@ Ai-proposals (Этап 1): approved/revision пусты, `pending(3)+done(63)+re
 
 Коммиты: восстановление dev-ветки (`push -u`), diag-роут v1379 (`d4977f5` dev → prod), снос diag-v1379
 + этот журнал (dev → prod).
+
+## 2026-08-29 (v1380): meta байт-в-байт как оставил v1379, #65/#66/#67 всё ещё pending (#65 ~356.9ч экспозиции, до 384ч-вехи ещё ~27ч), push не отправлен
+
+Сессия стартовала на designated dev-ветке `claude/inspiring-cannon-c4nsjb`. Локальный `HEAD` (`166cb498`)
+байт-в-байт совпал с прод-tip (`origin/claude/build-crm-system-JzCP9`, `merge-base --is-ancestor` подтверждён
+в обе стороны, без unrelated-histories). Designated dev-ветка отсутствовала на origin (`git ls-remote` пусто)
+— штатный паттерн «смержили в прод, GitHub удалил ветку» (v169 и далее). Репо стартовало shallow — `git fetch
+--unshallow origin` выполнен перед выводами про историю. Восстановлена по правилу «PR уже смержен»: `git push
+-u origin claude/inspiring-cannon-c4nsjb` с текущего HEAD, без пересоздания, без force.
+
+Diag `daily-v1380` (секрет `v1380-2eef3662808c4a8d`, тот же read + write набор op, что в v1362-v1379) —
+скопирован из коммита `d4977f5d` (шаблон v1379) с заменой версии/секрета, `node --check` пройден до коммита
+— dev (`f0251e33`) → `git checkout` prod → `git fetch` + `git reset --hard origin/claude/build-crm-system-JzCP9`
+→ `git merge --ff-only` (fast-forward с первой попытки, dev = prod-tip) → push обеих. Готовность подтверждена
+явным `mcp__Vercel__get_deployment` (`dpl_5CMEydjA3kHx9HPXhR8AYCafoZmc`, `READY`, `target=production`, alias
+включает `crm-orcin-six.vercel.app`) — билд занял ~20с (`BUILDING`→`READY`). `/health` подтверждён 200 перед
+диагом, диаг-роут ответил штатным 200 без задержки.
+
+`op=meta`: `proposals_by_status={"done":63,"pending":3,"rejected":1}`,
+`feedback_by_status={"awaiting_approval":17,"closed":44,"open":5}`,
+`proposals_last_update="2026-08-25T16:28:23.947Z"`, `feedback_last_msg="2026-08-27T05:24:01.459Z"` —
+байт-в-байт то же, что оставил v1379 (`server_now="2026-08-29T00:17:35.352Z"`).
+
+**Этап 1**: `list-proposals(status=approved)` и `list-proposals(status=revision)` оба пусты явным запросом
+— 0 обработано администратором. `list-proposals(status=pending)` подтвердил все три записи без изменений
+(`admin_notes`/`admin_decision_by`/`admin_decision_at` = null у всех): `#65` (утечка пароля `foreman@iitit.ru`,
+risk=high, создан 2026-08-14T03:24:11.626Z — экспозиция ~356.9ч/14.87 суток, 336ч-веха пересечена и
+заэскалирована push-уведомлением в v1360, следующая назначенная веха — 384ч/16 суток, ~27ч впереди, не
+достигнута), `#66` (архивация `AI-DAILY.md`, risk=low, создан 2026-08-15T11:21, без изменений — файл уже
+34800+ строк, актуальность предложения продолжает расти), `#67` (cron `stock-diff` 60с-таймаут, risk=medium,
+создан 2026-08-25T16:25, без изменений). `list-proposals(status=rejected)` подтвердил единственную запись
+`#64` (дубль `#65`, битый текст из старого бага `web_fetch`, закрыт админом в v1028) — без изменений.
+`check-user` для `foreman@iitit.ru`: `id=15, active=true, updated_at="2026-08-14T02:46:16.098Z"` — не менялся,
+пароль по-прежнему не ротирован, аккаунт по-прежнему активен.
+
+**Этап 2**: `op=list-feedback-lite` явным запросом по `open` (5 записей: id 29/42/47/61/64) и
+`awaiting_approval` (17 записей: id 10/35/36/45/46/50/52/53/54/55/56/57/59/62/63/65/66) — оба списка id-в-id
+и `updated_at`-в-`updated_at` совпадают с v1379 (включая `#66`, чей `updated_at=2026-08-27T05:24:22.803Z` —
+собственный ответ AI из v1338, автор повторно не писала). Новой активности нет, действий не потребовалось.
+
+Diag-эндпоинт снесён на dev-ветке с учётом граблины v1363/v210: `import`/mount убраны через Edit (двумя
+раздельными правками), файл удалён `rm` (не `git rm`), `node --check src/app.js` и `grep -n diag src/app.js`
+(exit code 1) пройдены ДО коммита.
+
+Push-уведомление: **не отправлено**. 336ч-веха по `#65` уже пересечена и заэскалирована в v1360; в этом
+обходе новых вех/изменений нет (следующая веха — 384ч, ещё ~27ч впереди), meta байт-в-байт как в v1379,
+feedback явно перепроверен и подтверждён без новой активности — повтор был бы спамом без новой информации.
+
+Ai-proposals (Этап 1): approved/revision пусты, `pending(3)+done(63)+rejected(1)=67=total` подтверждён явным
+`op=meta`, 0 обработано от админа. Этап 2: 0 новых обращений сверх уже известных (явно перепроверено),
+0 закрытий, 0 новых ai_proposals, 0 уточнений авторам.
+
+Коммиты: восстановление dev-ветки (`push -u`), diag-роут v1380 (`f0251e33` dev → prod), снос diag-v1380
++ этот журнал (dev → prod).
