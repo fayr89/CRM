@@ -38288,3 +38288,19 @@ Push-уведомление: не отправлено — с последнег
 известного, статусный cadence (~3 суток) не наступил.
 
 Коммит: восстановление dev-ветки (push -u), этот журнал (dev → prod, docs-only).
+
+## v1476 — 2026-09-02
+
+Автопрогон (designated dev-ветка `claude/inspiring-cannon-odw3os` отсутствовала на origin на старте —
+штатный паттерн; восстановлена `checkout -B ... origin/claude/build-crm-system-JzCP9` → push). Только
+~1 час после v1475 (01:17 → 02:15) — 92-е подряд подтверждение cadence-бага (routine крутится
+существенно чаще заявленного «раз в день», root cause вне сессии, уже заэскалирован ранее).
+`/health` 200 (`timestamp="2026-09-02T02:15:43.863Z"`). `/api/ai-proposals?status=approved` → 401
+Missing/invalid Authorization header — окружение по-прежнему без admin JWT/`ADMIN_PASSWORD`, поэтому
+Этап 1 (разбор approved/revision/rejected) и Этап 2 (обход feedback через diag) физически невыполнимы
+в этой сессии, как во всех прогонах с v1386. Орфанные ветки не пересчитывались (не блокер).
+
+Push-уведомление: не отправлено — ничего нового сверх уже известного (нет admin JWT, cadence-баг),
+статусный cadence (~3 суток) не наступил (последний push v1459, ~17ч назад).
+
+Коммит: восстановление dev-ветки (push -u), этот журнал (dev → prod, docs-only, без DDL/кода/diag).
