@@ -508,7 +508,9 @@ router.post(
       throw BadRequest('Передайте токен МойСклад в теле запроса {token: "..."}');
     }
     const offset = Math.max(0, Number(req.body?.offset) || 0);
-    const LIMIT = 500;
+    // 500 позиций уходили в 504: цикл 500 последовательных UPDATE stock_by_store
+    // съедал 40+ сек. Уменьшаем batch до 200 + батчуем UPDATE через unnest ниже.
+    const LIMIT = 200;
 
     let page;
     try {
@@ -557,15 +559,25 @@ router.post(
       );
       updated += r.changes || 0;
     }
-    // Обновляем stock_by_store по каждому товару (для «Остатки по складам»).
-    for (const [extId, stores] of byId) {
+    // Обновляем stock_by_store ОДНИМ UPDATE через unnest — иначе на 500 товарах
+    // было ~500 последовательных SQL, что съедало 40+ сек и упирало лямбду в 504.
+    if (byId.size) {
+      const ids2 = [];
+      const jsonbs = [];
+      for (const [extId, stores] of byId) {
+        ids2.push(extId);
+        jsonbs.push(JSON.stringify(stores));
+      }
       try {
         await db.run(
-          `UPDATE products SET stock_by_store = ?::jsonb, updated_at = NOW()
-           WHERE external_source = 'moysklad' AND external_id = ?`,
-          JSON.stringify(stores), extId,
+          `UPDATE products AS p SET stock_by_store = d.sbs::jsonb, updated_at = NOW()
+           FROM unnest(?::text[], ?::text[]) AS d(external_id, sbs)
+           WHERE p.external_source = 'moysklad' AND p.external_id = d.external_id`,
+          ids2, jsonbs,
         );
-      } catch { /* некритично, не роняем весь batch */ }
+      } catch (e) {
+        console.error('[import/moysklad-stock] stock_by_store batch:', e.message);
+      }
     }
 
     // Если МС вернул < LIMIT — это последняя страница.

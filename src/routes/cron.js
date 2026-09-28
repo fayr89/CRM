@@ -80,8 +80,8 @@ router.get(
     const token = await getMoyskladToken();
     if (!token) return res.status(503).json({ error: 'МС не настроен' });
 
-    const PAGE = 20;
-    const DEADLINE_MS = 45_000;
+    const PAGE = 15;
+    const DEADLINE_MS = 35_000;
     const startMs = Date.now();
     let totalUpdated = 0;
     let clearedMissing = 0;
@@ -298,10 +298,16 @@ router.get(
     if (!token) return res.status(500).json({ error: 'MoySklad token not configured' });
 
     // 3. Пуллим stock-by-store страницами. Строим current[warehouse][productExtId] = {stock, reserve}.
+    // Прежние 500×40=20k SKU за один cron упирались в 60 сек. Уменьшаем LIMIT
+    // и MAX_PAGES + проверка deadline на каждой итерации. Если каталог большой,
+    // за один тик 15-мин cron обработает часть, следующий тик — новую.
     const current = {};
-    const LIMIT = 500;
-    const MAX_PAGES = 40;
+    const LIMIT = 300;
+    const MAX_PAGES = 8;
+    const DEADLINE_MS = 40_000;
+    let pagesScanned = 0;
     for (let p = 0; p < MAX_PAGES; p++) {
+      if (Date.now() - started > DEADLINE_MS) break;
       let page;
       try {
         page = await fetchMoyskladStockByStorePage(token, p * LIMIT, LIMIT);
@@ -309,6 +315,7 @@ router.get(
         console.error('[stock-diff] MS page fetch failed:', e.message);
         break;
       }
+      pagesScanned++;
       const byId = page.byId || new Map();
       if (byId.size === 0) break;
       for (const [productExtId, stores] of byId) {
@@ -457,20 +464,27 @@ router.get(
         upsertPairs.push([wh, id, s.stock, s.reserve]);
       }
     }
-    // Батч-INSERT по 200 записей.
-    const BATCH = 200;
+    // Батч-UPSERT через unnest — быстрее чем VALUES(?,?,?)×200. По 500 записей.
+    // Плюс deadline-чек: если не влезаем в 60 сек — прерываем, остальное следующий тик.
+    const BATCH = 500;
     for (let i = 0; i < upsertPairs.length; i += BATCH) {
+      if (Date.now() - started > 55_000) {
+        console.warn('[stock-diff] snapshot upsert deadline, remaining:', upsertPairs.length - i);
+        break;
+      }
       const chunk = upsertPairs.slice(i, i + BATCH);
-      const values = chunk.map(() => `(?, ?, ?, ?, NOW())`).join(', ');
-      const params = [];
-      for (const [wh, id, st, rv] of chunk) params.push(wh, id, st, rv);
+      const whs2 = chunk.map((r) => r[0]);
+      const ids2 = chunk.map((r) => r[1]);
+      const stocks = chunk.map((r) => r[2]);
+      const reserves = chunk.map((r) => r[3]);
       await db.run(
         `INSERT INTO stock_ms_snapshots (warehouse, product_external_id, stock, reserve, snapshot_at)
-         VALUES ${values}
+         SELECT wh, id, st, rv, NOW()
+         FROM unnest(?::text[], ?::text[], ?::numeric[], ?::numeric[]) AS t(wh, id, st, rv)
          ON CONFLICT (warehouse, product_external_id)
          DO UPDATE SET stock = EXCLUDED.stock, reserve = EXCLUDED.reserve, snapshot_at = NOW()`,
-        ...params,
-      );
+        whs2, ids2, stocks, reserves,
+      ).catch((e) => console.error('[stock-diff] upsert batch:', e.message));
     }
 
     res.json({
