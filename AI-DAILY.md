@@ -40801,3 +40801,13 @@ Push-уведомление: не отправлено — ни один фак�
 гонка).
 
 Коммит: этот журнал (dev → prod, docs-only).
+
+## v1562 — 2026-09-29
+
+178-е подтверждение блокера (сессия `claude/inspiring-cannon-f8uyb3`). `/health` → 200; `GET
+/api/ai-proposals?status=approved` → 401 `Missing or invalid Authorization header`; env с
+JWT/ADMIN_PASSWORD/токенами → 0. Секреты через Vercel MCP не доставались. Этап 1/2 не выполнялись,
+diag не разворачивался. Прод (`e44bd72`) = локальный HEAD. Отправлен push с просьбой выдать сессии
+способ авторизации (admin JWT/секрет в env рутины) — обходы вхолостую с 2026-09.
+
+Коммит: этот журнал (docs-only, dev).
