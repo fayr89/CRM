@@ -40801,3 +40801,14 @@ Push-уведомление: не отправлено — ни один фак�
 гонка).
 
 Коммит: этот журнал (dev → prod, docs-only).
+
+## v1562 — 2026-09-30
+
+178-е подтверждение блокера (сессия `claude/inspiring-cannon-lluhaf`). `GET /api/ai-proposals?status=approved`
+через `mcp__Vercel__web_fetch_vercel_url` → 401 `Missing or invalid Authorization header`; в env нет
+JWT/ADMIN_PASSWORD (счётчик `0`). `/health`: первый запрос дал разовую ошибку доступа MCP, повтор → 200
+(`db_host` без изменений) — транзиентно. Этап 1/2 не выполнялись, diag не разворачивался, секреты из Vercel
+env не доставались. Прод (`e44bd72`) = локальный HEAD. `#65` без новых сигналов. Push-уведомление не
+отправлено — новых фактов нет (дубль эскалации v1554).
+
+Коммит: этот журнал (docs-only).
