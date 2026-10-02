@@ -40839,3 +40839,12 @@ Vercel env не доставались. Прод = локальный HEAD (`92d
 Push-уведомление не отправлено — дубль v1564 (отправлено сегодня), новых фактов нет.
 
 Коммит: этот журнал (docs-only).
+
+## v1566 — 2026-10-02
+
+182-е подтверждение блокера (сессия `claude/inspiring-cannon-s7xpg7`). `GET /api/ai-proposals?status=approved`
+через `mcp__Vercel__web_fetch_vercel_url` → ошибка MCP `deployment_authentication_required` (share link не принят);
+`/health` → 200 той же сессией. Admin JWT у сессии по-прежнему нет, Этап 1/2 не выполнялись, diag не разворачивался,
+секреты из Vercel env не доставались. Push-уведомление не отправлено — дубль v1564 (отправлено сегодня).
+
+Коммит: этот журнал (docs-only).
