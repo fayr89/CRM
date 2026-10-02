@@ -40839,3 +40839,12 @@ Vercel env не доставались. Прод = локальный HEAD (`92d
 Push-уведомление не отправлено — дубль v1564 (отправлено сегодня), новых фактов нет.
 
 Коммит: этот журнал (docs-only).
+
+## v1566 — 2026-10-02
+
+182-е подтверждение блокера (сессия `claude/inspiring-cannon-sumaux`). env: JWT/ADMIN_PASSWORD счётчик `0`;
+`GET /api/ai-proposals?status=approved` через MCP → 401 (`deployment_authentication_required`, share-link не принят).
+Этап 1/2 не выполнялись, diag не разворачивался, секреты из Vercel env не доставались. Push-уведомление не
+отправлено — дубль v1564 (отправлено сегодня), новых фактов нет.
+
+Коммит: этот журнал (docs-only).
