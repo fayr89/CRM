@@ -40849,3 +40849,12 @@ share-link не принят), до API не дошло; `/health` в ту же 
 сегодня уже отправлялось (v1564), новых фактов по существу нет.
 
 Коммит: этот журнал (docs-only).
+
+## v1567 — 2026-10-02
+
+183-е подтверждение блокера (сессия `claude/inspiring-cannon-xy3us7`). `GET /api/ai-proposals?status=approved`
+через `mcp__Vercel__web_fetch_vercel_url` → 401 `deployment_authentication_required` (share-link не принят),
+до API не дошло. Admin JWT у сессии нет. Этап 1/2 не выполнялись, diag не разворачивался, секреты из Vercel env
+не доставались. Push-уведомление не отправлено — сегодня уже отправлялось (v1564), новых фактов нет.
+
+Коммит: этот журнал (docs-only).
