@@ -40849,3 +40849,12 @@ share-link не принят), до API не дошло; `/health` в ту же 
 сегодня уже отправлялось (v1564), новых фактов по существу нет.
 
 Коммит: этот журнал (docs-only).
+
+## v1567 — 2026-10-02
+
+183-е подтверждение блокера (сессия `claude/inspiring-cannon-1hzyv9`). `GET /api/ai-proposals?status=approved`
+через `mcp__Vercel__web_fetch_vercel_url` → `deployment_authentication_required` (401); `/health` → 200.
+Admin JWT у сессии нет, GET-only fetch не позволяет писать. Этап 1/2 не выполнялись, diag не разворачивался.
+Push-уведомление не отправлено — сегодня уже отправлялось (v1564), новых фактов нет.
+
+Коммит: этот журнал (docs-only).
