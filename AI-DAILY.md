@@ -40849,3 +40849,11 @@ share-link не принят), до API не дошло; `/health` в ту же 
 сегодня уже отправлялось (v1564), новых фактов по существу нет.
 
 Коммит: этот журнал (docs-only).
+
+## v1567 — 2026-10-02
+
+183-е подтверждение блокера (сессия `claude/inspiring-cannon-phntmj`). `GET /api/ai-proposals?status=approved` →
+401 `deployment_authentication_required` (share-link не принят); env: JWT/ADMIN_PASSWORD счётчик `0`. Этап 1/2 не
+выполнялись, diag не разворачивался, секреты не доставались. Push-уведомление не отправлено — отправлено сегодня (v1564).
+
+Коммит: этот журнал (docs-only).
