@@ -40858,3 +40858,11 @@ env JWT/ADMIN_PASSWORD счётчик `0`. Этап 1/2 не выполняли�
 Push-уведомление отправлено (первое за 2026-10-03).
 
 Коммит: этот журнал (docs-only).
+
+## v1568 — 2026-10-03
+
+184-е подтверждение блокера. `GET /api/ai-proposals?status=approved` через `mcp__Vercel__web_fetch_vercel_url` → 401
+`deployment_authentication_required`. Admin JWT у сессии нет. Этап 1/2 не выполнялись, diag не разворачивался.
+Push-уведомление не отправлено — уже отправлено сегодня (v1567), новых фактов нет.
+
+Коммит: этот журнал (docs-only).
