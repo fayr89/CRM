@@ -40876,3 +40876,12 @@ env JWT/ADMIN_PASSWORD счётчик `0`. Этап 1/2 не выполняли�
 Прод = локальный HEAD (`2d66852`). Push-уведомление отправлено (первое за 2026-10-04).
 
 Коммит: этот журнал (docs-only).
+
+## v1570 — 2026-10-05
+
+186-е подтверждение блокера (сессия `claude/inspiring-cannon-h9qied`). `GET /api/ai-proposals?status=approved` через
+`mcp__Vercel__web_fetch_vercel_url` → 401 `deployment_authentication_required` (share-link не принят). Admin JWT у сессии нет;
+env JWT/ADMIN_PASSWORD пусты. Этап 1/2 не выполнялись, diag не разворачивался, секреты не доставались.
+Прод = локальный HEAD (`c38ac4c`). Push-уведомление отправлено (первое за 2026-10-05).
+
+Коммит: этот журнал (docs-only).
