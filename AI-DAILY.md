@@ -40903,3 +40903,12 @@ Admin JWT у сессии нет; env JWT/ADMIN_PASSWORD счётчик `0`. Э�
 Прод = локальный HEAD (`facba59`). Push-уведомление отправлено (первое за 2026-10-07).
 
 Коммит: этот журнал (docs-only).
+
+## v1573 — 2026-10-08
+
+189-е подтверждение блокера (сессия `claude/inspiring-cannon-2q77nf`). `GET /api/ai-proposals?status=approved` через
+`mcp__Vercel__web_fetch_vercel_url` → 401 `deployment_authentication_required` (share-link не принят); `/health` → 200.
+Admin JWT у сессии нет. Этап 1/2 не выполнялись, diag не разворачивался, секреты не доставались.
+Push-уведомление отправлено (первое за 2026-10-08).
+
+Коммит: этот журнал (docs-only).
