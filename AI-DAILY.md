@@ -40921,3 +40921,12 @@ Admin JWT у сессии нет. Этап 1/2 не выполнялись, diag
 Push-уведомление отправлено (первое за 2026-10-13).
 
 Коммит: этот журнал (docs-only).
+
+## v1575 — 2026-10-15
+
+191-е подтверждение блокера (сессия `claude/inspiring-cannon-988p9h`). `GET /api/ai-proposals?status=approved` через
+`mcp__Vercel__web_fetch_vercel_url` → 401 `deployment_authentication_required` (share-link не принят).
+Admin JWT у сессии нет. Этап 1/2 не выполнялись, diag не разворачивался, секреты не доставались.
+Push-уведомление отправлено (первое за 2026-10-15).
+
+Коммит: этот журнал (docs-only).
