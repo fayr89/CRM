@@ -40921,3 +40921,12 @@ Admin JWT у сессии нет. Этап 1/2 не выполнялись, diag
 Push-уведомление отправлено (первое за 2026-10-13).
 
 Коммит: этот журнал (docs-only).
+
+## v1575 — 2026-10-16
+
+Блокер сохраняется (сессия `claude/inspiring-cannon-t5mhbp`). `/health` → 200, но
+`GET /api/ai-proposals?status=approved` через `mcp__Vercel__web_fetch_vercel_url` → 401
+`deployment_authentication_required` (share-link не принят). Admin JWT у сессии нет.
+Этап 1/2 не выполнялись, diag не разворачивался. Push-уведомление отправлено (первое за 2026-10-16).
+
+Коммит: этот журнал (docs-only).
