@@ -40939,3 +40939,12 @@ Admin JWT у сессии нет. Этап 1/2 не выполнялись, diag
 Прод = локальный HEAD (`41b9e3a`). Push-уведомление отправлено (первое за 2026-10-17).
 
 Коммит: этот журнал (docs-only).
+
+## v1577 — 2026-10-26
+
+193-е подтверждение блокера (сессия `claude/inspiring-cannon-63mzk1`). `GET /api/ai-proposals?status=approved` через
+`mcp__Vercel__web_fetch_vercel_url` → 401 `deployment_authentication_required` (share-link не принят); `/health` → 200.
+Admin JWT у сессии нет. Этап 1/2 не выполнялись, diag не разворачивался, секреты не доставались.
+Прод = локальный HEAD (`2dc9617`). Push-уведомление отправлено (первое за 2026-10-26).
+
+Коммит: этот журнал (docs-only).
