@@ -7953,8 +7953,13 @@ async function openPriceUpload(onDone) {
       let skippedEmpty = 0;
       let skippedNoWarehouse = 0;
       for (const r of rows) {
-        // Убираем Excel-обёртку ="..." (текстовый формат длинных артикулов).
-        const sku = (r[cSku] || '').trim().replace(/^=?"(.*)"$/, '$1').trim();
+        // Excel сохраняет длинные/нулевые артикулы как ="20110201" (текстовый формат).
+        // Наш CSV-парсер съедает кавычки, но знак `=` ОСТАЁТСЯ в начале значения
+        // → sku уходил как "=20110201" и JOIN в БД его не находил. Чистим оба:
+        // сначала `=` (если парсер оставил), затем окружающие кавычки (если не оставил).
+        let sku = (r[cSku] || '').trim();
+        if (sku.startsWith('=')) sku = sku.slice(1);
+        sku = sku.replace(/^"(.*)"$/, '$1').trim();
         const marketplace = (r[cMarket] || '').trim();
         const warehouse = (r[cWarehouse] || '').trim();
         const priceRaw = (r[cPrice] || '').trim().replace(/\s/g, '').replace(/₽/g, '').replace(',', '.');
