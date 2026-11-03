@@ -40939,3 +40939,10 @@ Admin JWT у сессии нет. Этап 1/2 не выполнялись, diag
 Прод = локальный HEAD (`41b9e3a`). Push-уведомление отправлено (первое за 2026-10-17).
 
 Коммит: этот журнал (docs-only).
+
+## 2026-11-03
+
+Блокер без admin JWT сохраняется (сессия `claude/inspiring-cannon-9ziprd`). `GET /api/ai-proposals?status=approved` →
+401 `deployment_authentication_required`; после `get_access_to_vercel_url` `/health` → 200, но `/api/*` требует admin-токена,
+которого у сессии нет. Этап 1/2 не выполнялись, diag не разворачивался, секреты из Vercel env не доставались.
+Push-уведомление отправлено (первое за 2026-11-03).
