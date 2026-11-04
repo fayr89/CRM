@@ -4017,7 +4017,7 @@ export async function renderCashbox(main) {
   const isAdmin = me.role === 'admin';
   const canConfirm = ['admin', 'finance'].includes(me.role); // подтверждение транзакций
   const canFilterByManager = ['admin', 'finance'].includes(me.role);
-  const state = { managerId: '', projectId: '', search: '' };
+  const state = { managerId: '', projectId: '', search: '', status: '', processed: '' };
   const tableArea = el('div');
   const summaryArea = el('div');
   const filterArea = el('div', { class: 'filter-bar', style: { marginBottom: '12px' } });
@@ -4027,10 +4027,15 @@ export async function renderCashbox(main) {
     clear(tableArea);
     summaryArea.append(el('div', { class: 'loading' }, 'Загрузка…'));
     try {
-      const paymentsQuery = { limit: 50 };
+      // Лимит увеличен с 50 до 300: у активных менеджеров pending-платежи
+      // (без метода/комиссии) заслоняли обработанные — те уезжали в хвост
+      // и admin «не видел транзакции которые менеджер уже отметил».
+      const paymentsQuery = { limit: 300 };
       if (state.managerId) paymentsQuery.manager_id = state.managerId;
       if (state.projectId) paymentsQuery.project_id = state.projectId;
       if (state.search) paymentsQuery.search = state.search;
+      if (state.status) paymentsQuery.status = state.status;
+      if (state.processed) paymentsQuery.processed = state.processed;
       const [cashbox, payments] = await Promise.all([
         api.cashbox(undefined, state.managerId || undefined, state.projectId || undefined),
         api.list('payments', paymentsQuery),
@@ -4084,6 +4089,29 @@ export async function renderCashbox(main) {
       }, 400);
     });
     filterArea.append(searchInput);
+
+    // Фильтр по статусу — чтобы админ мог быстро увидеть только pending (ждут
+    // подтверждения финансиста) или только confirmed / rejected.
+    const statusSel = el('select', {},
+      el('option', { value: '', selected: state.status === '' }, '— Любой статус —'),
+      el('option', { value: 'pending', selected: state.status === 'pending' }, '⏳ Ждут подтверждения'),
+      el('option', { value: 'confirmed', selected: state.status === 'confirmed' }, '✅ Подтверждённые'),
+      el('option', { value: 'rejected', selected: state.status === 'rejected' }, '✗ Отклонённые'),
+    );
+    statusSel.addEventListener('change', () => { state.status = statusSel.value; reload(); });
+    filterArea.append(el('label', { style: { marginLeft: '12px' } }, '📊 Статус: ', statusSel));
+
+    // Фильтр «обработано менеджером»: платёж, у которого менеджер проставил
+    // метод оплаты ИЛИ комиссию. Это те транзакции, что «готовы к подтверждению»
+    // финансистом. Главный ответ на «не вижу транзакции которые менеджер
+    // прописал как завершённые».
+    const procSel = el('select', {},
+      el('option', { value: '', selected: state.processed === '' }, '— Все —'),
+      el('option', { value: '1', selected: state.processed === '1' }, '✍️ Обработаны менеджером'),
+      el('option', { value: '0', selected: state.processed === '0' }, '🕳️ Без обработки'),
+    );
+    procSel.addEventListener('change', () => { state.processed = procSel.value; reload(); });
+    filterArea.append(el('label', { style: { marginLeft: '12px' } }, '✍️ Метод/комиссия: ', procSel));
   }
 
   function renderSummary(cashbox) {

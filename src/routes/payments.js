@@ -74,6 +74,14 @@ router.get(
       where.push('p.status = ?');
       params.push(req.query.status);
     }
+    // Фильтр «обработано менеджером»: есть метод оплаты ИЛИ проставлена комиссия.
+    // Используется админом в кассе чтобы отделить транзакции, которые менеджер
+    // уже разметил, от тех, которые ещё ждут его работы.
+    if (req.query.processed === '1' || req.query.processed === 'true') {
+      where.push('(p.method IS NOT NULL OR (p.commission IS NOT NULL AND p.commission > 0))');
+    } else if (req.query.processed === '0' || req.query.processed === 'false') {
+      where.push('(p.method IS NULL AND (p.commission IS NULL OR p.commission = 0))');
+    }
     if (req.query.manager_id) {
       where.push('p.manager_id = ?');
       params.push(Number(req.query.manager_id));
