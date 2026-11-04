@@ -4017,30 +4017,45 @@ export async function renderCashbox(main) {
   const isAdmin = me.role === 'admin';
   const canConfirm = ['admin', 'finance'].includes(me.role); // подтверждение транзакций
   const canFilterByManager = ['admin', 'finance'].includes(me.role);
-  const state = { managerId: '', projectId: '', search: '', status: '', processed: '' };
+  const state = {
+    managerId: '', projectId: '', search: '', status: '', processed: '',
+    method: '', dateFrom: '', dateTo: '',
+  };
   const tableArea = el('div');
   const summaryArea = el('div');
+  const chartArea = el('div', { style: { marginBottom: '14px' } });
   const filterArea = el('div', { class: 'filter-bar', style: { marginBottom: '12px' } });
 
   async function reload() {
     clear(summaryArea);
+    clear(chartArea);
     clear(tableArea);
     summaryArea.append(el('div', { class: 'loading' }, 'Загрузка…'));
     try {
-      // Лимит увеличен с 50 до 300: у активных менеджеров pending-платежи
-      // (без метода/комиссии) заслоняли обработанные — те уезжали в хвост
-      // и admin «не видел транзакции которые менеджер уже отметил».
       const paymentsQuery = { limit: 300 };
       if (state.managerId) paymentsQuery.manager_id = state.managerId;
       if (state.projectId) paymentsQuery.project_id = state.projectId;
       if (state.search) paymentsQuery.search = state.search;
       if (state.status) paymentsQuery.status = state.status;
       if (state.processed) paymentsQuery.processed = state.processed;
-      const [cashbox, payments] = await Promise.all([
+      if (state.method) paymentsQuery.method = state.method;
+      if (state.dateFrom) paymentsQuery.date_from = state.dateFrom;
+      if (state.dateTo) paymentsQuery.date_to = state.dateTo;
+      const statsQuery = {
+        manager_id: state.managerId || undefined,
+        project_id: state.projectId || undefined,
+        date_from: state.dateFrom || undefined,
+        date_to: state.dateTo || undefined,
+        status: 'confirmed', // диаграмма по реально зачисленным
+        kind: 'income',
+      };
+      const [cashbox, payments, byMethod] = await Promise.all([
         api.cashbox(undefined, state.managerId || undefined, state.projectId || undefined),
         api.list('payments', paymentsQuery),
+        api.cashboxByMethod(statsQuery).catch(() => ({ data: [], totals: {} })),
       ]);
       renderSummary(cashbox);
+      renderMethodChart(byMethod);
       renderPayments(payments);
     } catch (e) {
       clear(summaryArea);
@@ -4112,6 +4127,123 @@ export async function renderCashbox(main) {
     );
     procSel.addEventListener('change', () => { state.processed = procSel.value; reload(); });
     filterArea.append(el('label', { style: { marginLeft: '12px' } }, '✍️ Метод/комиссия: ', procSel));
+
+    // Фильтр по методу оплаты (cash / card / bank_transfer / other).
+    const methodSel = el('select', {},
+      el('option', { value: '', selected: state.method === '' }, '— Любой метод —'),
+      el('option', { value: 'cash', selected: state.method === 'cash' }, '💵 Наличные'),
+      el('option', { value: 'card', selected: state.method === 'card' }, '💳 Карта'),
+      el('option', { value: 'bank_transfer', selected: state.method === 'bank_transfer' }, '🏦 Перевод'),
+      el('option', { value: 'other', selected: state.method === 'other' }, '🪙 Другое'),
+    );
+    methodSel.addEventListener('change', () => { state.method = methodSel.value; reload(); });
+    filterArea.append(el('label', { style: { marginLeft: '12px' } }, '💳 Метод: ', methodSel));
+
+    // Период (дата создания транзакции). Используется и для списка, и для диаграммы.
+    const dateFromI = el('input', { type: 'date', value: state.dateFrom, style: { padding: '4px 6px' } });
+    const dateToI = el('input', { type: 'date', value: state.dateTo, style: { padding: '4px 6px' } });
+    dateFromI.addEventListener('change', () => { state.dateFrom = dateFromI.value; reload(); });
+    dateToI.addEventListener('change', () => { state.dateTo = dateToI.value; reload(); });
+    filterArea.append(
+      el('label', { style: { marginLeft: '12px' } }, '📅 С: ', dateFromI),
+      el('label', { style: { marginLeft: '6px' } }, 'по: ', dateToI),
+    );
+
+    // Пресеты периода — часто просят «за 2 месяца» / «этот месяц» / «неделя».
+    const presets = [
+      { label: '7 дней', days: 7 },
+      { label: '30 дней', days: 30 },
+      { label: '2 мес', days: 60 },
+      { label: '90 дней', days: 90 },
+      { label: 'Сброс', days: null },
+    ];
+    for (const p of presets) {
+      const b = el('button', {
+        class: 'btn btn-xs',
+        style: { marginLeft: '4px' },
+        onClick: () => {
+          if (p.days == null) {
+            state.dateFrom = ''; state.dateTo = '';
+          } else {
+            const to = new Date();
+            const from = new Date();
+            from.setDate(from.getDate() - p.days);
+            state.dateFrom = from.toISOString().slice(0, 10);
+            state.dateTo = to.toISOString().slice(0, 10);
+          }
+          reload();
+          renderFilter(); // чтобы обновить значения в input
+        },
+      }, p.label);
+      filterArea.append(b);
+    }
+  }
+
+  // Диаграмма по методу оплаты за выбранный период: горизонтальные бары.
+  // Исходник — /api/cashbox/stats/by-method (status=confirmed, kind=income).
+  // Цвета фиксированные по методу — одинаковые между перезагрузками.
+  function renderMethodChart(res) {
+    clear(chartArea);
+    const rows = res?.data || [];
+    const totals = res?.totals || {};
+    if (!rows.length || !totals.gross) {
+      // Если нечего рисовать — скрываем блок (не захламляем UI).
+      return;
+    }
+    const COLORS = {
+      cash: '#10b981',
+      card: '#3b82f6',
+      bank_transfer: '#8b5cf6',
+      other: '#f59e0b',
+      '—': '#94a3b8',
+    };
+    const LABELS = {
+      cash: '💵 Наличные',
+      card: '💳 Карта',
+      bank_transfer: '🏦 Перевод',
+      other: '🪙 Другое',
+      '—': '— Без метода',
+    };
+    const maxGross = Math.max(...rows.map((r) => r.gross || 0)) || 1;
+    const periodLabel = state.dateFrom || state.dateTo
+      ? `${state.dateFrom || '…'} → ${state.dateTo || 'сегодня'}`
+      : 'за всё время';
+
+    const bars = rows.map((r) => {
+      const widthPct = Math.round((r.gross / maxGross) * 100);
+      const color = COLORS[r.method] || '#64748b';
+      return el('div', { style: { marginBottom: '8px' } },
+        el('div', { style: { display: 'flex', justifyContent: 'space-between', fontSize: '13px', marginBottom: '2px' } },
+          el('span', {}, `${LABELS[r.method] || r.method} · ${r.count} тр.`),
+          el('b', {}, `${fmtMoney(r.gross, 'RUB')} · ${r.pct_of_gross}%`),
+        ),
+        el('div', {
+          style: {
+            background: '#f1f5f9', borderRadius: '4px', overflow: 'hidden', height: '14px',
+          },
+        },
+          el('div', {
+            style: {
+              width: `${widthPct}%`, height: '100%', background: color,
+              transition: 'width 0.3s',
+            },
+          }),
+        ),
+      );
+    });
+    chartArea.append(
+      el('div', { class: 'card', style: { padding: '12px 14px' } },
+        el('div', {
+          style: { display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: '10px' },
+        },
+          el('b', {}, '📊 По методу оплаты (приход)'),
+          el('span', { style: { fontSize: '12px', color: 'var(--text-muted)' } },
+            `${periodLabel} · итого: ${fmtMoney(totals.gross, 'RUB')} (${totals.count} тр.)`,
+          ),
+        ),
+        ...bars,
+      ),
+    );
   }
 
   function renderSummary(cashbox) {
@@ -4454,6 +4586,7 @@ export async function renderCashbox(main) {
     el('div', { class: 'help-row' }, helpButton('cashbox')),
     filterArea,
     summaryArea,
+    chartArea,
     el('h3', { class: 'page-subtitle', style: { marginTop: '16px', marginBottom: '8px' } }, 'Транзакции'),
     tableArea,
   );

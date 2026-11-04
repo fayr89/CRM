@@ -82,6 +82,21 @@ router.get(
     } else if (req.query.processed === '0' || req.query.processed === 'false') {
       where.push('(p.method IS NULL AND (p.commission IS NULL OR p.commission = 0))');
     }
+    // Фильтр по методу оплаты (cash/card/bank_transfer/other).
+    if (req.query.method) {
+      where.push('p.method = ?');
+      params.push(req.query.method);
+    }
+    // Период по дате создания транзакции. date_from/date_to в формате YYYY-MM-DD.
+    if (req.query.date_from) {
+      where.push('p.created_at >= ?::timestamptz');
+      params.push(req.query.date_from);
+    }
+    if (req.query.date_to) {
+      // Включаем весь день конца периода.
+      where.push('p.created_at < (?::date + INTERVAL \'1 day\')');
+      params.push(req.query.date_to);
+    }
     if (req.query.manager_id) {
       where.push('p.manager_id = ?');
       params.push(Number(req.query.manager_id));

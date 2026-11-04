@@ -191,6 +191,18 @@ export const api = {
       },
     }),
 
+  cashboxByMethod: ({ manager_id, project_id, date_from, date_to, status, kind } = {}) =>
+    request('GET', '/api/cashbox/stats/by-method', {
+      query: {
+        ...(manager_id ? { manager_id: String(manager_id) } : {}),
+        ...(project_id ? { project_id: String(project_id) } : {}),
+        ...(date_from ? { date_from } : {}),
+        ...(date_to ? { date_to } : {}),
+        ...(status ? { status } : {}),
+        ...(kind ? { kind } : {}),
+      },
+    }),
+
   importProductNames: (csv) => request('POST', '/api/products/import-names', { body: { csv } }),
 
   // Интеграции и уведомления
