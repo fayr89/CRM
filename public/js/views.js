@@ -4294,6 +4294,7 @@ export async function renderCashbox(main) {
       el('th', {}, 'К зачислению'),
       el('th', {}, 'Тип'),
       el('th', {}, 'Метод'),
+      el('th', {}, 'Получатель'),
       el('th', {}, 'Менеджер'),
       el('th', {}, 'Статус'),
       el('th', { style: { textAlign: 'right' } }, 'Действия'),
@@ -4349,6 +4350,19 @@ export async function renderCashbox(main) {
         })(),
         el('td', {}, typeLabel),
         el('td', {}, p.method ? tr('payment_method', p.method) : '—'),
+        el('td', {
+          style: { fontSize: '13px', maxWidth: '180px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' },
+          title: p.recipient || '',
+        },
+          // Для pending-платежей менеджера/admin — кликабельно: открывает редактор.
+          p.status === 'pending' && !isCommissionRow && (canConfirm || p.manager_id === me.id)
+            ? el('button', {
+                class: 'btn btn-xs',
+                onClick: () => openRecipientEditor(p),
+                style: { textAlign: 'left', width: '100%', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' },
+              }, p.recipient || '+ получателя')
+            : (p.recipient || '—'),
+        ),
         el('td', {}, p.manager_name || '—'),
         el('td', {}, badge(p.status, 'payment_status')),
         el(
@@ -4400,6 +4414,41 @@ export async function renderCashbox(main) {
     );
   }
 
+  // Редактор получателя (кому отправлены деньги) + метода оплаты для одной
+  // pending-транзакции. Открывается по клику в колонке «Получатель».
+  async function openRecipientEditor(payment) {
+    const methodI = el('select', {},
+      el('option', { value: '' }, '— не указан —'),
+      ...Object.entries(T.payment_method).map(([v, l]) =>
+        el('option', { value: v, selected: payment.method === v }, l),
+      ),
+    );
+    const recipientI = el('input', {
+      type: 'text',
+      value: payment.recipient || '',
+      placeholder: 'ФИО / юрлицо / карта / счёт',
+      style: { width: '100%' },
+    });
+    const body = el('div', {},
+      el('div', { class: 'form-row' }, el('label', {}, 'Метод'), methodI),
+      el('div', { class: 'form-row' }, el('label', {}, 'Получатель'), recipientI),
+      el('div', { class: 'hint' }, 'Свободный текст: пиши, кому реально ушёл перевод. Финансист увидит это для сверки.'),
+    );
+    await openModal(`Транзакция #${payment.id} — получатель`, body, {
+      primaryLabel: 'Сохранить',
+      onSubmit: async () => {
+        try {
+          await api.update('payments', payment.id, {
+            method: methodI.value || null,
+            recipient: recipientI.value.trim() || null,
+          });
+          toast('Сохранено', 'success');
+          reload();
+        } catch (e) { toast(e.message, 'error'); return false; }
+      },
+    });
+  }
+
   async function openAddPayment() {
     const amountI = el('input', { type: 'number', min: '0', step: 'any', required: true });
     const kindI = el(
@@ -4417,6 +4466,7 @@ export async function renderCashbox(main) {
       ),
     );
     const referenceI = el('input', { type: 'text', placeholder: 'Номер транзакции' });
+    const recipientI = el('input', { type: 'text', placeholder: 'Кому: ФИО / юрлицо / карта / счёт' });
     const orderI = el('input', { type: 'number', min: '1', step: '1', placeholder: '№ заказа или внутренний id (необязательно)' });
     const notesI = el('textarea', {});
     const orderDevHint = el('div', { class: 'hint' });
@@ -4456,6 +4506,7 @@ export async function renderCashbox(main) {
       el('div', { class: 'form-row' }, el('label', {}, 'Сумма *'), amountI),
       hintBlock,
       el('div', { class: 'form-row' }, el('label', {}, 'Метод'), methodI),
+      el('div', { class: 'form-row' }, el('label', {}, 'Получатель'), recipientI),
       el('div', { class: 'form-row' }, el('label', {}, 'Номер транзакции'), referenceI),
       el('div', { class: 'form-row' }, el('label', {}, 'Привязать к заказу (№ или id)'), orderI, orderDevHint),
       el('div', { class: 'form-row' }, el('label', {}, 'Заметки'), notesI),
@@ -4477,6 +4528,7 @@ export async function renderCashbox(main) {
           // здесь, в ручной форме, комиссию не передаём — её ставят потом в строке.
           method: methodI.value || null,
           reference: referenceI.value || null,
+          recipient: recipientI.value.trim() || null,
           order_id: orderI.value ? Number(orderI.value) : null,
           notes: notesI.value || null,
         });
@@ -4576,12 +4628,48 @@ export async function renderCashbox(main) {
     });
   }
 
+  // Выгрузка CSV с текущими фильтрами. Формируем URL, прокидываем токен в auth query.
+  // Excel в RU откроет напрямую (BOM + ';' на бэке).
+  function exportCsv() {
+    const qs = new URLSearchParams();
+    if (state.managerId) qs.set('manager_id', state.managerId);
+    if (state.projectId) qs.set('project_id', state.projectId);
+    if (state.status) qs.set('status', state.status);
+    if (state.processed) qs.set('processed', state.processed);
+    if (state.method) qs.set('method', state.method);
+    if (state.dateFrom) qs.set('date_from', state.dateFrom);
+    if (state.dateTo) qs.set('date_to', state.dateTo);
+    if (state.search) qs.set('search', state.search);
+    // Токен в query — fetch-wrapper использует Authorization header, но прямой GET
+    // через <a download> идёт без заголовков. Качаем через fetch и Blob.
+    const token = localStorage.getItem('crm_token') || '';
+    fetch('/api/payments/export.csv?' + qs.toString(), {
+      headers: token ? { Authorization: 'Bearer ' + token } : {},
+    })
+      .then((r) => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.blob(); })
+      .then((blob) => {
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `payments-${new Date().toISOString().slice(0, 10)}.csv`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+        toast('Выгружено', 'success');
+      })
+      .catch((e) => toast('Ошибка выгрузки: ' + e.message, 'error'));
+  }
+
   main.append(
     el(
       'div',
       { class: 'page-header' },
       el('h1', { class: 'page-title' }, 'Касса'),
-      el('button', { class: 'btn btn-primary', onClick: openAddPayment }, 'Добавить транзакцию'),
+      el('div', { style: { display: 'flex', gap: '8px' } },
+        el('button', { class: 'btn', onClick: exportCsv, title: 'Выгрузить в Excel с текущими фильтрами' }, '📊 Excel'),
+        el('button', { class: 'btn btn-primary', onClick: openAddPayment }, 'Добавить транзакцию'),
+      ),
     ),
     el('div', { class: 'help-row' }, helpButton('cashbox')),
     filterArea,

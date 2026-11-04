@@ -494,7 +494,7 @@ export const db = {
 // БАМПАЙ ПРИ КАЖДОМ ДОБАВЛЕНИИ МИГРАЦИИ. Текущие миграции прогоняются
 // только если запись в app_settings.schema_version отличается. Это экономит
 // ~500-2000мс на каждом холодном старте serverless-лямбды.
-const SCHEMA_VERSION = 41;
+const SCHEMA_VERSION = 42;
 
 // Транзиентные ошибки коннекта — стоит ретраить (БД просыпается, сетевой сбой).
 // Явные не-транзиентные (auth, protocol) — ретрай не поможет, лучше сразу упасть.
@@ -574,6 +574,10 @@ export async function ensureInitialized() {
       // Касса: комиссия площадки и тип транзакции (income/expense), привязка авто-транзакции к заказу.
       await pool.query('ALTER TABLE payments ADD COLUMN IF NOT EXISTS commission REAL');
       await pool.query("ALTER TABLE payments ADD COLUMN IF NOT EXISTS kind TEXT DEFAULT 'income'");
+      // Получатель денег — свободный текст: ФИО, название юрлица, номер карты,
+      // счёт, «ИП Иванов» и т.п. Нужно финансисту для сверки: кому ушёл расход
+      // или от кого пришёл приход.
+      await pool.query('ALTER TABLE payments ADD COLUMN IF NOT EXISTS recipient TEXT');
       // Связь вывод↔комиссия: при списании со счёта формируется ДВЕ транзакции
       // (одна на сумму к выводу, одна на комиссию). parent_payment_id у комиссии
       // указывает на родительский «вывод». При удалении родителя комиссия каскадно

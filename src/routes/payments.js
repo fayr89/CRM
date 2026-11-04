@@ -21,6 +21,7 @@ const createSchema = z.object({
   currency: z.string().length(3).optional().default('RUB'),
   method: z.enum(METHODS).optional().nullable(),
   reference: z.string().optional().nullable(),
+  recipient: z.string().max(200).optional().nullable(),
   order_id: z.number().int().positive().optional().nullable(),
   notes: z.string().optional().nullable(),
   commission: z.number().nonnegative().optional().nullable(),
@@ -32,6 +33,7 @@ const updateSchema = z.object({
   currency: z.string().length(3).optional(),
   method: z.enum(METHODS).optional().nullable(),
   reference: z.string().optional().nullable(),
+  recipient: z.string().max(200).optional().nullable(),
   order_id: z.number().int().positive().optional().nullable(),
   notes: z.string().optional().nullable(),
   commission: z.number().nonnegative().optional().nullable(),
@@ -141,6 +143,102 @@ router.get(
   }),
 );
 
+// Экспорт платежей в CSV с теми же фильтрами, что у GET /payments.
+// BOM + разделитель ';' — чтобы Excel в RU-локали корректно открыл с одного клика.
+// ВАЖНО: маршрут ДО GET /:id — иначе Express сматчит 'export.csv' как :id.
+router.get(
+  '/export.csv',
+  asyncHandler(async (req, res) => {
+    const where = [];
+    const params = [];
+    if (req.query.status) { where.push('p.status = ?'); params.push(req.query.status); }
+    if (req.query.processed === '1' || req.query.processed === 'true') {
+      where.push('(p.method IS NOT NULL OR (p.commission IS NOT NULL AND p.commission > 0))');
+    } else if (req.query.processed === '0' || req.query.processed === 'false') {
+      where.push('(p.method IS NULL AND (p.commission IS NULL OR p.commission = 0))');
+    }
+    if (req.query.method) { where.push('p.method = ?'); params.push(req.query.method); }
+    if (req.query.date_from) { where.push('p.created_at >= ?::timestamptz'); params.push(req.query.date_from); }
+    if (req.query.date_to) { where.push('p.created_at < (?::date + INTERVAL \'1 day\')'); params.push(req.query.date_to); }
+    if (req.query.manager_id) { where.push('p.manager_id = ?'); params.push(Number(req.query.manager_id)); }
+    if (req.query.order_id) { where.push('p.order_id = ?'); params.push(Number(req.query.order_id)); }
+    if (req.query.project_id) { where.push('o.project_id = ?'); params.push(Number(req.query.project_id)); }
+    if (req.query.search) {
+      const like = `%${req.query.search}%`;
+      where.push('(o.shipment_qr ILIKE ? OR o.reference_number ILIKE ?)');
+      params.push(like, like);
+    }
+    const scope = await paymentsScope(req.user, 'p.manager_id');
+    if (scope.sql) { where.push(scope.sql); params.push(...scope.params); }
+    const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
+
+    const rows = await db.all(
+      `SELECT p.id, p.created_at, p.amount, p.currency, p.commission, p.kind, p.method,
+              p.recipient, p.reference, p.notes, p.status,
+              u.name AS manager_name, cu.name AS confirmer_name,
+              o.id AS order_id, o.reference_number AS order_reference, o.shipment_qr AS order_shipment_qr
+       FROM payments p
+       LEFT JOIN users u ON u.id = p.manager_id
+       LEFT JOIN users cu ON cu.id = p.confirmed_by
+       LEFT JOIN orders o ON o.id = p.order_id
+       ${whereSql} ORDER BY p.created_at DESC LIMIT 100000`,
+      ...params,
+    );
+
+    const METHOD_LABELS = { cash: 'Наличные', card: 'Карта', bank_transfer: 'Банк. перевод', other: 'Другое' };
+    const STATUS_LABELS = { pending: 'Ждёт', confirmed: 'Подтверждён', rejected: 'Отклонён' };
+    const KIND_LABELS = { income: 'Приход', expense: 'Расход' };
+    // CSV-escape: оборачиваем в кавычки если есть ; " \n, двойные кавычки удваиваем.
+    const csv = (v) => {
+      if (v == null) return '';
+      const s = String(v);
+      if (/[;"\n\r]/.test(s)) return '"' + s.replace(/"/g, '""') + '"';
+      return s;
+    };
+    const fmtDate = (iso) => {
+      if (!iso) return '';
+      const d = new Date(iso);
+      const pad = (n) => String(n).padStart(2, '0');
+      return `${pad(d.getDate())}.${pad(d.getMonth() + 1)}.${d.getFullYear()} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+    };
+
+    const headers = [
+      'ID', 'Дата', 'Тип', 'Сумма', 'Валюта', 'Комиссия', 'К зачислению',
+      'Метод', 'Получатель', '№ транзакции', '№ заказа', 'Трек', 'Менеджер',
+      'Статус', 'Подтвердил', 'Примечание',
+    ];
+    const lines = [headers.map(csv).join(';')];
+    for (const r of rows) {
+      const amount = Number(r.amount) || 0;
+      const commission = Number(r.commission) || 0;
+      const net = amount - commission;
+      lines.push([
+        r.id,
+        fmtDate(r.created_at),
+        KIND_LABELS[r.kind] || r.kind,
+        amount,
+        r.currency || 'RUB',
+        commission || '',
+        net,
+        METHOD_LABELS[r.method] || (r.method || ''),
+        r.recipient || '',
+        r.reference || '',
+        r.order_id || '',
+        r.order_shipment_qr || '',
+        r.manager_name || '',
+        STATUS_LABELS[r.status] || r.status,
+        r.confirmer_name || '',
+        r.notes || '',
+      ].map(csv).join(';'));
+    }
+    const body = '﻿' + lines.join('\r\n'); // BOM для Excel-RU
+    const dateStamp = new Date().toISOString().slice(0, 10);
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="payments-${dateStamp}.csv"`);
+    res.send(body);
+  }),
+);
+
 router.get(
   '/:id',
   asyncHandler(async (req, res) => {
@@ -234,14 +332,15 @@ router.post(
 
     // Обычный случай: одна транзакция (приход или расход без комиссии).
     const result = await db.run(
-      `INSERT INTO payments (manager_id, order_id, amount, currency, method, reference, notes, commission, kind)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
+      `INSERT INTO payments (manager_id, order_id, amount, currency, method, reference, recipient, notes, commission, kind)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
       req.user.id,
       data.order_id ?? null,
       data.amount,
       data.currency ?? 'RUB',
       data.method ?? null,
       data.reference ?? null,
+      data.recipient ?? null,
       data.notes ?? null,
       data.commission ?? null,
       data.kind ?? 'income',
@@ -274,7 +373,7 @@ router.patch(
     }
     const updates = [];
     const params = [];
-    for (const key of ['amount', 'currency', 'method', 'reference', 'order_id', 'notes', 'commission', 'kind']) {
+    for (const key of ['amount', 'currency', 'method', 'reference', 'recipient', 'order_id', 'notes', 'commission', 'kind']) {
       if (data[key] !== undefined) {
         updates.push(`${key} = ?`);
         params.push(data[key] === '' ? null : data[key]);
