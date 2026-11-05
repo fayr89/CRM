@@ -5352,26 +5352,88 @@ function renderTimeSeries(rows) {
 }
 
 async function renderInsightsWidgets(container, me) {
-  const periodSel = el('select', {},
-    el('option', { value: 'week' }, 'Неделя'),
-    el('option', { value: 'month', selected: true }, 'Месяц'),
-    el('option', { value: 'quarter' }, 'Квартал'),
-  );
+  // «Продажи за период»: даты от-до, выбор менеджера, пресеты. Запоминаем в
+  // localStorage, чтобы при возврате на дашборд пользователь видел те же настройки.
+  const storageKey = 'dashboard_insights_filters';
+  let saved = {};
+  try { saved = JSON.parse(localStorage.getItem(storageKey) || '{}'); } catch { saved = {}; }
 
-  const seriesArea = el('div');
+  // Дефолт: 30 дней от сегодня, все менеджеры.
+  const todayStr = () => new Date().toISOString().slice(0, 10);
+  const nDaysAgoStr = (n) => {
+    const d = new Date(); d.setDate(d.getDate() - n);
+    return d.toISOString().slice(0, 10);
+  };
+  const state = {
+    date_from: saved.date_from || nDaysAgoStr(30),
+    date_to: saved.date_to || todayStr(),
+    manager_id: saved.manager_id || '',
+  };
+  function saveState() {
+    try { localStorage.setItem(storageKey, JSON.stringify(state)); } catch { /* quota/private */ }
+  }
+
+  const dateFromI = el('input', { type: 'date', value: state.date_from, style: { padding: '3px 6px' } });
+  const dateToI = el('input', { type: 'date', value: state.date_to, style: { padding: '3px 6px' } });
+  const mgrSel = el('select', { style: { padding: '3px 6px' } }, el('option', { value: '' }, 'Все менеджеры'));
+  let managersLoaded = false;
+
+  dateFromI.addEventListener('change', () => { state.date_from = dateFromI.value; saveState(); load(); });
+  dateToI.addEventListener('change', () => { state.date_to = dateToI.value; saveState(); load(); });
+  mgrSel.addEventListener('change', () => { state.manager_id = mgrSel.value; saveState(); load(); });
+
+  function applyPreset(days) {
+    if (days == null) { state.date_from = ''; state.date_to = ''; }
+    else { state.date_from = nDaysAgoStr(days); state.date_to = todayStr(); }
+    dateFromI.value = state.date_from;
+    dateToI.value = state.date_to;
+    saveState();
+    load();
+  }
+  const presetBtns = [
+    { label: '7 дн', days: 7 },
+    { label: '30 дн', days: 30 },
+    { label: '2 мес', days: 60 },
+    { label: '90 дн', days: 90 },
+    { label: 'Сброс', days: null },
+  ].map((p) => el('button', {
+    class: 'btn btn-xs', style: { marginLeft: '2px' },
+    onClick: () => applyPreset(p.days),
+  }, p.label));
+
   const totalsLine = el('div', { class: 'page-subtitle' });
+  const seriesArea = el('div');
   const topArea = el('div');
+  const marketArea = el('div');
   const markdownArea = el('div');
 
   async function load() {
     seriesArea.innerHTML = '<div class="empty">Загрузка…</div>';
+    totalsLine.textContent = '';
     try {
-      const r = await api.insights({ period: periodSel.value });
+      const r = await api.insights({
+        date_from: state.date_from || undefined,
+        date_to: state.date_to || undefined,
+        manager_id: state.manager_id || undefined,
+      });
+      // Заполняем селект менеджеров один раз (с бэка — только доступные роли).
+      if (!managersLoaded) {
+        for (const m of (r.managers || [])) {
+          mgrSel.append(el('option', { value: String(m.id), selected: String(m.id) === String(state.manager_id) }, m.name));
+        }
+        managersLoaded = true;
+      }
+
       clear(seriesArea);
       seriesArea.append(renderTimeSeries(r.series || []));
       const t = r.period_totals || {};
-      totalsLine.textContent = `За период: ${t.orders || 0} заказ(ов), выручка ${fmtMoney(t.revenue || 0)}, отменено ${t.cancelled || 0}`;
+      const avgCheck = t.avg_check ? ` · средний чек ${fmtMoney(t.avg_check)}` : '';
+      const periodLabel = state.date_from || state.date_to
+        ? `${state.date_from || '…'} → ${state.date_to || 'сегодня'}`
+        : 'за всё время';
+      totalsLine.textContent = `За ${periodLabel}: ${t.orders || 0} заказ(ов), выручка ${fmtMoney(t.revenue || 0)}, отменено ${t.cancelled || 0}${avgCheck}`;
 
+      // Топ менеджеров.
       clear(topArea);
       if ((r.top_managers || []).length === 0) {
         topArea.append(el('div', { class: 'empty' }, 'Нет данных'));
@@ -5380,6 +5442,23 @@ async function renderInsightsWidgets(container, me) {
         for (const m of r.top_managers) {
           topArea.append(el('div', { class: 'bar-row' },
             el('div', { class: 'name' }, m.name),
+            el('div', { class: 'bar' },
+              el('div', { style: { width: `${((m.revenue || 0) / maxRev) * 100}%` } }),
+            ),
+            el('div', { class: 'count' }, `${fmtMoney(m.revenue || 0)} (${m.orders})`),
+          ));
+        }
+      }
+
+      // Разбивка по площадкам (новое).
+      clear(marketArea);
+      if ((r.by_marketplace || []).length === 0) {
+        marketArea.append(el('div', { class: 'empty' }, 'Нет данных'));
+      } else {
+        const maxRev = Math.max(...r.by_marketplace.map((m) => m.revenue || 0)) || 1;
+        for (const m of r.by_marketplace) {
+          marketArea.append(el('div', { class: 'bar-row' },
+            el('div', { class: 'name' }, m.marketplace),
             el('div', { class: 'bar' },
               el('div', { style: { width: `${((m.revenue || 0) / maxRev) * 100}%` } }),
             ),
@@ -5412,13 +5491,20 @@ async function renderInsightsWidgets(container, me) {
     }
   }
 
-  periodSel.addEventListener('change', load);
+  // Шапка блока: фильтры в линию с переносом на мобилке.
+  const filterRow = el('div', {
+    style: { display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '6px', fontSize: '13px', fontWeight: 400 },
+  },
+    el('span', {}, '📅'), dateFromI, el('span', {}, '—'), dateToI,
+    ...presetBtns,
+    el('span', { style: { marginLeft: '8px' } }, '👤'), mgrSel,
+  );
 
   container.append(
     el('div', { class: 'dashboard-section' },
-      el('h3', { style: { display: 'flex', alignItems: 'center', gap: '12px' } },
-        'Динамика продаж',
-        el('span', { style: { fontSize: '13px', fontWeight: 400 } }, periodSel),
+      el('h3', { style: { display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' } },
+        'Продажи за период',
+        filterRow,
       ),
       el('div', { class: 'card' },
         totalsLine,
@@ -5428,6 +5514,10 @@ async function renderInsightsWidgets(container, me) {
     el('div', { class: 'dashboard-section' },
       el('h3', {}, 'Топ менеджеров за период'),
       el('div', { class: 'card' }, topArea),
+    ),
+    el('div', { class: 'dashboard-section' },
+      el('h3', {}, 'По площадкам за период'),
+      el('div', { class: 'card' }, marketArea),
     ),
     me.role === 'admin' ? el('div', { class: 'dashboard-section' },
       el('h3', {}, 'Уценки без цены'),

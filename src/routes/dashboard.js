@@ -139,18 +139,54 @@ router.get(
 // Расширенные виджеты дашборда: динамика продаж, топ менеджеров, уценки без цены.
 // Доступно admin/rop, остальные — только своя выборка.
 // Период: ?period=week (7 дней по дням), month (30 дней по дням), quarter (90 по неделям).
+// ИЛИ кастомный диапазон: ?date_from=YYYY-MM-DD&date_to=YYYY-MM-DD (включительно).
+// Опционально: ?manager_id=X — сузить выборку до одного менеджера (в рамках scope).
 router.get(
   '/insights',
   asyncHandler(async (req, res) => {
     const period = ['week', 'month', 'quarter'].includes(req.query.period) ? req.query.period : 'month';
-    const days = period === 'week' ? 7 : period === 'quarter' ? 90 : 30;
-    const bucket = period === 'quarter' ? 'week' : 'day';
+    const defaultDays = period === 'week' ? 7 : period === 'quarter' ? 90 : 30;
+
+    // Если переданы даты — используем их. Иначе — fallback на период.
+    const dateRe = /^\d{4}-\d{2}-\d{2}$/;
+    const hasRange = dateRe.test(req.query.date_from || '') || dateRe.test(req.query.date_to || '');
+    // Длина диапазона (в днях) нужна чтобы выбрать bucket day/week.
+    let rangeDays = defaultDays;
+    let rangeWhere; // SQL-фрагмент для WHERE created_at ...
+    const rangeParams = [];
+    if (hasRange) {
+      const parts = [];
+      if (dateRe.test(req.query.date_from || '')) {
+        parts.push('created_at >= ?::timestamptz');
+        rangeParams.push(req.query.date_from);
+      }
+      if (dateRe.test(req.query.date_to || '')) {
+        parts.push('created_at < (?::date + INTERVAL \'1 day\')');
+        rangeParams.push(req.query.date_to);
+      }
+      rangeWhere = parts.join(' AND ');
+      if (dateRe.test(req.query.date_from || '') && dateRe.test(req.query.date_to || '')) {
+        const d1 = new Date(req.query.date_from);
+        const d2 = new Date(req.query.date_to);
+        rangeDays = Math.max(1, Math.round((d2 - d1) / 86400000) + 1);
+      }
+    } else {
+      rangeWhere = `created_at >= NOW() - INTERVAL '${defaultDays} days'`;
+    }
+    // bucket day для короткого диапазона, week для длинного. Порог 60 дней.
+    const bucket = rangeDays > 60 ? 'week' : 'day';
 
     const ordIds = await getAccessibleUserIds(req.user);
-    // Без алиаса (для запросов с FROM orders) и с алиасом o.
+    // Фильтр по одному менеджеру (поверх scope). Админ может выбрать любого;
+    // sales/manager смогут выбрать только себя (id в scope).
+    const managerIdFilter = req.query.manager_id ? Number(req.query.manager_id) : null;
+
     const scopeWhere = ordIds === null ? '' : 'AND manager_id = ANY(?)';
     const scopeWhereO = ordIds === null ? '' : 'AND o.manager_id = ANY(?)';
+    const mgrWhere = managerIdFilter ? 'AND manager_id = ?' : '';
+    const mgrWhereO = managerIdFilter ? 'AND o.manager_id = ?' : '';
     const scopeParams = ordIds === null ? [] : [ordIds];
+    const mgrParams = managerIdFilter ? [managerIdFilter] : [];
 
     // 1) Серия продаж по дням/неделям (только non-cancelled).
     const series = await db.all(
@@ -158,25 +194,27 @@ router.get(
               COUNT(*)::int AS orders,
               COALESCE(SUM(total_amount), 0)::float AS amount
        FROM orders
-       WHERE created_at >= NOW() - INTERVAL '${days} days'
-         AND status <> 'cancelled' ${scopeWhere}
+       WHERE ${rangeWhere}
+         AND status <> 'cancelled' ${scopeWhere} ${mgrWhere}
        GROUP BY bucket ORDER BY bucket ASC`,
-      ...scopeParams,
+      ...rangeParams, ...scopeParams, ...mgrParams,
     );
 
     // 2) Топ менеджеров за период. Считаем только полностью отгруженные/завершённые —
     // это «реальная» выручка, без учёта будущих отмен.
+    // Если задан manager_id — выборка сузится до одного (но всё равно корректно отдадим).
+    const rangeWhereO = rangeWhere.replace(/created_at/g, 'o.created_at');
     const topManagers = await db.all(
       `SELECT u.id, u.name,
               COUNT(o.id)::int AS orders,
               COALESCE(SUM(o.total_amount), 0)::float AS revenue
        FROM orders o
        JOIN users u ON u.id = o.manager_id
-       WHERE o.created_at >= NOW() - INTERVAL '${days} days'
-         AND o.status IN ('shipped', 'completed') ${scopeWhereO}
+       WHERE ${rangeWhereO}
+         AND o.status IN ('shipped', 'completed') ${scopeWhereO} ${mgrWhereO}
        GROUP BY u.id, u.name
        ORDER BY revenue DESC LIMIT 10`,
-      ...scopeParams,
+      ...rangeParams, ...scopeParams, ...mgrParams,
     );
 
     // 3) Уценочные товары без цены — что ждёт админа.
@@ -201,20 +239,50 @@ router.get(
     const periodTotals = await db.get(
       `SELECT COUNT(*)::int AS orders,
               COALESCE(SUM(CASE WHEN status <> 'cancelled' THEN total_amount ELSE 0 END), 0)::float AS revenue,
-              COUNT(*) FILTER (WHERE status = 'cancelled')::int AS cancelled
+              COUNT(*) FILTER (WHERE status = 'cancelled')::int AS cancelled,
+              COALESCE(AVG(total_amount) FILTER (WHERE status <> 'cancelled'), 0)::float AS avg_check
        FROM orders
-       WHERE created_at >= NOW() - INTERVAL '${days} days' ${scopeWhere}`,
-      ...scopeParams,
+       WHERE ${rangeWhere} ${scopeWhere} ${mgrWhere}`,
+      ...rangeParams, ...scopeParams, ...mgrParams,
+    );
+
+    // 5) Разбивка по площадкам за период.
+    const byMarketplace = await db.all(
+      `SELECT COALESCE(marketplace, 'B2B') AS marketplace,
+              COUNT(*)::int AS orders,
+              COALESCE(SUM(total_amount) FILTER (WHERE status <> 'cancelled'), 0)::float AS revenue
+       FROM orders
+       WHERE ${rangeWhere} ${scopeWhere} ${mgrWhere}
+       GROUP BY COALESCE(marketplace, 'B2B')
+       ORDER BY revenue DESC`,
+      ...rangeParams, ...scopeParams, ...mgrParams,
+    );
+
+    // 6) Доступные менеджеры для селекта (только в scope).
+    const managersList = await db.all(
+      ordIds === null
+        ? `SELECT id, name FROM users
+           WHERE active = TRUE AND role IN ('admin','manager','sales','rop')
+           ORDER BY name`
+        : `SELECT id, name FROM users
+           WHERE id = ANY(?) AND active = TRUE AND role IN ('admin','manager','sales','rop')
+           ORDER BY name`,
+      ...(ordIds === null ? [] : [ordIds]),
     );
 
     res.json({
       period,
       bucket,
-      days,
+      days: rangeDays,
+      date_from: req.query.date_from || null,
+      date_to: req.query.date_to || null,
+      manager_id: managerIdFilter,
       series,
       top_managers: topManagers,
+      by_marketplace: byMarketplace,
+      managers: managersList,
       markdown_no_price: { count: markdownNoPrice?.n || 0, sample: markdownNoPriceList },
-      period_totals: periodTotals || { orders: 0, revenue: 0, cancelled: 0 },
+      period_totals: periodTotals || { orders: 0, revenue: 0, cancelled: 0, avg_check: 0 },
     });
   }),
 );
