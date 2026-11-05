@@ -17,13 +17,13 @@
     {
       "source": "/js/(.*)",
       "headers": [
-        { "key": "Cache-Control", "value": "public, max-age=300, stale-while-revalidate=86400" }
+        { "key": "Cache-Control", "value": "public, max-age=60, stale-while-revalidate=120" }
       ]
     },
     {
       "source": "/css/(.*)",
       "headers": [
-        { "key": "Cache-Control", "value": "public, max-age=300, stale-while-revalidate=86400" }
+        { "key": "Cache-Control", "value": "public, max-age=60, stale-while-revalidate=120" }
       ]
     },
     {
