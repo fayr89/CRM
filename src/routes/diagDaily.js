@@ -13,9 +13,9 @@ router.get('/seed-67', asyncHandler(async (req, res) => {
     { file: 'src/db.js', action: 'edit', reason: 'идемпотентное поле low_stock_threshold (SCHEMA_VERSION-бамп)' },
     { file: 'public/js/views.js', action: 'edit', reason: 'поле порога в карточке товара, тексты уведомлений' }
   ]);
-  const p = await db.get("INSERT INTO ai_proposals (feedback_id, title, summary, category, risk, source, proposed_changes, status) VALUES (67, ?, ?, 'feature', 'medium', 'feedback-#67 daily-run-2026-11-07', ?::jsonb, 'pending') RETURNING id", ['Уведомления о заканчивающихся и поступивших товарах', summary, changes]);
+  const p = await db.get("INSERT INTO ai_proposals (feedback_id, title, summary, category, risk, source, proposed_changes, status) VALUES (67, ?, ?, 'feature', 'medium', 'feedback-#67 daily-run-2026-11-07', ?::jsonb, 'pending') RETURNING id", 'Уведомления о заканчивающихся и поступивших товарах', summary, changes);
   const text = 'Здравствуйте, Анастасия! Вы просите уведомления о поступивших и особенно о заканчивающихся товарах, чтобы не принимать заказы на Авито на товары с нулевым остатком. Это новая функция (настройки порога и уведомления), поэтому я передал её администратору на одобрение (предложение №' + p.id + '). Как решит — вернусь с вопросами или сообщу, что сделано.';
-  await db.run("INSERT INTO feedback_messages (feedback_id, user_id, user_name, role, text) VALUES (67, NULL, 'AI ассистент', 'admin', ?)", [text]);
+  await db.run("INSERT INTO feedback_messages (feedback_id, user_id, user_name, role, text) VALUES (67, NULL, 'AI ассистент', 'admin', ?)", text);
   res.json({ proposal: p.id });
 }));
 export default router;
